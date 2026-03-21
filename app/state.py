@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import AppConfig
 
 if TYPE_CHECKING:
+    from app.journal import SessionJournal
     from app.translate import TranslationDispatcher
 
 logger = logging.getLogger(__name__)
@@ -123,9 +124,13 @@ class SessionManager:
         self._grace_task: asyncio.Task[None] | None = None
         self._on_grace_expiry: Callable[[], Awaitable[None]] | None = None
         self._dispatcher: TranslationDispatcher | None = None
+        self._journal: SessionJournal | None = None
 
     def set_dispatcher(self, dispatcher: TranslationDispatcher) -> None:
         self._dispatcher = dispatcher
+
+    def set_journal(self, journal: SessionJournal) -> None:
+        self._journal = journal
 
     # -- event system -------------------------------------------------------
 
@@ -163,6 +168,8 @@ class SessionManager:
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
+        if self._journal is not None:
+            self._journal.record_segment_created(seg)
         self.session.source_partial = ""
         logger.info("Finalized segment #%d: %s", seg.seq, text[:60])
         self._emit("source_partial", {"text": ""})
@@ -177,6 +184,8 @@ class SessionManager:
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
+        if self._journal is not None:
+            self._journal.record_segment_created(seg)
         self.session.source_partial = ""
         logger.info("Finalized reconnect fragment #%d: %s", seg.seq, text[:60])
         self._emit("source_partial", {"text": ""})
@@ -213,6 +222,8 @@ class SessionManager:
         seg.english_text = english_text
         seg.translation_status = "done"
         seg.translated_at = _utcnow()
+        if self._journal is not None:
+            self._journal.record_translation_updated(seg)
         self._try_deliver()
 
     def mark_translation_timed_out(self, seq: int, session_id: str) -> None:
@@ -229,6 +240,8 @@ class SessionManager:
             return
         seg.translation_status = "timed_out"
         seg.translated_at = _utcnow()
+        if self._journal is not None:
+            self._journal.record_translation_updated(seg)
         self._try_deliver()
 
     def mark_translation_failed(self, seq: int, session_id: str) -> None:
@@ -245,6 +258,8 @@ class SessionManager:
             return
         seg.translation_status = "failed"
         seg.translated_at = _utcnow()
+        if self._journal is not None:
+            self._journal.record_translation_updated(seg)
         self._try_deliver()
 
     # -- delivery gate ------------------------------------------------------
@@ -289,6 +304,8 @@ class SessionManager:
 
         if status == "listening" and self.session.started_at is None:
             self.session.started_at = _utcnow()
+            if self._journal is not None:
+                self._journal.record_session_started()
 
         if status == "listening":
             self._start_elapsed_ticker()
@@ -297,6 +314,8 @@ class SessionManager:
             self.session.ended_at = _utcnow()
             self._cancel_elapsed_ticker()
             self._cancel_grace_task()
+            if self._journal is not None:
+                self._journal.record_session_stopped()
 
         self._emit("status", {"status": status})
 
@@ -316,17 +335,30 @@ class SessionManager:
             {"checks": [c.model_dump(mode="json") for c in checks]},
         )
 
-    # -- export (stub) ------------------------------------------------------
+    # -- export -------------------------------------------------------------
 
     def export(self) -> dict[str, Any]:
-        return {"success": False, "error": "Export not yet implemented"}
+        from app.exporter import export_session
+
+        try:
+            path = export_session(self.session, self.config, recovery=False)
+        except Exception as exc:
+            return {"success": False, "path": None, "error": str(exc)}
+        self.session.exported = True
+        self.session.export_path = path
+        if self._journal is not None:
+            self._journal.record_session_exported(path)
+        return {"success": True, "path": path, "error": None}
 
     # -- reset --------------------------------------------------------------
 
     def reset(self) -> None:
+        if not self.session.exported and self._journal is not None:
+            self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
         self.session = Session()
+        self._journal = None
         self._emit("session_snapshot", self.get_snapshot())
 
     # -- snapshot -----------------------------------------------------------

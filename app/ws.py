@@ -10,6 +10,8 @@ import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from app.config import settings
+from app.journal import SessionJournal
 from app.state import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -166,3 +168,5 @@ async def _handle_new_session() -> None:
     ):
         await stop_pipeline()
     manager.reset()
+    journal = SessionJournal(session_id=manager.session.id, config=settings)
+    manager.set_journal(journal)

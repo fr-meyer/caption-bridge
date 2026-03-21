@@ -14,6 +14,7 @@ from starlette.staticfiles import StaticFiles
 from app.audio import AudioCapture
 from app.boundary import BoundaryDetector
 from app.config import settings
+from app.journal import SessionJournal, run_recovery
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
 from app.state import SessionManager
@@ -261,6 +262,14 @@ reconnect_manager.wait_for_stream = _wait_for_stream_established
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    notice = run_recovery(settings)
+    if notice is not None:
+        manager.recovery_notice = notice
+        logger.info("Recovered session %s → %s", notice.recovered_session_id, notice.export_path)
+
+    journal = SessionJournal(session_id=manager.session.id, config=settings)
+    manager.set_journal(journal)
+
     poller.start()
     logger.info("CaptionBridge started on %s:%s", settings.host, settings.port)
     yield
