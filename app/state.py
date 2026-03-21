@@ -6,12 +6,15 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import AppConfig
+
+if TYPE_CHECKING:
+    from app.translate import TranslationDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,10 @@ class SessionManager:
         self._elapsed_task: asyncio.Task[None] | None = None
         self._grace_task: asyncio.Task[None] | None = None
         self._on_grace_expiry: Callable[[], Awaitable[None]] | None = None
+        self._dispatcher: TranslationDispatcher | None = None
+
+    def set_dispatcher(self, dispatcher: TranslationDispatcher) -> None:
+        self._dispatcher = dispatcher
 
     # -- event system -------------------------------------------------------
 
@@ -159,6 +166,7 @@ class SessionManager:
         self.session.source_partial = ""
         logger.info("Finalized segment #%d: %s", seg.seq, text[:60])
         self._emit("source_partial", {"text": ""})
+        self._dispatch_translation(seg)
         self._try_deliver()
 
     def finalize_reconnect_fragment(self, text: str) -> None:
@@ -172,7 +180,15 @@ class SessionManager:
         self.session.source_partial = ""
         logger.info("Finalized reconnect fragment #%d: %s", seg.seq, text[:60])
         self._emit("source_partial", {"text": ""})
+        self._dispatch_translation(seg)
         self._try_deliver()
+
+    def _dispatch_translation(self, seg: Segment) -> None:
+        if self._dispatcher is None:
+            return
+        n = self.config.translation_context_segments
+        context = self.session.segments[-(n + 1):-1]
+        self._dispatcher.dispatch(seg, context, self.session.id)
 
     # -- translation marks (dormant in this ticket) -------------------------
 
@@ -182,7 +198,14 @@ class SessionManager:
                 return seg
         return None
 
-    def mark_translated(self, seq: int, english_text: str) -> None:
+    def mark_translated(self, seq: int, english_text: str, session_id: str) -> None:
+        if session_id != self.session.id:
+            logger.warning(
+                "mark_translated: ignoring stale callback for seq #%d "
+                "(session %s, current %s)",
+                seq, session_id, self.session.id,
+            )
+            return
         seg = self._find_segment(seq)
         if seg is None:
             logger.warning("mark_translated: segment #%d not found", seq)
@@ -192,7 +215,14 @@ class SessionManager:
         seg.translated_at = _utcnow()
         self._try_deliver()
 
-    def mark_translation_timed_out(self, seq: int) -> None:
+    def mark_translation_timed_out(self, seq: int, session_id: str) -> None:
+        if session_id != self.session.id:
+            logger.warning(
+                "mark_translation_timed_out: ignoring stale callback for seq #%d "
+                "(session %s, current %s)",
+                seq, session_id, self.session.id,
+            )
+            return
         seg = self._find_segment(seq)
         if seg is None:
             logger.warning("mark_translation_timed_out: segment #%d not found", seq)
@@ -201,7 +231,14 @@ class SessionManager:
         seg.translated_at = _utcnow()
         self._try_deliver()
 
-    def mark_translation_failed(self, seq: int) -> None:
+    def mark_translation_failed(self, seq: int, session_id: str) -> None:
+        if session_id != self.session.id:
+            logger.warning(
+                "mark_translation_failed: ignoring stale callback for seq #%d "
+                "(session %s, current %s)",
+                seq, session_id, self.session.id,
+            )
+            return
         seg = self._find_segment(seq)
         if seg is None:
             logger.warning("mark_translation_failed: segment #%d not found", seq)

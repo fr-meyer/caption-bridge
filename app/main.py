@@ -15,8 +15,10 @@ from app.audio import AudioCapture
 from app.boundary import BoundaryDetector
 from app.config import settings
 from app.readiness import ReadinessPoller
+from app.reconnect import ReconnectionManager
 from app.state import SessionManager
 from app.transcribe import transcribe
+from app.translate import TranslationDispatcher
 from app import ws
 
 logger = logging.getLogger(__name__)
@@ -26,7 +28,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 manager = SessionManager(config=settings)
+dispatcher = TranslationDispatcher(session_manager=manager, config=settings)
+manager.set_dispatcher(dispatcher)
 poller = ReadinessPoller(manager=manager, config=settings)
+reconnect_manager = ReconnectionManager(session_manager=manager, config=settings)
 
 # Wire module-level references in ws.py
 ws.manager = manager
@@ -38,11 +43,32 @@ ws.manager = manager
 _audio: AudioCapture | None = None
 _detector: BoundaryDetector | None = None
 _transcribe_task: asyncio.Task | None = None
+_stream_ready: asyncio.Event = asyncio.Event()
+_stream_error: Exception | None = None
+_pipeline_stopping: bool = False
+
+
+def _on_session_created() -> None:
+    """Called when the Mistral realtime session handshake completes."""
+    global _stream_error
+    _stream_error = None
+    _stream_ready.set()
+
+
+async def _wait_for_stream_established() -> None:
+    """Block until the realtime stream session is created or an error occurs."""
+    await _stream_ready.wait()
+    if _stream_error is not None:
+        raise _stream_error
 
 
 async def _start_pipeline() -> None:
     """Spin up mic capture → transcription → boundary detection."""
-    global _audio, _detector, _transcribe_task  # noqa: PLW0603
+    global _audio, _detector, _transcribe_task, _stream_error, _pipeline_stopping  # noqa: PLW0603
+
+    _pipeline_stopping = False
+    _stream_ready.clear()
+    _stream_error = None
 
     loop = asyncio.get_running_loop()
     audio = AudioCapture(sample_rate=settings.audio_sample_rate, loop=loop)
@@ -63,7 +89,9 @@ async def _start_pipeline() -> None:
 
     _audio = audio
     _detector = detector
-    manager.set_status("listening")
+
+    if manager.session.status != "reconnecting":
+        manager.set_status("listening")
 
     _transcribe_task = asyncio.ensure_future(
         transcribe(
@@ -72,12 +100,13 @@ async def _start_pipeline() -> None:
             on_delta=_detector.push,
             on_done=_on_transcription_done,
             on_error=_on_transcription_error,
+            on_session_created=_on_session_created,
         )
     )
 
 
-async def _stop_pipeline() -> None:
-    """Gracefully tear down the active pipeline."""
+async def _teardown_pipeline() -> None:
+    """Low-level cleanup: stop audio, cancel transcription task, reset detector."""
     global _audio, _detector, _transcribe_task  # noqa: PLW0603
 
     if _audio is not None:
@@ -99,24 +128,43 @@ async def _stop_pipeline() -> None:
     _detector = None
 
 
+async def _stop_pipeline() -> None:
+    """Full stop: cancel reconnection, tear down pipeline, drain translations."""
+    global _pipeline_stopping
+    _pipeline_stopping = True
+    reconnect_manager.cancel()
+    await _teardown_pipeline()
+    await dispatcher.drain()
+
+
 def _on_transcription_done() -> None:
-    if _detector is not None:
-        remaining = _detector.flush_reconnect_fragment()
-        if remaining:
-            manager.finalize_segment(remaining)
-    logger.info("Transcription stream completed")
+    global _stream_error
+
+    if not _stream_ready.is_set():
+        _stream_error = RuntimeError("Stream closed before session was established")
+        _stream_ready.set()
+
+    if _pipeline_stopping or manager.session.status == "reconnecting":
+        if _detector is not None:
+            remaining = _detector.flush_reconnect_fragment()
+            if remaining:
+                manager.finalize_segment(remaining)
+        logger.info("Transcription stream completed")
+        return
+
+    logger.warning("Transcription stream ended unexpectedly — triggering reconnect")
+    reconnect_manager.on_connection_error(
+        RuntimeError("Transcription stream ended unexpectedly")
+    )
 
 
 def _on_transcription_error(exc: Exception) -> None:
+    global _stream_error
     logger.error("Transcription error: %s", exc)
-    manager._emit("error", {"message": str(exc)})
-
-    async def _cleanup() -> None:
-        await _stop_pipeline()
-        if manager.session.status in ("listening", "reconnecting"):
-            manager.set_status("session_ended")
-
-    asyncio.ensure_future(_cleanup())
+    if not _stream_ready.is_set():
+        _stream_error = exc
+        _stream_ready.set()
+    reconnect_manager.on_connection_error(exc)
 
 
 async def _on_grace_expiry() -> None:
@@ -130,6 +178,19 @@ async def _on_grace_expiry() -> None:
 ws.start_pipeline = _start_pipeline
 ws.stop_pipeline = _stop_pipeline
 manager.set_grace_expiry_hook(_on_grace_expiry)
+
+
+def _on_reconnect_fragment_finalized(fragment: str) -> None:
+    """Route reconnect fragments through the same finalize+dispatch flow."""
+    manager.finalize_reconnect_fragment(fragment)
+
+
+# Wire reconnect manager dependencies
+reconnect_manager.get_detector = lambda: _detector
+reconnect_manager.teardown_pipeline = _teardown_pipeline
+reconnect_manager.start_pipeline = _start_pipeline
+reconnect_manager.finalize_reconnect_fragment = _on_reconnect_fragment_finalized
+reconnect_manager.wait_for_stream = _wait_for_stream_established
 
 # ---------------------------------------------------------------------------
 # FastAPI app with lifespan

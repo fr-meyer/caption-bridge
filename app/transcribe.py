@@ -30,6 +30,7 @@ async def transcribe(
     on_delta: Callable[[str], None],
     on_done: Callable[[], None] | None = None,
     on_error: Callable[[Exception], None] | None = None,
+    on_session_created: Callable[[], None] | None = None,
 ) -> None:
     """Stream audio to Mistral realtime transcription and forward events."""
     client_kwargs: dict = {"api_key": config.mistral_api_key}
@@ -53,6 +54,8 @@ async def transcribe(
             async for event in events:
                 if isinstance(event, RealtimeTranscriptionSessionCreated):
                     logger.info("Transcription session established")
+                    if on_session_created is not None:
+                        on_session_created()
                 elif isinstance(event, TranscriptionStreamTextDelta):
                     on_delta(event.text)
                 elif isinstance(event, TranscriptionStreamDone):
