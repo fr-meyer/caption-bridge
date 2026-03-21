@@ -56,8 +56,29 @@ def _on_session_created() -> None:
 
 
 async def _wait_for_stream_established() -> None:
-    """Block until the realtime stream session is created or an error occurs."""
-    await _stream_ready.wait()
+    """Block until the realtime stream session is created or an error occurs.
+
+    During reconnect, also monitors the attempt-failure signal so that
+    post-handshake errors/Done events are not silently swallowed.
+    """
+    if manager.session.status == "reconnecting":
+        ready_fut = asyncio.ensure_future(_stream_ready.wait())
+        failed_fut = asyncio.ensure_future(reconnect_manager.attempt_failed.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                [ready_fut, failed_fut],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for t in (ready_fut, failed_fut):
+                if not t.done():
+                    t.cancel()
+        if failed_fut in done:
+            raise RuntimeError(
+                "Reconnect attempt failed during stream establishment"
+            )
+    else:
+        await _stream_ready.wait()
     if _stream_error is not None:
         raise _stream_error
 
@@ -93,13 +114,14 @@ async def _start_pipeline() -> None:
     if manager.session.status != "reconnecting":
         manager.set_status("listening")
 
+    attempt_id = reconnect_manager.current_attempt_id
     _transcribe_task = asyncio.ensure_future(
         transcribe(
             audio_stream=_audio.stream(),
             config=settings,
             on_delta=_detector.push,
-            on_done=_on_transcription_done,
-            on_error=_on_transcription_error,
+            on_done=lambda: _on_transcription_done(attempt_id),
+            on_error=lambda exc: _on_transcription_error(exc, attempt_id),
             on_session_created=_on_session_created,
         )
     )
@@ -137,19 +159,42 @@ async def _stop_pipeline() -> None:
     await dispatcher.drain()
 
 
-def _on_transcription_done() -> None:
+def _on_transcription_done(attempt_id: int) -> None:
     global _stream_error
 
     if not _stream_ready.is_set():
         _stream_error = RuntimeError("Stream closed before session was established")
         _stream_ready.set()
 
-    if _pipeline_stopping or manager.session.status == "reconnecting":
+    if _pipeline_stopping:
         if _detector is not None:
             remaining = _detector.flush_reconnect_fragment()
             if remaining:
-                manager.finalize_segment(remaining)
-        logger.info("Transcription stream completed")
+                manager.finalize_reconnect_fragment(remaining)
+        logger.info("Transcription stream completed (pipeline stopping)")
+        return
+
+    if manager.session.status == "reconnecting":
+        if attempt_id != reconnect_manager.current_attempt_id:
+            logger.debug(
+                "Ignoring stale stream-done from old attempt %d (current: %d)",
+                attempt_id,
+                reconnect_manager.current_attempt_id,
+            )
+            return
+        if _detector is not None:
+            remaining = _detector.flush_reconnect_fragment()
+            if remaining:
+                manager.finalize_reconnect_fragment(remaining)
+        logger.warning(
+            "Unexpected stream done during reconnect attempt %d "
+            "— signaling attempt failure",
+            reconnect_manager.current_attempt_id,
+        )
+        _stream_error = RuntimeError(
+            "Stream closed unexpectedly during reconnect"
+        )
+        reconnect_manager.signal_attempt_failed()
         return
 
     logger.warning("Transcription stream ended unexpectedly — triggering reconnect")
@@ -158,12 +203,29 @@ def _on_transcription_done() -> None:
     )
 
 
-def _on_transcription_error(exc: Exception) -> None:
+def _on_transcription_error(exc: Exception, attempt_id: int) -> None:
     global _stream_error
     logger.error("Transcription error: %s", exc)
     if not _stream_ready.is_set():
         _stream_error = exc
         _stream_ready.set()
+
+    if manager.session.status == "reconnecting":
+        if attempt_id != reconnect_manager.current_attempt_id:
+            logger.debug(
+                "Ignoring stale error from old attempt %d (current: %d)",
+                attempt_id,
+                reconnect_manager.current_attempt_id,
+            )
+            return
+        logger.warning(
+            "Error during reconnect attempt %d — signaling attempt failure",
+            reconnect_manager.current_attempt_id,
+        )
+        _stream_error = exc
+        reconnect_manager.signal_attempt_failed()
+        return
+
     reconnect_manager.on_connection_error(exc)
 
 

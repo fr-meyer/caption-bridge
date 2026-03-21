@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_POST_HANDSHAKE_HEALTH_TIMEOUT_S = 2.0
+
 
 class ReconnectionManager:
     """Handles automatic reconnection with exponential backoff when the
@@ -23,6 +25,8 @@ class ReconnectionManager:
         self._sm = session_manager
         self._config = config
         self._retry_task: asyncio.Task[None] | None = None
+        self._attempt_id: int = 0
+        self._attempt_failed: asyncio.Event = asyncio.Event()
 
         self.get_detector: Callable[[], BoundaryDetector | None] | None = None
         self.teardown_pipeline: Callable[[], Awaitable[None]] | None = None
@@ -30,11 +34,27 @@ class ReconnectionManager:
         self.finalize_reconnect_fragment: Callable[[str], None] | None = None
         self.wait_for_stream: Callable[[], Awaitable[None]] | None = None
 
+    @property
+    def current_attempt_id(self) -> int:
+        return self._attempt_id
+
+    @property
+    def attempt_failed(self) -> asyncio.Event:
+        return self._attempt_failed
+
+    def signal_attempt_failed(self) -> None:
+        """Signal that the current reconnect attempt has failed post-handshake."""
+        self._attempt_failed.set()
+
     def on_connection_error(self, exc: Exception) -> None:
         if self._sm.session.status not in ("listening", "reconnecting"):
             return
         if self._retry_task is not None and not self._retry_task.done():
-            logger.info("Reconnect already in progress — ignoring duplicate error")
+            if self._sm.session.status == "reconnecting":
+                logger.info("Error during reconnect attempt — signaling attempt failure")
+                self._attempt_failed.set()
+            else:
+                logger.info("Reconnect already in progress — ignoring duplicate error")
             return
         self._retry_task = asyncio.ensure_future(self._reconnect_loop(exc))
 
@@ -42,6 +62,7 @@ class ReconnectionManager:
         if self._retry_task is not None:
             self._retry_task.cancel()
             self._retry_task = None
+        self._attempt_failed.clear()
 
     async def _reconnect_loop(self, exc: Exception) -> None:
         try:
@@ -63,11 +84,30 @@ class ReconnectionManager:
             backoff_ms = 1000
             assert self.start_pipeline is not None
             while True:
+                self._attempt_id += 1
+                self._attempt_failed.clear()
                 await asyncio.sleep(backoff_ms / 1000)
                 try:
                     await self.start_pipeline()
                     if self.wait_for_stream is not None:
                         await self.wait_for_stream()
+
+                    try:
+                        await asyncio.wait_for(
+                            self._attempt_failed.wait(),
+                            timeout=_POST_HANDSHAKE_HEALTH_TIMEOUT_S,
+                        )
+                        raise RuntimeError(
+                            "Stream failed post-handshake health check"
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+
+                    if self._attempt_failed.is_set():
+                        raise RuntimeError(
+                            "Stream failed post-handshake health check"
+                        )
+
                     self._sm.set_status("listening")
                     self._sm.update_partial("")
                     break
@@ -75,7 +115,8 @@ class ReconnectionManager:
                     raise
                 except Exception as retry_exc:
                     logger.warning(
-                        "Reconnect attempt failed (backoff=%dms): %s",
+                        "Reconnect attempt %d failed (backoff=%dms): %s",
+                        self._attempt_id,
                         backoff_ms,
                         retry_exc,
                     )
