@@ -6,9 +6,75 @@
     <title>CaptionBridge</title>
     <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-    <h1>CaptionBridge</h1>
-    <p>Placeholder — UI coming soon.</p>
-    <script src="/app.js"></script>
+<body data-state="idle_blocked">
+
+    <header>
+        <span class="title">CaptionBridge</span>
+        <div class="header-right">
+            <span id="elapsed">00:00</span>
+            <span class="status-indicator">
+                <span id="status-dot" class="status-dot"></span>
+                <span id="status-label">Checking…</span>
+            </span>
+        </div>
+    </header>
+
+    <div id="recovery-notice" class="recovery-notice hidden">
+        <div class="recovery-content">
+            <strong>Recovered previous session</strong>
+            <span>Transcript saved to <span id="recovery-path"></span></span>
+        </div>
+        <button id="dismiss-recovery" class="btn-text">Dismiss</button>
+    </div>
+
+    <div id="idle-panel" class="idle-panel">
+        <div id="checklist" class="checklist"></div>
+        <button id="start-btn" class="start-btn" disabled>Start</button>
+        <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
+    </div>
+
+    <div id="korean-partial" class="korean-partial"></div>
+
+    <div id="caption-log" class="caption-log"></div>
+
+    <button id="jump-latest" class="jump-latest hidden">↓ Jump to latest</button>
+
+    <div id="summary-bar" class="summary-bar">
+        <div class="summary-left">
+            <span id="caption-count"></span>
+            <span id="export-warning" class="export-warning">Transcript not yet exported</span>
+            <span id="export-confirm" class="export-confirm hidden"></span>
+        </div>
+        <div class="summary-right">
+            <button id="export-btn" class="btn-primary">Export</button>
+            <button id="new-session-btn" class="btn-secondary">New Session</button>
+        </div>
+    </div>
+
+    <footer id="controls-footer" class="controls-footer">
+        <div class="footer-left">
+            <button id="stop-btn" class="btn-danger footer-control">Stop</button>
+        </div>
+        <div class="footer-hints" id="footer-hints"></div>
+        <div class="footer-right">
+            <button id="font-dec" class="btn-icon footer-control">A−</button>
+            <button id="font-inc" class="btn-icon footer-control">A+</button>
+            <button id="korean-toggle" class="btn-icon footer-control" title="Toggle Korean">한</button>
+            <button id="fullscreen-btn" class="btn-icon footer-control">⛶</button>
+        </div>
+    </footer>
+
+    <div id="discard-modal" class="discard-modal">
+        <div class="modal-dialog">
+            <h2>Discard session?</h2>
+            <p>The current transcript has not been exported and will be lost.</p>
+            <div class="modal-actions">
+                <button id="cancel-discard" class="btn-secondary">Cancel</button>
+                <button id="confirm-discard" class="btn-danger">Discard &amp; start new</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js" defer></script>
 </body>
 </html>
