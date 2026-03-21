@@ -1,0 +1,8 @@
+mistralai
+fastapi
+uvicorn[standard]
+sounddevice
+pydantic
+pydantic-settings
+python-dotenv
+orjson
