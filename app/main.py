@@ -169,9 +169,9 @@ def _on_transcription_done(attempt_id: int) -> None:
 
     if _pipeline_stopping:
         if _detector is not None:
-            remaining = _detector.flush_reconnect_fragment()
+            remaining = _detector.flush_buffer()
             if remaining:
-                manager.finalize_reconnect_fragment(remaining)
+                manager.finalize_segment(remaining)
         logger.info("Transcription stream completed (pipeline stopping)")
         return
 

@@ -136,6 +136,17 @@ def run_recovery(config: AppConfig) -> RecoveryNotice | None:
         journal = SessionJournal(session_id=session_id, config=config)
         journal.record_session_exported(export_path)
 
+        archive_dir = journal_dir / "_archived"
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            journal_file.rename(archive_dir / journal_file.name)
+        except Exception:
+            logger.warning(
+                "Failed to archive journal %s — session_exported record "
+                "prevents re-recovery",
+                journal_file,
+            )
+
         notices.append(RecoveryNotice(
             recovered_session_id=session_id,
             export_path=export_path,

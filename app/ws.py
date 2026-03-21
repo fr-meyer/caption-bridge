@@ -156,6 +156,16 @@ async def _handle_stop() -> None:
 
 def _handle_export() -> None:
     assert manager is not None
+    if manager.session.status != "session_ended":
+        manager._emit("export_result", {
+            "success": False,
+            "path": None,
+            "error": (
+                f"Export is only available after the session has ended "
+                f"(current status: {manager.session.status})"
+            ),
+        })
+        return
     result = manager.export()
     manager._emit("export_result", result)
 
