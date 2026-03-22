@@ -674,7 +674,7 @@
 
             if (e.code === "Space") {
                 e.preventDefault();
-                if (s === "idle_ready") {
+                if (s === "idle_ready" && appState.recoveryFailure === null) {
                     appState.recoverySuppressed = true;
                     appState.recoveryNotice = null;
                     send({ type: "start" });
