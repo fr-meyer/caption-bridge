@@ -9,16 +9,27 @@ from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-# Universal sentence-ending punctuation followed by whitespace or end-of-string.
-_SENTENCE_END_RE = re.compile(r"[.!?。！？؟](?=\s|$)")
+# Sentence-ending punctuation with two heuristic branches:
+#   1. Latin (. ! ?) requires trailing whitespace or end-of-buffer to avoid
+#      splitting on abbreviations, decimals, etc.
+#   2. CJK / Arabic (。 ！ ？ ؟) split immediately — these scripts don't use
+#      inter-sentence whitespace.
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)|[。！？؟]")
 
 
 class BoundaryDetector:
     """Accumulates transcription deltas and fires callbacks on segment boundaries.
 
-    A boundary is detected either by universal sentence-ending punctuation
-    (`. ! ? 。 ！ ？ ؟`) or by a pause timeout (no new deltas within
-    *pause_timeout_s* seconds).
+    A boundary is detected by sentence-ending punctuation **or** by a pause
+    timeout (no new deltas within *pause_timeout_s* seconds).
+
+    Punctuation split policy
+    ------------------------
+    * **Latin** (`. ! ?`): split only when followed by whitespace or the end
+      of the current buffer, reducing false positives on abbreviations and
+      decimal numbers.
+    * **CJK / Arabic** (`。 ！ ？ ؟`): split immediately after the mark,
+      because these scripts do not use inter-sentence whitespace.
     """
 
     def __init__(
