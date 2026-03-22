@@ -50,13 +50,13 @@ def _write_transcript_txt(export_dir: Path, session: Session) -> None:
             else seg.source_text
         )
 
-        english_line = (
-            seg.english_text
-            if seg.english_text is not None and seg.translation_status == "done"
+        translated_line = (
+            seg.translated_text
+            if seg.translated_text is not None and seg.translation_status == "done"
             else "[translation unavailable]"
         )
 
-        lines.append(f"{prefix}{korean_line}\n{indent}{english_line}\n")
+        lines.append(f"{prefix}{korean_line}\n{indent}{translated_line}\n")
 
     (export_dir / "transcript.txt").write_text("\n".join(lines), encoding="utf-8")
 
@@ -64,6 +64,8 @@ def _write_transcript_txt(export_dir: Path, session: Session) -> None:
 def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig) -> None:
     data = {
         "session_id": session.id,
+        "source_language": session.source_language,
+        "target_language": session.target_language,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "config": {
@@ -76,7 +78,8 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
                 "created_at": seg.created_at.isoformat(),
                 "source_text": seg.source_text,
                 "segment_kind": seg.segment_kind,
-                "english_text": seg.english_text,
+                "translated_text": seg.translated_text,
+                "target_language": seg.target_language,
                 "translation_status": seg.translation_status,
             }
             for seg in session.segments

@@ -41,13 +41,15 @@ class SessionJournal:
             "source_text": seg.source_text,
             "segment_kind": seg.segment_kind,
             "created_at": seg.created_at.isoformat(),
+            "target_language": seg.target_language,
         })
 
     def record_translation_updated(self, seg: Segment) -> None:
         self._write({
             "type": "translation_updated",
             "seq": seg.seq,
-            "english_text": seg.english_text,
+            "translated_text": seg.translated_text,
+            "target_language": seg.target_language,
             "translation_status": seg.translation_status,
         })
 
@@ -113,6 +115,7 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     source_text=rec["source_text"],
                     segment_kind=rec["segment_kind"],
                     created_at=datetime.fromisoformat(rec["created_at"]),
+                    target_language=rec.get("target_language"),
                     translation_status="pending",
                 )
                 segments_by_seq[seg.seq] = seg
@@ -120,7 +123,8 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
             elif rec_type == "translation_updated":
                 seg = segments_by_seq.get(rec["seq"])
                 if seg is not None:
-                    seg.english_text = rec.get("english_text")
+                    seg.translated_text = rec.get("translated_text")
+                    seg.target_language = rec.get("target_language")
                     seg.translation_status = rec.get("translation_status", "pending")
 
         session.segments = [segments_by_seq[k] for k in sorted(segments_by_seq)]

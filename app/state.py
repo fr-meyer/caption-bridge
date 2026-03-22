@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import AppConfig
+from app.languages import is_valid_target_language
 
 if TYPE_CHECKING:
     from app.journal import SessionJournal
@@ -51,7 +52,8 @@ class Segment(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
     source_text: str
     segment_kind: SegmentKind
-    english_text: str | None = None
+    translated_text: str | None = None
+    target_language: str | None = None
     translation_status: TranslationStatus = "pending"
     translated_at: datetime | None = None
 
@@ -97,6 +99,8 @@ class Session(BaseModel):
     export_path: str | None = None
     export_failure: ExportFailure | None = None
     journal_path: str | None = None
+    source_language: str = "auto"
+    target_language: str = "en"
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
 
@@ -120,7 +124,7 @@ _VALID_TRANSITIONS: dict[Status, set[Status]] = {
     "idle_ready": {"idle_blocked", "listening"},
     "listening": {"reconnecting", "session_ended"},
     "reconnecting": {"listening", "session_ended"},
-    "session_ended": {"idle_blocked"},
+    "session_ended": {"idle_blocked", "idle_ready"},
 }
 
 
@@ -136,7 +140,7 @@ class SessionManager:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self.session = Session()
+        self.session = self._new_session()
         self.checks: list[ReadinessCheck] = []
         self.recovery_notice: RecoveryNotice | None = None
         self.recovery_state: RecoveryState | None = None
@@ -152,6 +156,20 @@ class SessionManager:
 
     def set_journal(self, journal: SessionJournal) -> None:
         self._journal = journal
+
+    def _new_session(self) -> Session:
+        target = self.config.default_target_language
+        if not is_valid_target_language(target):
+            logger.warning(
+                "Configured default_target_language %r is not a supported "
+                "language code; falling back to 'en'",
+                target,
+            )
+            target = "en"
+        return Session(
+            source_language=self.config.default_source_language,
+            target_language=target,
+        )
 
     # -- event system -------------------------------------------------------
 
@@ -186,6 +204,7 @@ class SessionManager:
             seq=self.session.next_seq,
             source_text=text,
             segment_kind="complete",
+            target_language=self.session.target_language,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -202,6 +221,7 @@ class SessionManager:
             seq=self.session.next_seq,
             source_text=text,
             segment_kind="reconnect_fragment",
+            target_language=self.session.target_language,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -218,7 +238,7 @@ class SessionManager:
             return
         n = self.config.translation_context_segments
         context = self.session.segments[-(n + 1):-1]
-        self._dispatcher.dispatch(seg, context, self.session.id)
+        self._dispatcher.dispatch(seg, context, self.session.id, seg.target_language)
 
     # -- translation marks (dormant in this ticket) -------------------------
 
@@ -228,7 +248,7 @@ class SessionManager:
                 return seg
         return None
 
-    def mark_translated(self, seq: int, english_text: str, session_id: str) -> None:
+    def mark_translated(self, seq: int, translated_text: str, target_language: str, session_id: str) -> None:
         if session_id != self.session.id:
             logger.warning(
                 "mark_translated: ignoring stale callback for seq #%d "
@@ -240,7 +260,8 @@ class SessionManager:
         if seg is None:
             logger.warning("mark_translated: segment #%d not found", seq)
             return
-        seg.english_text = english_text
+        seg.translated_text = translated_text
+        seg.target_language = target_language
         seg.translation_status = "done"
         seg.translated_at = _utcnow()
         if self._journal is not None:
@@ -305,7 +326,9 @@ class SessionManager:
                 {
                     "seq": seg.seq,
                     "source_text": seg.source_text,
-                    "english_text": seg.english_text,
+                    "translated_text": seg.translated_text,
+                    "target_language": seg.target_language,
+                    "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
                     "segment_kind": seg.segment_kind,
                 },
@@ -383,8 +406,7 @@ class SessionManager:
             self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
-        self.session = Session()
-        self.session.export_failure = None
+        self.session = self._new_session()
         self._journal = None
         if emit_snapshot:
             self._emit("session_snapshot", self.get_snapshot())
@@ -392,6 +414,8 @@ class SessionManager:
     # -- snapshot -----------------------------------------------------------
 
     def get_snapshot(self) -> dict[str, Any]:
+        from app.languages import get_available_target_languages
+
         s = self.session
         return {
             "status": s.status,
@@ -410,9 +434,18 @@ class SessionManager:
                 if self.recovery_notice
                 else None
             ),
+            "source_language": s.source_language,
+            "target_language": s.target_language,
+            "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         }
+
+    # -- language -------------------------------------------------------------
+
+    def set_target_language(self, language: str) -> None:
+        self.session.target_language = language
+        logger.info("Target language set to %s", language)
 
     # -- elapsed ticker -----------------------------------------------------
 

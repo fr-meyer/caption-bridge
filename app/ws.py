@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketState
 
 from app.config import settings
 from app.journal import SessionJournal, discard_recovery, retry_recovery
+from app.languages import is_valid_target_language
 from app.state import RecoveryNotice, SessionManager
 
 if TYPE_CHECKING:
@@ -88,7 +89,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             msg_type = msg.get("type")
 
             if msg_type == "start":
-                await _handle_start(websocket)
+                await _handle_start(websocket, msg)
+            elif msg_type == "set_target_language":
+                await _handle_set_target_language(websocket, msg)
             elif msg_type == "stop":
                 await _handle_stop()
             elif msg_type == "export":
@@ -113,7 +116,23 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             _active_ws = None
 
 
-async def _handle_start(ws: WebSocket) -> None:
+async def _handle_set_target_language(ws: WebSocket, msg: dict) -> None:
+    assert manager is not None
+    language = msg.get("language")
+    if language is None or not isinstance(language, str):
+        await ws.send_bytes(
+            orjson.dumps({"type": "error", "message": "set_target_language: missing 'language' field"})
+        )
+        return
+    if not is_valid_target_language(language):
+        await ws.send_bytes(
+            orjson.dumps({"type": "error", "message": f"Unsupported target language: {language!r}"})
+        )
+        return
+    manager.set_target_language(language)
+
+
+async def _handle_start(ws: WebSocket, msg: dict) -> None:
     assert manager is not None
 
     if manager.session.status != "idle_ready":
@@ -138,6 +157,20 @@ async def _handle_start(ws: WebSocket) -> None:
             )
         )
         return
+
+    target_language = msg.get("target_language")
+    if target_language is not None:
+        if not is_valid_target_language(target_language):
+            await ws.send_bytes(
+                orjson.dumps(
+                    {
+                        "type": "error",
+                        "message": f"Unsupported target language: {target_language!r}",
+                    }
+                )
+            )
+            return
+        manager.set_target_language(target_language)
 
     if start_pipeline is not None:
         try:

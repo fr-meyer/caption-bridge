@@ -27,6 +27,8 @@ class AppConfig(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8765
     export_dir: str = "./runs"
+    default_source_language: str = "auto"
+    default_target_language: str = "en"
     realtime_base_url: str | None = Field(
         default=None,
         validation_alias="MISTRAL_REALTIME_BASE_URL",

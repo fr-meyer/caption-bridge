@@ -11,18 +11,23 @@ from app.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
-    "Translate spoken Korean academic seminar text into concise, natural "
-    "English captions. Preserve names, code identifiers, equations, technical "
-    "terms, and acronyms. Do not explain or summarize beyond the spoken "
-    "content. If the Korean is fragmentary, produce the best readable caption "
-    "possible."
-)
+from app.languages import get_language_label
 
-RECONNECT_ADDENDUM = (
-    "\n\nNote: The following Korean text may be incomplete or cut off "
+_RECONNECT_ADDENDUM = (
+    "\n\nNote: The following text may be incomplete or cut off "
     "mid-sentence due to a connection interruption."
 )
+
+
+def _build_system_prompt(target_language: str) -> str:
+    label = get_language_label(target_language)
+    return (
+        f"Translate spoken academic seminar text into concise, natural "
+        f"{label} captions. Preserve names, code identifiers, equations, "
+        f"technical terms, and acronyms. Do not explain or summarize beyond "
+        f"the spoken content. If the source text is fragmentary, produce the "
+        f"best readable caption possible."
+    )
 
 
 class TranslationDispatcher:
@@ -38,9 +43,9 @@ class TranslationDispatcher:
 
     # -- public API ---------------------------------------------------------
 
-    def dispatch(self, segment, context_segments: list, session_id: str) -> None:
+    def dispatch(self, segment, context_segments: list, session_id: str, target_language: str) -> None:
         task = asyncio.ensure_future(
-            self._translate_task(segment, context_segments, session_id)
+            self._translate_task(segment, context_segments, session_id, target_language)
         )
         self._in_flight.add(task)
         task.add_done_callback(self._in_flight.discard)
@@ -61,15 +66,15 @@ class TranslationDispatcher:
     # -- internals ----------------------------------------------------------
 
     async def _translate_task(
-        self, segment, context_segments: list, session_id: str
+        self, segment, context_segments: list, session_id: str, target_language: str
     ) -> None:
         seq = segment.seq
         try:
-            messages = self._build_messages(segment, context_segments)
+            messages = self._build_messages(segment, context_segments, target_language)
             timeout_s = self._config.translation_timeout_ms / 1000
 
             try:
-                english = await asyncio.wait_for(
+                translated = await asyncio.wait_for(
                     self._call_api(messages), timeout=timeout_s
                 )
             except asyncio.TimeoutError:
@@ -82,7 +87,7 @@ class TranslationDispatcher:
                 )
                 await asyncio.sleep(1)
                 try:
-                    english = await asyncio.wait_for(
+                    translated = await asyncio.wait_for(
                         self._call_api(messages), timeout=timeout_s
                     )
                 except Exception as retry_exc:
@@ -95,9 +100,9 @@ class TranslationDispatcher:
                     return
 
             logger.info(
-                "Translated segment #%d: %s", seq, english[:80] if english else ""
+                "Translated segment #%d: %s", seq, translated[:80] if translated else ""
             )
-            self._session_manager.mark_translated(seq, english, session_id)
+            self._session_manager.mark_translated(seq, translated, target_language, session_id)
 
         except Exception:
             logger.exception(
@@ -114,11 +119,12 @@ class TranslationDispatcher:
         )
         return response.choices[0].message.content.strip()
 
-    def _build_messages(self, segment, context_segments: list) -> list[dict]:
-        system_content = SYSTEM_PROMPT
+    def _build_messages(self, segment, context_segments: list, target_language: str) -> list[dict]:
+        system_content = _build_system_prompt(target_language)
         if segment.segment_kind == "reconnect_fragment":
-            system_content += RECONNECT_ADDENDUM
+            system_content += _RECONNECT_ADDENDUM
 
+        label = get_language_label(target_language)
         if context_segments:
             context_lines = "\n".join(
                 f"{i}. {seg.source_text}"
@@ -126,12 +132,12 @@ class TranslationDispatcher:
             )
             user_content = (
                 f"Context (previous segments):\n{context_lines}\n\n"
-                f"Translate the following Korean segment into English:\n"
+                f"Translate the following segment into {label}:\n"
                 f"{segment.source_text}"
             )
         else:
             user_content = (
-                f"Translate the following Korean segment into English:\n"
+                f"Translate the following segment into {label}:\n"
                 f"{segment.source_text}"
             )
 

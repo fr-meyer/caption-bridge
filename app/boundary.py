@@ -9,15 +9,16 @@ from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-# Hangul syllable followed by sentence-ending punctuation (anywhere in text).
-_SENTENCE_END_RE = re.compile(r"[\uAC00-\uD7A3][.!?]")
+# Universal sentence-ending punctuation followed by whitespace or end-of-string.
+_SENTENCE_END_RE = re.compile(r"[.!?。！？؟](?=\s|$)")
 
 
 class BoundaryDetector:
     """Accumulates transcription deltas and fires callbacks on segment boundaries.
 
-    A boundary is detected either by Korean sentence-ending punctuation or by a
-    pause timeout (no new deltas within *pause_timeout_s* seconds).
+    A boundary is detected either by universal sentence-ending punctuation
+    (`. ! ? 。 ！ ？ ؟`) or by a pause timeout (no new deltas within
+    *pause_timeout_s* seconds).
     """
 
     def __init__(
