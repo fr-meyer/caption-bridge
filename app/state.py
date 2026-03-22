@@ -65,11 +65,20 @@ class ReadinessCheck(BaseModel):
     detail: str
 
 
+class ExportFailure(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    error: str
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class RecoveryNotice(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     recovered_session_id: str
-    export_path: str
+    status: Literal["success", "failed"]
+    export_path: str | None = None
+    error: str | None = None
     created_at: datetime
 
 
@@ -86,9 +95,20 @@ class Session(BaseModel):
     highest_pushed_seq: int = 0
     exported: bool = False
     export_path: str | None = None
+    export_failure: ExportFailure | None = None
     journal_path: str | None = None
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
+
+
+class RecoveryState(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    recovered_session_id: str
+    session_payload: Session
+    journal_path: str
+    last_error: str
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +139,7 @@ class SessionManager:
         self.session = Session()
         self.checks: list[ReadinessCheck] = []
         self.recovery_notice: RecoveryNotice | None = None
+        self.recovery_state: RecoveryState | None = None
         self._listeners: list[EventListener] = []
         self._elapsed_task: asyncio.Task[None] | None = None
         self._grace_task: asyncio.Task[None] | None = None
@@ -325,7 +346,10 @@ class SessionManager:
         self.checks = checks
         all_ready = all(c.ready for c in checks)
 
-        if all_ready and self.session.status == "idle_blocked":
+        if self.recovery_state is not None:
+            if self.session.status == "idle_ready":
+                self.set_status("idle_blocked")
+        elif all_ready and self.session.status == "idle_blocked":
             self.set_status("idle_ready")
         elif not all_ready and self.session.status == "idle_ready":
             self.set_status("idle_blocked")
@@ -343,23 +367,27 @@ class SessionManager:
         try:
             path = export_session(self.session, self.config, recovery=False)
         except Exception as exc:
+            self.session.export_failure = ExportFailure(error=str(exc))
             return {"success": False, "path": None, "error": str(exc)}
         self.session.exported = True
         self.session.export_path = path
+        self.session.export_failure = None
         if self._journal is not None:
             self._journal.record_session_exported(path)
         return {"success": True, "path": path, "error": None}
 
     # -- reset --------------------------------------------------------------
 
-    def reset(self) -> None:
+    def reset(self, *, emit_snapshot: bool = True) -> None:
         if not self.session.exported and self._journal is not None:
             self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
         self.session = Session()
+        self.session.export_failure = None
         self._journal = None
-        self._emit("session_snapshot", self.get_snapshot())
+        if emit_snapshot:
+            self._emit("session_snapshot", self.get_snapshot())
 
     # -- snapshot -----------------------------------------------------------
 
@@ -372,6 +400,11 @@ class SessionManager:
             "segments": [seg.model_dump(mode="json") for seg in s.segments],
             "exported": s.exported,
             "export_path": s.export_path,
+            "export_failure": (
+                s.export_failure.model_dump(mode="json")
+                if s.export_failure
+                else None
+            ),
             "recovery_notice": (
                 self.recovery_notice.model_dump(mode="json")
                 if self.recovery_notice

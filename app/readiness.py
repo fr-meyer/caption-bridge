@@ -89,6 +89,18 @@ class ReadinessPoller:
             self._task = None
             logger.info("ReadinessPoller stopped")
 
+    async def evaluate_now(self) -> None:
+        """Run all readiness checks immediately and update the manager."""
+        loop = asyncio.get_running_loop()
+        api_check = _check_api_key(self._config)
+        mic_avail, mic_perm = await asyncio.gather(
+            loop.run_in_executor(None, _check_mic_available),
+            loop.run_in_executor(None, _check_mic_permission),
+        )
+        self._manager.set_readiness([api_check, mic_avail, mic_perm])
+
+    run_once = evaluate_now
+
     async def _poll_loop(self) -> None:
         loop = asyncio.get_running_loop()
         interval = self._config.readiness_poll_interval_ms / 1000

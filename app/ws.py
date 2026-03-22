@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from app.config import settings
-from app.journal import SessionJournal
-from app.state import SessionManager
+from app.journal import SessionJournal, discard_recovery, retry_recovery
+from app.state import RecoveryNotice, SessionManager
+
+if TYPE_CHECKING:
+    from app.readiness import ReadinessPoller
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,7 @@ logger = logging.getLogger(__name__)
 manager: SessionManager | None = None
 start_pipeline: Callable[[], Any] | None = None
 stop_pipeline: Callable[[], Any] | None = None
+poller: ReadinessPoller | None = None
 
 _active_ws: WebSocket | None = None
 
@@ -91,6 +95,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 _handle_export()
             elif msg_type == "new_session":
                 await _handle_new_session()
+            elif msg_type == "retry_recovery":
+                await _handle_retry_recovery()
+            elif msg_type == "discard_recovery":
+                await _handle_discard_recovery()
             else:
                 logger.debug("Unknown WS message type: %s", msg_type)
 
@@ -177,6 +185,52 @@ async def _handle_new_session() -> None:
         "reconnecting",
     ):
         await stop_pipeline()
-    manager.reset()
+    manager.reset(emit_snapshot=False)
     journal = SessionJournal(session_id=manager.session.id, config=settings)
     manager.set_journal(journal)
+    if poller is not None:
+        await poller.evaluate_now()
+    manager._emit("session_snapshot", manager.get_snapshot())
+
+
+async def _handle_retry_recovery() -> None:
+    assert manager is not None
+    if manager.recovery_state is None:
+        logger.warning("retry_recovery: no recovery state")
+        return
+    if manager.recovery_notice is None or manager.recovery_notice.status != "failed":
+        logger.warning("retry_recovery: recovery notice is not in failed state")
+        return
+
+    export_path, error = retry_recovery(manager.recovery_state, settings)
+    if export_path is not None:
+        manager.recovery_notice = RecoveryNotice(
+            recovered_session_id=manager.recovery_state.recovered_session_id,
+            status="success",
+            export_path=export_path,
+            created_at=manager.recovery_state.created_at,
+        )
+        manager.recovery_state = None
+    else:
+        manager.recovery_state.last_error = error  # type: ignore[assignment]
+        if manager.recovery_notice is not None:
+            manager.recovery_notice.error = error
+
+    if poller is not None:
+        await poller.evaluate_now()
+    manager._emit("session_snapshot", manager.get_snapshot())
+
+
+async def _handle_discard_recovery() -> None:
+    assert manager is not None
+    if manager.recovery_state is None:
+        logger.warning("discard_recovery: no recovery state")
+        return
+
+    discard_recovery(manager.recovery_state, settings)
+    manager.recovery_state = None
+    manager.recovery_notice = None
+
+    if poller is not None:
+        await poller.evaluate_now()
+    manager._emit("session_snapshot", manager.get_snapshot())

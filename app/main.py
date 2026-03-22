@@ -36,6 +36,7 @@ reconnect_manager = ReconnectionManager(session_manager=manager, config=settings
 
 # Wire module-level references in ws.py
 ws.manager = manager
+ws.poller = poller
 
 # ---------------------------------------------------------------------------
 # Pipeline state (one session at a time)
@@ -262,10 +263,22 @@ reconnect_manager.wait_for_stream = _wait_for_stream_established
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    notice = run_recovery(settings)
-    if notice is not None:
-        manager.recovery_notice = notice
-        logger.info("Recovered session %s → %s", notice.recovered_session_id, notice.export_path)
+    result = run_recovery(settings)
+    if result.notice is not None:
+        manager.recovery_notice = result.notice
+        if result.recovery_state is not None:
+            manager.recovery_state = result.recovery_state
+            logger.warning(
+                "Recovery failed for session %s: %s",
+                result.notice.recovered_session_id,
+                result.notice.error,
+            )
+        else:
+            logger.info(
+                "Recovered session %s → %s",
+                result.notice.recovered_session_id,
+                result.notice.export_path,
+            )
 
     journal = SessionJournal(session_id=manager.session.id, config=settings)
     manager.set_journal(journal)

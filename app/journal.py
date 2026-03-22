@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import orjson
 
 from app.config import AppConfig
 from app.exporter import export_session
-from app.state import RecoveryNotice, Segment, Session
+from app.state import RecoveryNotice, RecoveryState, Segment, Session
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +61,20 @@ class SessionJournal:
         self._write({"type": "session_discarded"})
 
 
-def run_recovery(config: AppConfig) -> RecoveryNotice | None:
-    """Scan journal directory for incomplete sessions, export them, and return a notice."""
+@dataclass
+class RecoveryResult:
+    notice: RecoveryNotice | None
+    recovery_state: RecoveryState | None
+
+
+def run_recovery(config: AppConfig) -> RecoveryResult:
+    """Scan journal directory for incomplete sessions, export them, and return a result."""
     journal_dir = Path(config.journal_dir)
     if not journal_dir.exists():
-        return None
+        return RecoveryResult(notice=None, recovery_state=None)
 
     terminal_types = {"session_exported", "session_discarded"}
-    notices: list[RecoveryNotice] = []
+    candidates: list[tuple[RecoveryNotice, RecoveryState | None]] = []
 
     for journal_file in journal_dir.glob("*.jsonl"):
         try:
@@ -129,8 +136,22 @@ def run_recovery(config: AppConfig) -> RecoveryNotice | None:
 
         try:
             export_path = export_session(session, config, recovery=True)
-        except Exception:
+        except Exception as exc:
             logger.exception("Recovery export failed for session %s", session_id)
+            notice = RecoveryNotice(
+                recovered_session_id=session_id,
+                status="failed",
+                error=str(exc),
+                created_at=latest_ts,
+            )
+            state = RecoveryState(
+                recovered_session_id=session_id,
+                session_payload=session,
+                journal_path=str(journal_file),
+                last_error=str(exc),
+                created_at=latest_ts,
+            )
+            candidates.append((notice, state))
             continue
 
         journal = SessionJournal(session_id=session_id, config=config)
@@ -147,14 +168,71 @@ def run_recovery(config: AppConfig) -> RecoveryNotice | None:
                 journal_file,
             )
 
-        notices.append(RecoveryNotice(
+        notice = RecoveryNotice(
             recovered_session_id=session_id,
+            status="success",
             export_path=export_path,
             created_at=latest_ts,
-        ))
+        )
+        candidates.append((notice, None))
 
-    if not notices:
-        return None
+    if not candidates:
+        return RecoveryResult(notice=None, recovery_state=None)
 
-    notices.sort(key=lambda n: n.created_at, reverse=True)
-    return notices[0]
+    candidates.sort(key=lambda c: c[0].created_at, reverse=True)
+    best_notice, best_state = candidates[0]
+    return RecoveryResult(notice=best_notice, recovery_state=best_state)
+
+
+def retry_recovery(
+    recovery_state: RecoveryState, config: AppConfig
+) -> tuple[str, None] | tuple[None, str]:
+    """Re-attempt export of a failed recovery session.
+
+    Returns ``(export_path, None)`` on success or ``(None, error)`` on failure.
+    """
+    try:
+        export_path = export_session(
+            recovery_state.session_payload, config, recovery=True
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    journal = SessionJournal(
+        session_id=recovery_state.recovered_session_id, config=config
+    )
+    journal.record_session_exported(export_path)
+
+    journal_file = Path(recovery_state.journal_path)
+    journal_dir = journal_file.parent
+    archive_dir = journal_dir / "_archived"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        journal_file.rename(archive_dir / journal_file.name)
+    except Exception:
+        logger.warning(
+            "Failed to archive journal %s after retry",
+            journal_file,
+        )
+
+    return export_path, None
+
+
+def discard_recovery(recovery_state: RecoveryState, config: AppConfig) -> None:
+    """Discard a failed recovery session by recording it and archiving the journal."""
+    journal = SessionJournal(
+        session_id=recovery_state.recovered_session_id, config=config
+    )
+    journal.record_session_discarded()
+
+    journal_file = Path(recovery_state.journal_path)
+    journal_dir = journal_file.parent
+    archive_dir = journal_dir / "_archived"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        journal_file.rename(archive_dir / journal_file.name)
+    except Exception:
+        logger.warning(
+            "Failed to archive journal %s after discard",
+            journal_file,
+        )

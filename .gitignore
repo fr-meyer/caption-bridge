@@ -205,6 +205,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Conda
+.conda/
+conda-meta/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

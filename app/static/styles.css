@@ -528,3 +528,51 @@ body[data-state="session_ended"] #controls-footer {
     color: var(--red);
     margin-top: 2px;
 }
+
+/* ===== Export-failure modal ===== */
+.export-failure-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 20, 0.75);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+}
+
+.export-failure-modal.visible { display: flex; }
+
+/* ===== Recovery-failure warning ===== */
+.recovery-failure-warning {
+    margin: 12px 24px 0;
+    padding: 14px 16px;
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.recovery-failure-warning.hidden { display: none; }
+
+.recovery-failure-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 14px;
+}
+
+.recovery-failure-content strong {
+    color: var(--red);
+}
+
+.recovery-failure-content span {
+    color: var(--text-muted);
+}
+
+.recovery-failure-actions {
+    display: flex;
+    gap: 8px;
+}

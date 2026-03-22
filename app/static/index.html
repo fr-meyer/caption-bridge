@@ -27,6 +27,17 @@
         <button id="dismiss-recovery" class="btn-text">Dismiss</button>
     </div>
 
+    <div id="recovery-failure-warning" class="recovery-failure-warning hidden">
+        <div class="recovery-failure-content">
+            <strong>Previous session could not be saved</strong>
+            <span><span id="recovery-failure-error"></span></span>
+        </div>
+        <div class="recovery-failure-actions">
+            <button id="retry-recovery-btn" class="btn-primary">Retry Recovery Export</button>
+            <button id="discard-recovery-btn" class="btn-danger">Discard Recovered Session</button>
+        </div>
+    </div>
+
     <div id="idle-panel" class="idle-panel">
         <div id="checklist" class="checklist"></div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
@@ -63,6 +74,17 @@
             <button id="fullscreen-btn" class="btn-icon footer-control">⛶</button>
         </div>
     </footer>
+
+    <div id="export-failure-modal" class="export-failure-modal">
+        <div class="modal-dialog">
+            <h2>Transcript not saved</h2>
+            <p><span id="export-failure-error"></span></p>
+            <div class="modal-actions">
+                <button id="retry-export-btn" class="btn-primary">Retry Export</button>
+                <button id="discard-export-btn" class="btn-danger">Discard</button>
+            </div>
+        </div>
+    </div>
 
     <div id="discard-modal" class="discard-modal">
         <div class="modal-dialog">

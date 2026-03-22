@@ -23,6 +23,9 @@
         autoScroll: true,
         modalVisible: false,
         recoverySuppressed: false,
+        exportFailure: null,
+        exportFailureModalVisible: false,
+        recoveryFailure: null,
     };
 
     let ws = null;
@@ -65,6 +68,14 @@
         els.discardModal = $("discard-modal");
         els.cancelDiscard = $("cancel-discard");
         els.confirmDiscard = $("confirm-discard");
+        els.exportFailureModal = $("export-failure-modal");
+        els.exportFailureError = $("export-failure-error");
+        els.retryExportBtn = $("retry-export-btn");
+        els.discardExportBtn = $("discard-export-btn");
+        els.recoveryFailureWarning = $("recovery-failure-warning");
+        els.recoveryFailureError = $("recovery-failure-error");
+        els.retryRecoveryBtn = $("retry-recovery-btn");
+        els.discardRecoveryBtn = $("discard-recovery-btn");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -169,11 +180,26 @@
         appState.sourcePartial = msg.source_partial || "";
         appState.exported = msg.exported || false;
         appState.exportPath = msg.export_path || null;
-        appState.recoveryNotice = (msg.recovery_notice && !appState.recoverySuppressed)
-            ? msg.recovery_notice
-            : null;
         appState.startedAt = msg.started_at || null;
         appState.endedAt = msg.ended_at || null;
+
+        appState.exportFailure = msg.export_failure || null;
+        if (appState.exportFailure && msg.status === "session_ended") {
+            appState.exportFailureModalVisible = true;
+        } else {
+            appState.exportFailureModalVisible = false;
+        }
+
+        var notice = msg.recovery_notice;
+        if (notice && notice.status === "failed") {
+            appState.recoveryFailure = notice;
+            appState.recoveryNotice = null;
+        } else {
+            appState.recoveryFailure = null;
+            appState.recoveryNotice = (notice && !appState.recoverySuppressed)
+                ? notice
+                : null;
+        }
 
         // Rebuild captions from snapshot segments — include every row so
         // reconnect and reload hydrate the full transcript history.
@@ -230,6 +256,10 @@
             }
         }
 
+        if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
+            appState.exportFailureModalVisible = false;
+        }
+
         render();
     }
 
@@ -260,16 +290,17 @@
         if (msg.success) {
             appState.exported = true;
             appState.exportPath = msg.path || null;
+            appState.exportFailure = null;
+            appState.exportFailureModalVisible = false;
             renderSummary();
+            renderExportFailureModal();
         } else {
-            // Show error inline near export button
-            let errEl = els.summaryBar.querySelector(".export-error");
-            if (!errEl) {
-                errEl = document.createElement("span");
-                errEl.className = "export-error";
-                els.summaryBar.querySelector(".summary-left").appendChild(errEl);
-            }
-            errEl.textContent = msg.error || "Export failed";
+            appState.exportFailure = {
+                error: msg.error || "Export failed",
+                created_at: new Date().toISOString(),
+            };
+            appState.exportFailureModalVisible = true;
+            render();
         }
     }
 
@@ -291,9 +322,11 @@
         renderHeader();
         renderIdlePanel();
         renderRecoveryNotice();
+        renderRecoveryFailureWarning();
         renderKoreanPartial();
         renderSummary();
         renderModal();
+        renderExportFailureModal();
         renderFooter();
         renderKoreanVisibility();
         renderFontSize();
@@ -356,11 +389,13 @@
             els.checklist.appendChild(row);
         }
 
-        // Start button
-        els.startBtn.disabled = appState.status !== "idle_ready";
+        // Start button — also disabled when a recovery failure is unresolved
+        els.startBtn.disabled = appState.status !== "idle_ready" || appState.recoveryFailure !== null;
 
         // Hint
-        if (appState.status === "idle_blocked") {
+        if (appState.recoveryFailure !== null) {
+            els.idleHint.textContent = "Resolve the failed recovery above to enable Start.";
+        } else if (appState.status === "idle_blocked") {
             els.idleHint.textContent = "Resolve checklist blockers to enable Start.";
         } else {
             els.idleHint.textContent = "";
@@ -458,6 +493,24 @@
             els.discardModal.classList.add("visible");
         } else {
             els.discardModal.classList.remove("visible");
+        }
+    }
+
+    function renderExportFailureModal() {
+        if (appState.exportFailureModalVisible && appState.exportFailure) {
+            els.exportFailureModal.classList.add("visible");
+            els.exportFailureError.textContent = appState.exportFailure.error || "Export failed";
+        } else {
+            els.exportFailureModal.classList.remove("visible");
+        }
+    }
+
+    function renderRecoveryFailureWarning() {
+        if (appState.recoveryFailure) {
+            els.recoveryFailureWarning.classList.remove("hidden");
+            els.recoveryFailureError.textContent = appState.recoveryFailure.error || "Unknown error";
+        } else {
+            els.recoveryFailureWarning.classList.add("hidden");
         }
     }
 
@@ -571,6 +624,24 @@
             send({ type: "new_session" });
             resetSessionPreferences();
             render();
+        });
+
+        els.retryExportBtn.addEventListener("click", function () {
+            send({ type: "export" });
+        });
+
+        els.discardExportBtn.addEventListener("click", function () {
+            appState.exportFailureModalVisible = false;
+            appState.exportFailure = null;
+            send({ type: "new_session" });
+        });
+
+        els.retryRecoveryBtn.addEventListener("click", function () {
+            send({ type: "retry_recovery" });
+        });
+
+        els.discardRecoveryBtn.addEventListener("click", function () {
+            send({ type: "discard_recovery" });
         });
     }
 

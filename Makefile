@@ -3,7 +3,7 @@
 HOST ?= 127.0.0.1
 PORT ?= 8765
 
-.PHONY: run dev smoke
+.PHONY: run dev smoke setup-conda
 
 run:
 	uvicorn app.main:app --host $(HOST) --port $(PORT)
@@ -13,3 +13,6 @@ dev:
 
 smoke:
 	python -m scripts.smoke_test
+
+setup-conda:
+	conda env create -f environment.yml
