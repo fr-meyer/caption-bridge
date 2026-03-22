@@ -11,6 +11,8 @@
     <header>
         <span class="title">CaptionBridge</span>
         <div class="header-right">
+            <span id="header-lang" class="hidden"></span>
+            <button id="gear-btn" class="btn-icon" title="Settings (G)">⚙</button>
             <span id="elapsed">00:00</span>
             <span class="status-indicator">
                 <span id="status-dot" class="status-dot"></span>
@@ -40,15 +42,23 @@
 
     <div id="idle-panel" class="idle-panel">
         <div id="checklist" class="checklist"></div>
+        <div class="idle-lang-row">
+            <span class="idle-lang-label">Source language</span>
+            <span class="idle-lang-source">Auto-detect</span>
+        </div>
+        <div class="idle-lang-row">
+            <span class="idle-lang-label">Target language</span>
+            <select id="idle-target-select" class="drawer-select"></select>
+        </div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
 
-    <div id="korean-partial" class="korean-partial"></div>
+    <div id="source-partial" class="source-partial"></div>
 
     <div id="caption-log" class="caption-log"></div>
 
-    <button id="jump-latest" class="jump-latest hidden">↓ Jump to latest</button>
+    <button id="jump-latest" class="jump-latest hidden">↑ Jump to latest</button>
 
     <div id="summary-bar" class="summary-bar">
         <div class="summary-left">
@@ -70,10 +80,25 @@
         <div class="footer-right">
             <button id="font-dec" class="btn-icon footer-control">A−</button>
             <button id="font-inc" class="btn-icon footer-control">A+</button>
-            <button id="korean-toggle" class="btn-icon footer-control" title="Toggle Korean">한</button>
             <button id="fullscreen-btn" class="btn-icon footer-control">⛶</button>
         </div>
     </footer>
+
+    <div id="settings-drawer">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;font-size:15px">Settings</span>
+            <button id="drawer-close" class="btn-icon">✕</button>
+        </div>
+        <div class="drawer-section">
+            <span class="drawer-label">Target Language</span>
+            <select id="drawer-target-select" class="drawer-select"></select>
+            <span id="drawer-lang-error" class="export-error hidden"></span>
+        </div>
+        <div class="drawer-section">
+            <span class="drawer-label">Source Text</span>
+            <button id="source-toggle" class="btn-icon active" title="Toggle source text">Src</button>
+        </div>
+    </div>
 
     <div id="export-failure-modal" class="export-failure-modal">
         <div class="modal-dialog">

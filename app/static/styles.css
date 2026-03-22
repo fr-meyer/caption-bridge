@@ -20,7 +20,7 @@
 
 body {
     margin: 0;
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
     background: var(--bg);
@@ -198,8 +198,8 @@ header .title {
     text-align: center;
 }
 
-/* ===== Korean partial ===== */
-.korean-partial {
+/* ===== Source partial ===== */
+.source-partial {
     padding: 10px 24px;
     min-height: 44px;
     font-size: 15px;
@@ -227,20 +227,20 @@ header .title {
     gap: 4px;
 }
 
-.caption-english {
+.caption-translated {
     font-size: var(--caption-font-size);
     font-weight: 500;
     color: #ffffff;
     line-height: 1.4;
 }
 
-.caption-korean {
+.caption-source {
     font-size: 14px;
     color: var(--text-dim);
     line-height: 1.4;
 }
 
-body.korean-hidden .caption-korean { display: none; }
+body.source-hidden .caption-source { display: none; }
 
 .caption-entry.reconnect-fragment .fragment-label {
     font-size: 11px;
@@ -250,11 +250,11 @@ body.korean-hidden .caption-korean { display: none; }
     letter-spacing: 0.05em;
 }
 
-.caption-entry.reconnect-fragment .caption-english {
+.caption-entry.reconnect-fragment .caption-translated {
     font-style: italic;
 }
 
-.caption-english.translation-unavailable {
+.caption-translated.translation-unavailable {
     color: var(--text-dim);
     font-style: italic;
 }
@@ -262,7 +262,7 @@ body.korean-hidden .caption-korean { display: none; }
 /* ===== Jump to latest ===== */
 .jump-latest {
     position: fixed;
-    bottom: 80px;
+    top: 80px;
     right: 24px;
     padding: 8px 18px;
     border-radius: 999px;
@@ -465,7 +465,7 @@ body.korean-hidden .caption-korean { display: none; }
 /* Hide everything by default, then show per state */
 
 #idle-panel,
-#korean-partial,
+#source-partial,
 #caption-log,
 #controls-footer,
 #summary-bar {
@@ -479,13 +479,13 @@ body[data-state="idle_ready"] #idle-panel {
 }
 
 /* Listening */
-body[data-state="listening"] #korean-partial  { display: block; }
+body[data-state="listening"] #source-partial  { display: block; }
 body[data-state="listening"] #caption-log     { display: flex; }
 body[data-state="listening"] #controls-footer { display: flex; }
 body[data-state="listening"] .footer-control  { display: flex; }
 
 /* Reconnecting */
-body[data-state="reconnecting"] #korean-partial  { display: block; }
+body[data-state="reconnecting"] #source-partial  { display: block; }
 body[data-state="reconnecting"] #caption-log     { display: flex; }
 body[data-state="reconnecting"] #controls-footer { display: flex; }
 body[data-state="reconnecting"] .footer-control  { display: flex; }
@@ -575,4 +575,93 @@ body[data-state="session_ended"] #controls-footer {
 .recovery-failure-actions {
     display: flex;
     gap: 8px;
+}
+
+/* ===== Timecode ===== */
+.caption-timecode {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
+    margin-bottom: 2px;
+}
+
+/* ===== Settings drawer ===== */
+#settings-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 280px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 20px;
+}
+
+#settings-drawer.open {
+    transform: translateX(0);
+}
+
+.drawer-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.drawer-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.drawer-select {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+body:not([data-state="listening"]):not([data-state="reconnecting"]) #settings-drawer {
+    display: none !important;
+}
+
+/* ===== Header language badge ===== */
+#header-lang {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+}
+
+/* ===== Idle language selector ===== */
+.idle-lang-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 480px;
+}
+
+.idle-lang-label {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.idle-lang-source {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-style: italic;
 }

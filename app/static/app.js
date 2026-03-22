@@ -19,19 +19,23 @@
         startedAt: null,
         endedAt: null,
         fontSize: DEFAULT_FONT_SIZE,
-        koreanVisible: true,
+        sourceVisible: true,
         autoScroll: true,
         modalVisible: false,
         recoverySuppressed: false,
         exportFailure: null,
         exportFailureModalVisible: false,
         recoveryFailure: null,
+        targetLanguage: "en",
+        availableTargetLanguages: [],
+        drawerOpen: false,
     };
 
     let ws = null;
     let reconnectAttempt = 0;
     let reconnectTimer = null;
     let isFirstConnect = true;
+    let confirmedTargetLanguage = "en";
 
     // ===== DOM refs =====
 
@@ -49,7 +53,7 @@
         els.checklist = $("checklist");
         els.startBtn = $("start-btn");
         els.idleHint = $("idle-hint");
-        els.koreanPartial = $("korean-partial");
+        els.sourcePartial = $("source-partial");
         els.captionLog = $("caption-log");
         els.jumpLatest = $("jump-latest");
         els.summaryBar = $("summary-bar");
@@ -64,7 +68,6 @@
         els.fullscreenBtn = $("fullscreen-btn");
         els.fontDec = $("font-dec");
         els.fontInc = $("font-inc");
-        els.koreanToggle = $("korean-toggle");
         els.discardModal = $("discard-modal");
         els.cancelDiscard = $("cancel-discard");
         els.confirmDiscard = $("confirm-discard");
@@ -76,6 +79,14 @@
         els.recoveryFailureError = $("recovery-failure-error");
         els.retryRecoveryBtn = $("retry-recovery-btn");
         els.discardRecoveryBtn = $("discard-recovery-btn");
+        els.gearBtn = $("gear-btn");
+        els.drawerClose = $("drawer-close");
+        els.settingsDrawer = $("settings-drawer");
+        els.drawerTargetSelect = $("drawer-target-select");
+        els.sourceToggle = $("source-toggle");
+        els.idleTargetSelect = $("idle-target-select");
+        els.headerLang = $("header-lang");
+        els.drawerLangError = $("drawer-lang-error");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -183,6 +194,10 @@
         appState.startedAt = msg.started_at || null;
         appState.endedAt = msg.ended_at || null;
 
+        appState.availableTargetLanguages = msg.available_target_languages || [];
+        appState.targetLanguage = msg.target_language || "en";
+        confirmedTargetLanguage = appState.targetLanguage;
+
         appState.exportFailure = msg.export_failure || null;
         if (appState.exportFailure && msg.status === "session_ended") {
             appState.exportFailureModalVisible = true;
@@ -201,8 +216,6 @@
                 : null;
         }
 
-        // Rebuild captions from snapshot segments — include every row so
-        // reconnect and reload hydrate the full transcript history.
         appState.captions = [];
         const segments = msg.segments || [];
         for (let i = 0; i < segments.length; i++) {
@@ -210,11 +223,13 @@
             appState.captions.push({
                 seq: seg.seq,
                 sourceText: seg.source_text,
-                englishText: seg.english_text,
+                translatedText: seg.translated_text,
                 segmentKind: seg.segment_kind,
                 translationStatus: seg.translation_status,
+                createdAt: seg.created_at,
             });
         }
+        appState.captions.reverse();
         appState.segments = segments;
 
         if (appState.startedAt && (appState.status === "listening" || appState.status === "reconnecting")) {
@@ -234,6 +249,7 @@
             resetSessionPreferences();
         }
 
+        populateLanguageDropdowns();
         fullRender();
     }
 
@@ -243,7 +259,6 @@
     }
 
     function handleStatus(msg) {
-        const prev = appState.status;
         appState.status = msg.status;
 
         if (msg.status === "session_ended" && appState.startedAt) {
@@ -265,8 +280,8 @@
 
     function handleSourcePartial(msg) {
         appState.sourcePartial = msg.text || "";
-        if (els.koreanPartial) {
-            els.koreanPartial.textContent = appState.sourcePartial;
+        if (els.sourcePartial) {
+            els.sourcePartial.textContent = appState.sourcePartial;
         }
     }
 
@@ -274,15 +289,16 @@
         const entry = {
             seq: msg.seq,
             sourceText: msg.source_text,
-            englishText: msg.english_text,
+            translatedText: msg.translated_text,
             segmentKind: msg.segment_kind,
             translationStatus: msg.translation_status,
+            createdAt: msg.created_at,
         };
-        appState.captions.push(entry);
-        appendCaptionEntry(entry);
+        appState.captions.unshift(entry);
+        prependCaptionEntry(entry);
 
         if (appState.autoScroll && els.captionLog) {
-            els.captionLog.scrollTop = els.captionLog.scrollHeight;
+            els.captionLog.scrollTop = 0;
         }
     }
 
@@ -306,6 +322,24 @@
 
     function handleError(msg) {
         console.error("Server error:", msg.message);
+
+        if (msg.message && /language/i.test(msg.message)) {
+            appState.targetLanguage = confirmedTargetLanguage;
+            if (els.drawerTargetSelect) {
+                els.drawerTargetSelect.value = confirmedTargetLanguage;
+            }
+            if (els.idleTargetSelect) {
+                els.idleTargetSelect.value = confirmedTargetLanguage;
+            }
+            renderHeaderLang();
+            if (els.drawerLangError) {
+                els.drawerLangError.textContent = msg.message;
+                els.drawerLangError.classList.remove("hidden");
+                setTimeout(function () {
+                    els.drawerLangError.classList.add("hidden");
+                }, 4000);
+            }
+        }
     }
 
     function handleElapsed(msg) {
@@ -320,16 +354,18 @@
     function render() {
         document.body.dataset.state = appState.status;
         renderHeader();
+        renderHeaderLang();
         renderIdlePanel();
         renderRecoveryNotice();
         renderRecoveryFailureWarning();
-        renderKoreanPartial();
+        renderSourcePartial();
         renderSummary();
         renderModal();
         renderExportFailureModal();
         renderFooter();
-        renderKoreanVisibility();
+        renderSourceVisibility();
         renderFontSize();
+        renderDrawer();
     }
 
     function fullRender() {
@@ -340,7 +376,6 @@
     function renderHeader() {
         const s = appState.status;
 
-        // Status dot
         els.statusDot.className = "status-dot";
         if (s === "idle_ready" || s === "listening") {
             els.statusDot.classList.add("green");
@@ -348,7 +383,6 @@
             els.statusDot.classList.add("yellow");
         }
 
-        // Status label
         const labels = {
             idle_blocked: "Not ready",
             idle_ready: "Ready",
@@ -358,7 +392,6 @@
         };
         els.statusLabel.textContent = labels[s] || s;
 
-        // Elapsed
         if (s === "session_ended") {
             els.elapsed.textContent = formatTime(appState.elapsed) + " total";
         } else {
@@ -366,10 +399,22 @@
         }
     }
 
+    function renderHeaderLang() {
+        const s = appState.status;
+        if (s === "listening" || s === "reconnecting" || s === "session_ended") {
+            const lang = appState.availableTargetLanguages.find(
+                function (l) { return l.code === appState.targetLanguage; }
+            );
+            els.headerLang.textContent = lang ? lang.label : appState.targetLanguage;
+            els.headerLang.classList.remove("hidden");
+        } else {
+            els.headerLang.classList.add("hidden");
+        }
+    }
+
     function renderIdlePanel() {
         if (appState.status !== "idle_blocked" && appState.status !== "idle_ready") return;
 
-        // Checklist
         els.checklist.innerHTML = "";
         for (let i = 0; i < appState.checks.length; i++) {
             const check = appState.checks[i];
@@ -389,10 +434,8 @@
             els.checklist.appendChild(row);
         }
 
-        // Start button — also disabled when a recovery failure is unresolved
         els.startBtn.disabled = appState.status !== "idle_ready" || appState.recoveryFailure !== null;
 
-        // Hint
         if (appState.recoveryFailure !== null) {
             els.idleHint.textContent = "Resolve the failed recovery above to enable Start.";
         } else if (appState.status === "idle_blocked") {
@@ -412,9 +455,9 @@
         }
     }
 
-    function renderKoreanPartial() {
-        if (els.koreanPartial) {
-            els.koreanPartial.textContent = appState.sourcePartial;
+    function renderSourcePartial() {
+        if (els.sourcePartial) {
+            els.sourcePartial.textContent = appState.sourcePartial;
         }
     }
 
@@ -426,11 +469,11 @@
         els.captionLog.style.setProperty("--caption-font-size", appState.fontSize + "px");
 
         if (appState.autoScroll) {
-            els.captionLog.scrollTop = els.captionLog.scrollHeight;
+            els.captionLog.scrollTop = 0;
         }
     }
 
-    function appendCaptionEntry(entry) {
+    function buildCaptionEntry(entry) {
         const div = document.createElement("div");
         div.className = "caption-entry";
 
@@ -442,28 +485,50 @@
             div.appendChild(label);
         }
 
-        const eng = document.createElement("div");
-        eng.className = "caption-english";
+        if (entry.createdAt && appState.startedAt) {
+            const tcDiv = document.createElement("div");
+            tcDiv.className = "caption-timecode";
+            const createdAt = new Date(entry.createdAt);
+            const startedAt = new Date(appState.startedAt);
+            const offsetSeconds = Math.max(0, Math.floor((createdAt - startedAt) / 1000));
+            const relative = formatTime(offsetSeconds);
+            const wall = createdAt.toLocaleTimeString("en-GB", { hour12: false });
+            tcDiv.textContent = relative + " \u00b7 " + wall;
+            div.appendChild(tcDiv);
+        }
+
+        const trans = document.createElement("div");
+        trans.className = "caption-translated";
 
         if (
-            entry.englishText == null ||
+            entry.translatedText == null ||
             entry.translationStatus === "pending" ||
             entry.translationStatus === "timed_out" ||
             entry.translationStatus === "failed"
         ) {
-            eng.textContent = "translation unavailable";
-            eng.classList.add("translation-unavailable");
+            trans.textContent = "translation unavailable";
+            trans.classList.add("translation-unavailable");
         } else {
-            eng.textContent = entry.englishText;
+            trans.textContent = entry.translatedText;
         }
-        div.appendChild(eng);
+        div.appendChild(trans);
 
-        const kor = document.createElement("div");
-        kor.className = "caption-korean";
-        kor.textContent = entry.sourceText || "";
-        div.appendChild(kor);
+        const src = document.createElement("div");
+        src.className = "caption-source";
+        src.textContent = entry.sourceText || "";
+        div.appendChild(src);
 
-        els.captionLog.appendChild(div);
+        return div;
+    }
+
+    function prependCaptionEntry(entry) {
+        const node = buildCaptionEntry(entry);
+        els.captionLog.insertBefore(node, els.captionLog.firstChild);
+    }
+
+    function appendCaptionEntry(entry) {
+        const node = buildCaptionEntry(entry);
+        els.captionLog.appendChild(node);
     }
 
     function renderSummary() {
@@ -481,7 +546,6 @@
             els.exportConfirm.classList.add("hidden");
         }
 
-        // Clear any previous export error
         const errEl = els.summaryBar.querySelector(".export-error");
         if (errEl && appState.exported) {
             errEl.remove();
@@ -518,9 +582,9 @@
         const s = appState.status;
 
         if (s === "idle_blocked" || s === "idle_ready") {
-            els.footerHints.textContent = "F — Fullscreen · Space — Start when ready";
+            els.footerHints.textContent = "F \u2014 Fullscreen \u00b7 Space \u2014 Start when ready";
         } else if (s === "session_ended") {
-            els.footerHints.textContent = "S — Export · F — Fullscreen";
+            els.footerHints.textContent = "S \u2014 Export \u00b7 F \u2014 Fullscreen";
         } else if (s === "listening" || s === "reconnecting") {
             els.footerHints.textContent = "";
         } else {
@@ -528,11 +592,11 @@
         }
     }
 
-    function renderKoreanVisibility() {
-        document.body.classList.toggle("korean-hidden", !appState.koreanVisible);
+    function renderSourceVisibility() {
+        document.body.classList.toggle("source-hidden", !appState.sourceVisible);
 
-        if (els.koreanToggle) {
-            els.koreanToggle.classList.toggle("active", appState.koreanVisible);
+        if (els.sourceToggle) {
+            els.sourceToggle.classList.toggle("active", appState.sourceVisible);
         }
     }
 
@@ -542,14 +606,58 @@
         }
     }
 
+    function renderDrawer() {
+        if (els.settingsDrawer) {
+            const s = appState.status;
+            if (appState.drawerOpen && s !== "listening" && s !== "reconnecting") {
+                appState.drawerOpen = false;
+            }
+            els.settingsDrawer.classList.toggle("open", appState.drawerOpen);
+        }
+    }
+
+    function toggleDrawer() {
+        appState.drawerOpen = !appState.drawerOpen;
+        renderDrawer();
+    }
+
+    function populateLanguageDropdowns() {
+        var langs = appState.availableTargetLanguages;
+        if (langs.length === 0) {
+            langs = [{ code: "en", label: "English" }];
+        }
+
+        [els.idleTargetSelect, els.drawerTargetSelect].forEach(function (sel) {
+            if (!sel) return;
+            sel.innerHTML = "";
+            for (var i = 0; i < langs.length; i++) {
+                var opt = document.createElement("option");
+                opt.value = langs[i].code;
+                opt.textContent = langs[i].label;
+                sel.appendChild(opt);
+            }
+            sel.value = appState.targetLanguage;
+        });
+    }
+
+    function handleDrawerTargetChange(e) {
+        var newLang = e.target.value;
+        appState.targetLanguage = newLang;
+        send({ type: "set_target_language", language: newLang });
+        if (els.idleTargetSelect) {
+            els.idleTargetSelect.value = newLang;
+        }
+        renderHeaderLang();
+    }
+
     // ===== 3.5 Auto-Scroll =====
 
     function setupAutoScroll() {
         els.captionLog.addEventListener("scroll", function () {
             const el = els.captionLog;
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-            appState.autoScroll = atBottom;
-            if (atBottom) {
+            const atTop = el.scrollTop < 50;
+            appState.autoScroll = atTop;
+            if (atTop) {
                 els.jumpLatest.classList.add("hidden");
             } else {
                 els.jumpLatest.classList.remove("hidden");
@@ -557,7 +665,7 @@
         });
 
         els.jumpLatest.addEventListener("click", function () {
-            els.captionLog.scrollTop = els.captionLog.scrollHeight;
+            els.captionLog.scrollTop = 0;
             appState.autoScroll = true;
             els.jumpLatest.classList.add("hidden");
         });
@@ -569,11 +677,13 @@
         els.startBtn.addEventListener("click", function () {
             appState.recoverySuppressed = true;
             appState.recoveryNotice = null;
-            send({ type: "start" });
+            send({ type: "start", target_language: appState.targetLanguage });
         });
 
         els.stopBtn.addEventListener("click", function () {
             send({ type: "stop" });
+            appState.drawerOpen = false;
+            renderDrawer();
         });
 
         els.exportBtn.addEventListener("click", function () {
@@ -601,9 +711,23 @@
             stepFontSize(-1);
         });
 
-        els.koreanToggle.addEventListener("click", function () {
-            appState.koreanVisible = !appState.koreanVisible;
-            renderKoreanVisibility();
+        els.gearBtn.addEventListener("click", toggleDrawer);
+
+        els.drawerClose.addEventListener("click", function () {
+            appState.drawerOpen = false;
+            renderDrawer();
+        });
+
+        els.sourceToggle.addEventListener("click", function () {
+            appState.sourceVisible = !appState.sourceVisible;
+            renderSourceVisibility();
+        });
+
+        els.drawerTargetSelect.addEventListener("change", handleDrawerTargetChange);
+
+        els.idleTargetSelect.addEventListener("change", function (e) {
+            appState.targetLanguage = e.target.value;
+            renderHeaderLang();
         });
 
         els.dismissRecovery.addEventListener("click", function () {
@@ -667,7 +791,7 @@
     function setupKeyboard() {
         document.addEventListener("keydown", function (e) {
             const tag = e.target.tagName.toLowerCase();
-            if (tag === "input" || tag === "textarea" || tag === "button") return;
+            if (tag === "input" || tag === "textarea" || tag === "button" || tag === "select") return;
             if (appState.modalVisible) return;
 
             const s = appState.status;
@@ -677,7 +801,7 @@
                 if (s === "idle_ready" && appState.recoveryFailure === null) {
                     appState.recoverySuppressed = true;
                     appState.recoveryNotice = null;
-                    send({ type: "start" });
+                    send({ type: "start", target_language: appState.targetLanguage });
                 } else if (s === "listening" || s === "reconnecting") {
                     send({ type: "stop" });
                 }
@@ -709,6 +833,13 @@
                 }
                 return;
             }
+
+            if (e.key === "g" || e.key === "G") {
+                if (s === "listening" || s === "reconnecting") {
+                    toggleDrawer();
+                }
+                return;
+            }
         });
     }
 
@@ -716,11 +847,15 @@
 
     function resetSessionPreferences() {
         appState.fontSize = DEFAULT_FONT_SIZE;
-        appState.koreanVisible = true;
-        document.body.classList.remove("korean-hidden");
+        appState.sourceVisible = true;
+        appState.drawerOpen = false;
+        document.body.classList.remove("source-hidden");
         if (els.captionLog) {
             els.captionLog.style.setProperty("--caption-font-size", DEFAULT_FONT_SIZE + "px");
         }
+        populateLanguageDropdowns();
+        renderHeaderLang();
+        renderDrawer();
     }
 
     // ===== Utility =====
