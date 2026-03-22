@@ -227,6 +227,7 @@
                 segmentKind: seg.segment_kind,
                 translationStatus: seg.translation_status,
                 createdAt: seg.created_at,
+                targetLanguage: seg.target_language,
             });
         }
         appState.captions.reverse();
@@ -293,6 +294,7 @@
             segmentKind: msg.segment_kind,
             translationStatus: msg.translation_status,
             createdAt: msg.created_at,
+            targetLanguage: msg.target_language,
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);

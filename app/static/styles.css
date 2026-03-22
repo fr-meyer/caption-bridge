@@ -636,6 +636,10 @@ body:not([data-state="listening"]):not([data-state="reconnecting"]) #settings-dr
     display: none !important;
 }
 
+body:not([data-state="listening"]):not([data-state="reconnecting"]) #gear-btn {
+    display: none !important;
+}
+
 /* ===== Header language badge ===== */
 #header-lang {
     font-size: 12px;
