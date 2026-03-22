@@ -1,4 +1,4 @@
-mistralai
+mistralai>=2.0,<3
 fastapi
 uvicorn[standard]
 sounddevice
