@@ -36,6 +36,15 @@
     let reconnectTimer = null;
     let isFirstConnect = true;
     let confirmedTargetLanguage = "en";
+    let programmaticScroll = false;
+
+    function scrollToTop(container) {
+        programmaticScroll = true;
+        container.scrollTop = 0;
+        requestAnimationFrame(function () {
+            programmaticScroll = false;
+        });
+    }
 
     // ===== DOM refs =====
 
@@ -216,10 +225,13 @@
                 : null;
         }
 
+        const wasReviewing = !appState.autoScroll;
+
         appState.captions = [];
         const segments = msg.segments || [];
         for (let i = 0; i < segments.length; i++) {
             const seg = segments[i];
+            if (seg.translation_status === "pending") continue;
             appState.captions.push({
                 seq: seg.seq,
                 sourceText: seg.source_text,
@@ -252,6 +264,11 @@
 
         populateLanguageDropdowns();
         fullRender();
+
+        if (wasReviewing) {
+            appState.autoScroll = false;
+            els.jumpLatest.classList.remove("hidden");
+        }
     }
 
     function handleReadiness(msg) {
@@ -261,6 +278,10 @@
 
     function handleStatus(msg) {
         appState.status = msg.status;
+
+        if (msg.started_at) {
+            appState.startedAt = msg.started_at;
+        }
 
         if (msg.status === "session_ended" && appState.startedAt) {
             if (appState.endedAt) {
@@ -300,7 +321,7 @@
         prependCaptionEntry(entry);
 
         if (appState.autoScroll && els.captionLog) {
-            els.captionLog.scrollTop = 0;
+            scrollToTop(els.captionLog);
         }
     }
 
@@ -471,7 +492,7 @@
         els.captionLog.style.setProperty("--caption-font-size", appState.fontSize + "px");
 
         if (appState.autoScroll) {
-            els.captionLog.scrollTop = 0;
+            scrollToTop(els.captionLog);
         }
     }
 
@@ -656,19 +677,21 @@
 
     function setupAutoScroll() {
         els.captionLog.addEventListener("scroll", function () {
-            const el = els.captionLog;
-            const atTop = el.scrollTop < 50;
-            appState.autoScroll = atTop;
-            if (atTop) {
-                els.jumpLatest.classList.add("hidden");
-            } else {
+            if (programmaticScroll) return;
+            appState.autoScroll = false;
+            els.jumpLatest.classList.remove("hidden");
+        });
+
+        ["wheel", "touchmove", "pointerdown"].forEach(function (evt) {
+            els.captionLog.addEventListener(evt, function () {
+                appState.autoScroll = false;
                 els.jumpLatest.classList.remove("hidden");
-            }
+            });
         });
 
         els.jumpLatest.addEventListener("click", function () {
-            els.captionLog.scrollTop = 0;
             appState.autoScroll = true;
+            scrollToTop(els.captionLog);
             els.jumpLatest.classList.add("hidden");
         });
     }

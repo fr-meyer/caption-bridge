@@ -361,7 +361,10 @@ class SessionManager:
             if self._journal is not None:
                 self._journal.record_session_stopped()
 
-        self._emit("status", {"status": status})
+        status_data: dict[str, Any] = {"status": status}
+        if status == "listening" and self.session.started_at is not None:
+            status_data["started_at"] = self.session.started_at.isoformat()
+        self._emit("status", status_data)
 
     # -- readiness ----------------------------------------------------------
 

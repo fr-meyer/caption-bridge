@@ -217,14 +217,18 @@ header .title {
     padding: 16px 24px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
     scroll-behavior: smooth;
 }
 
 .caption-entry {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--accent);
 }
 
 .caption-translated {
@@ -235,7 +239,7 @@ header .title {
 }
 
 .caption-source {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--text-dim);
     line-height: 1.4;
 }
