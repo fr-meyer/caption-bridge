@@ -266,11 +266,13 @@ class TTSDispatcher:
             self._queue.task_done()
         was_muted = self._muted
         self._tts_epoch += 1
+        # Unlock is scoped to the browser/WebSocket connection: drain() runs on
+        # stop/reset/new_session within the same connection, so we do not clear
+        # _unlock_event or _audio_unlocked here. Re-gating happens only in ws.py
+        # on WebSocket disconnect or connection replacement via set_audio_unlocked(False).
         self._unmute_event.set()
         if was_muted:
             self._unmute_event.clear()
-        self._unlock_event.clear()
-        self._audio_unlocked = False
 
     async def start(self) -> None:
         if self._consumer_task is not None and not self._consumer_task.done():
