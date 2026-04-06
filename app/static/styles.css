@@ -222,6 +222,7 @@ header .title {
 }
 
 .caption-entry {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -672,4 +673,95 @@ body:not([data-state="listening"]):not([data-state="reconnecting"]) #gear-btn {
     font-size: 13px;
     color: var(--text-dim);
     font-style: italic;
+}
+
+/* ===== TTS / audio readback ===== */
+.caption-entry.speaking {
+    border-left-color: var(--green);
+    box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.27);
+}
+
+.speaking-label {
+    font-size: 11px;
+    color: var(--green);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.caption-entry .speaking-label {
+    display: none;
+}
+
+.caption-entry.speaking .speaking-label {
+    display: block;
+}
+
+.replay-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.caption-entry:hover .replay-btn,
+.caption-entry:focus-within .replay-btn {
+    opacity: 1;
+}
+
+.replay-btn:disabled {
+    cursor: not-allowed;
+    color: var(--text-dim);
+    opacity: 0;
+}
+
+.caption-entry:hover .replay-btn:disabled,
+.caption-entry:focus-within .replay-btn:disabled {
+    opacity: 0.4;
+}
+
+.btn-icon.tts-muted {
+    color: var(--text-dim);
+    border-color: var(--border);
+    background: transparent;
+}
+
+.btn-icon:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.audio-enable-banner {
+    margin: 0 24px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+#audio-enable-banner {
+    display: none;
+}
+
+body[data-state="listening"] #audio-enable-banner,
+body[data-state="reconnecting"] #audio-enable-banner {
+    display: flex;
 }
