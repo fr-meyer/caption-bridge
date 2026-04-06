@@ -59,6 +59,7 @@ class TTSDispatcher:
         self._tts_epoch: int = 0
         self._consumer_task: asyncio.Task[None] | None = None
         self._synth_task: asyncio.Task[None] | None = None
+        self._active_synth_kind: Literal["live", "replay"] | None = None
         self._unmute_event: asyncio.Event = asyncio.Event()
         self._unlock_event: asyncio.Event = asyncio.Event()
         self._unmute_event.set()
@@ -84,8 +85,18 @@ class TTSDispatcher:
             drop_idx = next((i for i, j in enumerate(items) if j.kind == "live"), None)
             if drop_idx is not None:
                 items.pop(drop_idx)
-            elif items:
-                items.pop(0)
+            else:
+                self._session_manager._emit(
+                    "tts_skipped",
+                    {
+                        "seq": seg.seq,
+                        "reason": "queue_full",
+                        "tts_epoch": self._tts_epoch,
+                    },
+                )
+                for j in items:
+                    self._queue.put_nowait(j)
+                return
             for j in items:
                 self._queue.put_nowait(j)
 
@@ -125,6 +136,13 @@ class TTSDispatcher:
             self._unmute_event.set()
         else:
             self._unmute_event.clear()
+            task = self._synth_task
+            if (
+                task is not None
+                and not task.done()
+                and self._active_synth_kind == "live"
+            ):
+                task.cancel()
 
     def set_audio_unlocked(self, unlocked: bool) -> None:
         self._audio_unlocked = unlocked
@@ -133,15 +151,20 @@ class TTSDispatcher:
         else:
             self._unlock_event.clear()
 
+    def _job_stale(self, job: TTSJob) -> bool:
+        if job.tts_epoch != self._tts_epoch:
+            return True
+        if job.session_id != self._session_manager.session.id:
+            return True
+        return False
+
     async def _consumer(self) -> None:
         try:
             while True:
                 await self._unlock_event.wait()
                 job = await self._queue.get()
                 try:
-                    if job.kind == "live" and self._muted:
-                        await self._unmute_event.wait()
-                    if job.tts_epoch != self._tts_epoch:
+                    if self._job_stale(job):
                         logger.debug(
                             "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
                             job.seq,
@@ -149,6 +172,17 @@ class TTSDispatcher:
                             self._tts_epoch,
                         )
                         continue
+                    if job.kind == "live" and self._muted:
+                        await self._unmute_event.wait()
+                    if self._job_stale(job):
+                        logger.debug(
+                            "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
+                            job.seq,
+                            job.tts_epoch,
+                            self._tts_epoch,
+                        )
+                        continue
+                    self._active_synth_kind = job.kind
                     self._synth_task = asyncio.ensure_future(self._synthesise(job))
                     try:
                         await self._synth_task
@@ -156,6 +190,7 @@ class TTSDispatcher:
                         pass
                     finally:
                         self._synth_task = None
+                        self._active_synth_kind = None
                 finally:
                     self._queue.task_done()
         except asyncio.CancelledError:
@@ -229,7 +264,11 @@ class TTSDispatcher:
         while not self._queue.empty():
             self._queue.get_nowait()
             self._queue.task_done()
+        was_muted = self._muted
         self._tts_epoch += 1
+        self._unmute_event.set()
+        if was_muted:
+            self._unmute_event.clear()
         self._unlock_event.clear()
         self._audio_unlocked = False
 
