@@ -9,6 +9,7 @@ from typing import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI
+from mistralai.client import Mistral
 from starlette.staticfiles import StaticFiles
 
 from app.audio import AudioCapture
@@ -18,8 +19,10 @@ from app.journal import SessionJournal, run_recovery
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
 from app.state import SessionManager
+
 from app.transcribe import transcribe
 from app.translate import TranslationDispatcher
+from app.tts import TTSDispatcher
 from app import ws
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,9 @@ logger = logging.getLogger(__name__)
 manager = SessionManager(config=settings)
 dispatcher = TranslationDispatcher(session_manager=manager, config=settings)
 manager.set_dispatcher(dispatcher)
+mistral_client = Mistral(api_key=settings.mistral_api_key)
+tts_dispatcher = TTSDispatcher(mistral_client, manager, settings)
+manager.set_tts_dispatcher(tts_dispatcher)
 poller = ReadinessPoller(manager=manager, config=settings)
 reconnect_manager = ReconnectionManager(session_manager=manager, config=settings)
 
@@ -159,6 +165,7 @@ async def _stop_pipeline() -> None:
     reconnect_manager.cancel()
     await _teardown_pipeline()
     await dispatcher.drain()
+    await tts_dispatcher.drain()
 
 
 def _on_transcription_done(attempt_id: int) -> None:
@@ -284,9 +291,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     manager.set_journal(journal)
 
     poller.start()
+    await tts_dispatcher.start()
     logger.info("CaptionBridge started on %s:%s", settings.host, settings.port)
     yield
     poller.stop()
+    await tts_dispatcher.stop()
     await _stop_pipeline()
     logger.info("CaptionBridge shut down")
 

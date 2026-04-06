@@ -218,7 +218,7 @@ async def _handle_new_session() -> None:
         "reconnecting",
     ):
         await stop_pipeline()
-    manager.reset(emit_snapshot=False)
+    await manager.reset(emit_snapshot=False)
     journal = SessionJournal(session_id=manager.session.id, config=settings)
     manager.set_journal(journal)
     if poller is not None:
