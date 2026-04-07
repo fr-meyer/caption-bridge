@@ -183,7 +183,7 @@ class TTSDispatcher:
                             self._tts_epoch,
                         )
                         continue
-                    if self._muted:
+                    if self._muted and self._session_manager.session.status in ("listening", "reconnecting"):
                         await self._unmute_event.wait()
                     if self._job_stale(job):
                         logger.debug(
