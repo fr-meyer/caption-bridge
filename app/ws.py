@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -14,26 +15,35 @@ from app.config import settings
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
 from app.state import RecoveryNotice, SessionManager
+from app.tts import VOICE_MAP
 
 if TYPE_CHECKING:
     from app.readiness import ReadinessPoller
 
 logger = logging.getLogger(__name__)
 
+_OUTBOUND_QUEUE_WARN_DEPTH = 50
+_OUTBOUND_QUEUE_CRITICAL_DEPTH = 200
+_OUTBOUND_SEND_LAG_WARN_SECS = 2.0
+
 
 def _enqueue_outbound(
-    queue: asyncio.Queue[dict[str, Any]],
+    queue: asyncio.Queue[tuple[dict[str, Any], float]],
     event: dict[str, Any],
 ) -> None:
     """Enqueue for the WS writer; never blocks. Unbounded FIFO; depth warnings only."""
-    queue.put_nowait(event)
+    enqueue_time = time.monotonic()
+    event_type = event.get("type")
+    queue.put_nowait((event, enqueue_time))
     depth = queue.qsize()
-    if depth > 256:
-        logger.warning(
-            "Outbound queue depth high: depth=%s event_type=%s",
+    if depth >= _OUTBOUND_QUEUE_CRITICAL_DEPTH:
+        logger.error(
+            "Outbound queue critical depth: depth=%s event_type=%s — possible memory growth risk",
             depth,
-            event.get("type"),
+            event_type,
         )
+    elif depth >= _OUTBOUND_QUEUE_WARN_DEPTH:
+        logger.warning("Outbound queue pressure: depth=%s event_type=%s", depth, event_type)
 
 
 # Module-level references set by main.py at startup
@@ -53,12 +63,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
-    outbound_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]] = asyncio.Queue()
 
     async def _writer() -> None:
         try:
             while True:
-                event = await outbound_queue.get()
+                event, enqueue_time = await outbound_queue.get()
+                lag = time.monotonic() - enqueue_time
+                if lag >= _OUTBOUND_SEND_LAG_WARN_SECS:
+                    logger.warning(
+                        "Outbound send lag: lag=%.2fs event_type=%s",
+                        lag,
+                        event.get("type"),
+                    )
                 try:
                     await websocket.send_bytes(orjson.dumps(event))
                 except Exception:
@@ -148,7 +165,7 @@ async def _handle_tts_audio_enabled() -> None:
     logger.debug("TTS audio unlocked by client")
 
 
-async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]) -> None:
+async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
     assert manager is not None
     muted = msg.get("muted")
     if not isinstance(muted, bool):
@@ -162,7 +179,7 @@ async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[dict[str, An
     manager._tts_dispatcher.set_muted(muted)
 
 
-async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]) -> None:
+async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
     assert manager is not None
     seq = msg.get("seq")
     if not isinstance(seq, int):
@@ -197,6 +214,23 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[dict[str, 
         )
         return
 
+    if seg.target_language not in VOICE_MAP:
+        tts_epoch = (
+            manager._tts_dispatcher._tts_epoch
+            if manager._tts_dispatcher is not None
+            else 0
+        )
+        _enqueue_outbound(
+            outbound_queue,
+            {
+                "type": "tts_skipped",
+                "seq": seq,
+                "reason": "unsupported_language",
+                "tts_epoch": tts_epoch,
+            },
+        )
+        return
+
     if manager._tts_dispatcher is None:
         return
 
@@ -214,7 +248,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[dict[str, 
         logger.debug("tts_replay ignored: status %s", status)
 
 
-async def _handle_set_target_language(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]) -> None:
+async def _handle_set_target_language(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
     assert manager is not None
     language = msg.get("language")
     if language is None or not isinstance(language, str):
@@ -232,7 +266,7 @@ async def _handle_set_target_language(msg: dict, outbound_queue: asyncio.Queue[d
     manager.set_target_language(language)
 
 
-async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]) -> None:
+async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
     assert manager is not None
 
     if manager.session.status != "idle_ready":
@@ -272,6 +306,8 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]
     if start_pipeline is not None:
         try:
             await start_pipeline()
+            if manager._tts_dispatcher is not None:
+                manager._tts_dispatcher.reset_mute()
         except Exception as exc:
             logger.exception("Pipeline startup failed")
             _enqueue_outbound(
@@ -315,6 +351,8 @@ async def _handle_new_session() -> None:
     ):
         await stop_pipeline()
     await manager.reset(emit_snapshot=False)
+    if manager._tts_dispatcher is not None:
+        manager._tts_dispatcher.reset_mute()
     journal = SessionJournal(session_id=manager.session.id, config=settings)
     manager.set_journal(journal)
     if poller is not None:

@@ -298,9 +298,11 @@
 
         if (isFirstConnect) {
             resetSessionPreferences();
+            send({ type: "tts_mute", muted: false });
             isFirstConnect = false;
         } else if (appState.status === "idle_blocked" || appState.status === "idle_ready") {
             resetSessionPreferences();
+            send({ type: "tts_mute", muted: false });
         }
 
         populateLanguageDropdowns();
@@ -1057,6 +1059,7 @@
         els.startBtn.addEventListener("click", function () {
             appState.recoverySuppressed = true;
             appState.recoveryNotice = null;
+            send({ type: "tts_mute", muted: false });
             send({ type: "start", target_language: appState.targetLanguage });
         });
 
@@ -1127,6 +1130,7 @@
             appState.recoveryNotice = null;
             send({ type: "new_session" });
             resetSessionPreferences();
+            send({ type: "tts_mute", muted: false });
             render();
         });
 
@@ -1213,6 +1217,7 @@
                 if (s === "idle_ready" && appState.recoveryFailure === null) {
                     appState.recoverySuppressed = true;
                     appState.recoveryNotice = null;
+                    send({ type: "tts_mute", muted: false });
                     send({ type: "start", target_language: appState.targetLanguage });
                 } else if (s === "listening" || s === "reconnecting") {
                     send({ type: "stop" });

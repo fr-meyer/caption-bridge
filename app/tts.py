@@ -112,6 +112,17 @@ class TTSDispatcher:
         self._queue.put_nowait(job)
 
     def enqueue_replay(self, seq: int, text: str, language: str) -> None:
+        if language not in VOICE_MAP:
+            self._session_manager._emit(
+                "tts_skipped",
+                {
+                    "seq": seq,
+                    "reason": "unsupported_language",
+                    "tts_epoch": self._tts_epoch,
+                },
+            )
+            return
+
         items: list[TTSJob] = []
         while not self._queue.empty():
             items.append(self._queue.get_nowait())
@@ -150,6 +161,10 @@ class TTSDispatcher:
             self._unlock_event.set()
         else:
             self._unlock_event.clear()
+
+    def reset_mute(self) -> None:
+        self._muted = False
+        self._unmute_event.set()
 
     def _job_stale(self, job: TTSJob) -> bool:
         if job.tts_epoch != self._tts_epoch:
