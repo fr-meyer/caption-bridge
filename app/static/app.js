@@ -571,7 +571,7 @@
         if (ttsActiveSourceNode || ttsPlaybackStarting || ttsPlaybackQueue.length === 0) {
             return;
         }
-        if (appState.ttsMuted) {
+        if (appState.ttsMuted && (appState.status === "listening" || appState.status === "reconnecting")) {
             return;
         }
         if (!audioContext) {
