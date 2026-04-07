@@ -20,91 +20,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Bounded queue: backpressure via non-blocking eviction of low-priority tts_audio.
-OUTBOUND_QUEUE_MAXSIZE = 256
 
-
-def _enqueue_outbound_with_backpressure(
+def _enqueue_outbound(
     queue: asyncio.Queue[dict[str, Any]],
     event: dict[str, Any],
 ) -> None:
-    """Enqueue for the WS writer; never blocks. Evicts tts_audio under pressure."""
-    if queue.maxsize <= 0:
-        queue.put_nowait(event)
-        return
-
-    if not queue.full():
-        queue.put_nowait(event)
-        return
-
-    etype = event.get("type")
-    maxsize = queue.maxsize
-
-    if etype == "tts_audio":
-        drained: list[dict[str, Any]] = []
-        while True:
-            try:
-                victim = queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if victim.get("type") == "tts_audio":
-                logger.warning(
-                    "Outbound queue pressure: dropped queued tts_audio (seq=%s chunk_index=%s)",
-                    victim.get("seq"),
-                    victim.get("chunk_index"),
-                )
-                for d in drained:
-                    queue.put_nowait(d)
-                queue.put_nowait(event)
-                return
-            drained.append(victim)
-        for d in drained:
-            queue.put_nowait(d)
+    """Enqueue for the WS writer; never blocks. Unbounded FIFO; depth warnings only."""
+    queue.put_nowait(event)
+    depth = queue.qsize()
+    if depth > 256:
         logger.warning(
-            "Outbound queue pressure: dropped incoming tts_audio (seq=%s chunk_index=%s); "
-            "queue held no evictable tts_audio",
-            event.get("seq"),
-            event.get("chunk_index"),
-        )
-        return
-
-    drained: list[dict[str, Any]] = []
-    while True:
-        try:
-            drained.append(queue.get_nowait())
-        except asyncio.QueueEmpty:
-            break
-
-    kept: list[dict[str, Any]] = []
-    dropped_tts = 0
-    for x in drained:
-        if x.get("type") == "tts_audio":
-            dropped_tts += 1
-        else:
-            kept.append(x)
-    if dropped_tts:
-        logger.warning(
-            "Outbound queue pressure: evicted %d tts_audio chunk(s) to enqueue event type=%s",
-            dropped_tts,
-            etype,
-        )
-
-    while len(kept) >= maxsize:
-        victim = kept.pop(0)
-        logger.warning(
-            "Outbound queue pressure: dropped oldest event type=%s to preserve ordering for type=%s",
-            victim.get("type"),
-            etype,
-        )
-
-    for x in kept:
-        queue.put_nowait(x)
-    try:
-        queue.put_nowait(event)
-    except asyncio.QueueFull:
-        logger.error(
-            "Outbound queue pressure: failed to enqueue event type=%s after eviction",
-            etype,
+            "Outbound queue depth high: depth=%s event_type=%s",
+            depth,
+            event.get("type"),
         )
 
 
@@ -125,9 +53,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
-    outbound_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
-        maxsize=OUTBOUND_QUEUE_MAXSIZE
-    )
+    outbound_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     async def _writer() -> None:
         try:
@@ -156,14 +82,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     _active_ws = websocket
 
     def event_listener(event: dict[str, Any]) -> None:
-        _enqueue_outbound_with_backpressure(outbound_queue, event)
+        _enqueue_outbound(outbound_queue, event)
 
     manager.on_client_connect()
     manager.subscribe(event_listener)
 
     try:
         snapshot = manager.get_snapshot()
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue, {"type": "session_snapshot", **snapshot}
         )
 
@@ -226,7 +152,7 @@ async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[dict[str, An
     assert manager is not None
     muted = msg.get("muted")
     if not isinstance(muted, bool):
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "tts_mute: 'muted' must be a boolean"},
         )
@@ -240,7 +166,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[dict[str, 
     assert manager is not None
     seq = msg.get("seq")
     if not isinstance(seq, int):
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "tts_replay: 'seq' must be an integer"},
         )
@@ -248,21 +174,21 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[dict[str, 
 
     seg = next((s for s in manager.session.segments if s.seq == seq), None)
     if seg is None:
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"tts_replay: segment {seq} not found"},
         )
         return
 
     if seg.translated_text is None or seg.translated_text == "":
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"tts_replay: segment {seq} has no translation"},
         )
         return
 
     if seg.target_language is None or seg.target_language == "":
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {
                 "type": "error",
@@ -292,13 +218,13 @@ async def _handle_set_target_language(msg: dict, outbound_queue: asyncio.Queue[d
     assert manager is not None
     language = msg.get("language")
     if language is None or not isinstance(language, str):
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "set_target_language: missing 'language' field"},
         )
         return
     if not is_valid_target_language(language):
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"Unsupported target language: {language!r}"},
         )
@@ -310,7 +236,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]
     assert manager is not None
 
     if manager.session.status != "idle_ready":
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {
                 "type": "error",
@@ -321,7 +247,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]
 
     all_ready = all(c.ready for c in manager.checks)
     if not all_ready:
-        _enqueue_outbound_with_backpressure(
+        _enqueue_outbound(
             outbound_queue,
             {
                 "type": "error",
@@ -333,7 +259,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]
     target_language = msg.get("target_language")
     if target_language is not None:
         if not is_valid_target_language(target_language):
-            _enqueue_outbound_with_backpressure(
+            _enqueue_outbound(
                 outbound_queue,
                 {
                     "type": "error",
@@ -348,7 +274,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[dict[str, Any]]
             await start_pipeline()
         except Exception as exc:
             logger.exception("Pipeline startup failed")
-            _enqueue_outbound_with_backpressure(
+            _enqueue_outbound(
                 outbound_queue,
                 {
                     "type": "error",

@@ -672,7 +672,7 @@
         var s = appState.status;
         var banner = els.audioEnableBanner;
         if (banner) {
-            if ((s === "listening" || s === "reconnecting") && !appState.ttsAudioUnlocked) {
+            if ((s === "listening" || s === "reconnecting" || s === "session_ended") && !appState.ttsAudioUnlocked) {
                 banner.classList.remove("hidden");
             } else {
                 banner.classList.add("hidden");

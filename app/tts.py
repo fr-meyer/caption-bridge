@@ -182,6 +182,16 @@ class TTSDispatcher:
                             self._tts_epoch,
                         )
                         continue
+                    if not self._audio_unlocked:
+                        await self._unlock_event.wait()
+                    if self._job_stale(job):
+                        logger.debug(
+                            "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
+                            job.seq,
+                            job.tts_epoch,
+                            self._tts_epoch,
+                        )
+                        continue
                     self._active_synth_kind = job.kind
                     self._synth_task = asyncio.ensure_future(self._synthesise(job))
                     try:

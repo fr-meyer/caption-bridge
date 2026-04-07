@@ -762,6 +762,7 @@ body:not([data-state="listening"]):not([data-state="reconnecting"]) #gear-btn {
 }
 
 body[data-state="listening"] #audio-enable-banner,
-body[data-state="reconnecting"] #audio-enable-banner {
+body[data-state="reconnecting"] #audio-enable-banner,
+body[data-state="session_ended"] #audio-enable-banner {
     display: flex;
 }
