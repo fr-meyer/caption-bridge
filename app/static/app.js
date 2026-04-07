@@ -531,11 +531,11 @@
 
         delete ttsChunkBuffers[key];
 
-        var numSamples = pcm.length / 2;
+        var numSamples = Math.floor(pcm.length / 4);
         var view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
         var float32 = new Float32Array(numSamples);
         for (i = 0; i < numSamples; i++) {
-            float32[i] = view.getInt16(i * 2, true) / 32768;
+            float32[i] = view.getFloat32(i * 4, true);
         }
 
         if (!audioContext) {

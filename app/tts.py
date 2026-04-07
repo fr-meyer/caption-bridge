@@ -63,6 +63,7 @@ class TTSDispatcher:
         self._unmute_event: asyncio.Event = asyncio.Event()
         self._unlock_event: asyncio.Event = asyncio.Event()
         self._unmute_event.set()
+        self._voice_invalid: bool = False
 
     def enqueue_live(self, seg: Any) -> None:
         lang = seg.target_language or ""
@@ -219,6 +220,17 @@ class TTSDispatcher:
 
     async def _synthesise(self, job: TTSJob) -> None:
         try:
+            if self._voice_invalid:
+                self._session_manager._emit(
+                    "tts_skipped",
+                    {
+                        "seq": job.seq,
+                        "reason": "invalid_voice_config",
+                        "tts_epoch": job.tts_epoch,
+                    },
+                )
+                return
+            voice_id = self._config.tts_voice_id or VOICE_MAP[job.language]
             self._session_manager._emit(
                 "tts_speaking",
                 {
@@ -230,7 +242,7 @@ class TTSDispatcher:
             stream = await self._client.audio.speech.complete_async(
                 model=self._config.tts_model,
                 input=job.text,
-                voice_id=VOICE_MAP[job.language],
+                voice_id=voice_id,
                 response_format="pcm",
                 stream=True,
             )
@@ -238,6 +250,12 @@ class TTSDispatcher:
             async with stream as events:
                 async for event in events:
                     audio_data = getattr(event, "audio_data", None)
+                    if audio_data is None:
+                        payload = getattr(event, "data", None)
+                        if payload is not None:
+                            audio_data = getattr(payload, "audio_data", None)
+                            if audio_data is None and isinstance(payload, dict):
+                                audio_data = payload.get("audio_data")
                     if audio_data is None:
                         continue
                     self._session_manager._emit(
@@ -265,7 +283,10 @@ class TTSDispatcher:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            error_text = str(exc)
+            if "invalid_voice" in error_text or "Voice '" in error_text:
+                self._voice_invalid = True
             logger.exception("TTS synthesis failed for seq=%s", job.seq)
             self._session_manager._emit(
                 "tts_error",

@@ -292,6 +292,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     poller.start()
     await tts_dispatcher.start()
+    if settings.tts_enabled and not settings.tts_voice_id:
+        logger.warning(
+            "TTS is enabled but MISTRAL_TTS_VOICE_ID is not set; default VOICE_MAP values may be invalid for your account. "
+            "Set MISTRAL_TTS_VOICE_ID to a saved voice UUID to avoid TTS failures."
+        )
     logger.info("CaptionBridge started on %s:%s", settings.host, settings.port)
     yield
     poller.stop()

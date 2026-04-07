@@ -49,6 +49,10 @@ class AppConfig(BaseSettings):
         default=50,
         validation_alias="MISTRAL_TTS_QUEUE_MAX",
     )
+    tts_voice_id: str | None = Field(
+        default=None,
+        validation_alias="MISTRAL_TTS_VOICE_ID",
+    )
 
 
 settings = AppConfig()
