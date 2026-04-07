@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -25,25 +26,68 @@ logger = logging.getLogger(__name__)
 _OUTBOUND_QUEUE_WARN_DEPTH = 50
 _OUTBOUND_QUEUE_CRITICAL_DEPTH = 200
 _OUTBOUND_SEND_LAG_WARN_SECS = 2.0
+_OBS_LOG_REPEAT_INTERVAL_SECS = 30.0
+
+
+@dataclass
+class _OutboundObsState:
+    """Per-connection outbound queue / send-lag observability (throttled logging)."""
+
+    depth_band: str = "ok"
+    last_depth_log_mono: float = field(default=0.0)
+    lag_above_warn: bool = False
+    last_lag_log_mono: float = field(default=0.0)
+
+
+def _maybe_log_outbound_depth(
+    obs: _OutboundObsState, depth: int, event_type: Any
+) -> None:
+    """Log on band transitions, periodically while degraded, or on recovery to ok."""
+    if depth >= _OUTBOUND_QUEUE_CRITICAL_DEPTH:
+        band = "critical"
+    elif depth >= _OUTBOUND_QUEUE_WARN_DEPTH:
+        band = "warn"
+    else:
+        band = "ok"
+
+    now = time.monotonic()
+    if band == "ok":
+        if obs.depth_band != "ok":
+            logger.info(
+                "Outbound queue recovered: depth=%s (was %s)",
+                depth,
+                obs.depth_band,
+            )
+            obs.depth_band = "ok"
+            obs.last_depth_log_mono = now
+        return
+
+    transition = band != obs.depth_band
+    periodic = (now - obs.last_depth_log_mono) >= _OBS_LOG_REPEAT_INTERVAL_SECS
+    if transition or periodic:
+        obs.depth_band = band
+        obs.last_depth_log_mono = now
+        if band == "critical":
+            logger.error(
+                "Outbound queue critical depth: depth=%s event_type=%s — possible memory growth risk",
+                depth,
+                event_type,
+            )
+        else:
+            logger.warning("Outbound queue pressure: depth=%s event_type=%s", depth, event_type)
 
 
 def _enqueue_outbound(
     queue: asyncio.Queue[tuple[dict[str, Any], float]],
     event: dict[str, Any],
+    obs: _OutboundObsState,
 ) -> None:
     """Enqueue for the WS writer; never blocks. Unbounded FIFO; depth warnings only."""
     enqueue_time = time.monotonic()
     event_type = event.get("type")
     queue.put_nowait((event, enqueue_time))
     depth = queue.qsize()
-    if depth >= _OUTBOUND_QUEUE_CRITICAL_DEPTH:
-        logger.error(
-            "Outbound queue critical depth: depth=%s event_type=%s — possible memory growth risk",
-            depth,
-            event_type,
-        )
-    elif depth >= _OUTBOUND_QUEUE_WARN_DEPTH:
-        logger.warning("Outbound queue pressure: depth=%s event_type=%s", depth, event_type)
+    _maybe_log_outbound_depth(obs, depth, event_type)
 
 
 # Module-level references set by main.py at startup
@@ -63,6 +107,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
+    obs = _OutboundObsState()
     outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]] = asyncio.Queue()
 
     async def _writer() -> None:
@@ -70,12 +115,29 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             while True:
                 event, enqueue_time = await outbound_queue.get()
                 lag = time.monotonic() - enqueue_time
-                if lag >= _OUTBOUND_SEND_LAG_WARN_SECS:
-                    logger.warning(
-                        "Outbound send lag: lag=%.2fs event_type=%s",
-                        lag,
-                        event.get("type"),
-                    )
+                now = time.monotonic()
+                event_type = event.get("type")
+                above = lag >= _OUTBOUND_SEND_LAG_WARN_SECS
+                if not above:
+                    if obs.lag_above_warn:
+                        logger.info(
+                            "Outbound send lag recovered: lag=%.2fs event_type=%s",
+                            lag,
+                            event_type,
+                        )
+                        obs.lag_above_warn = False
+                        obs.last_lag_log_mono = now
+                else:
+                    transition = not obs.lag_above_warn
+                    periodic = (now - obs.last_lag_log_mono) >= _OBS_LOG_REPEAT_INTERVAL_SECS
+                    if transition or periodic:
+                        obs.lag_above_warn = True
+                        obs.last_lag_log_mono = now
+                        logger.warning(
+                            "Outbound send lag: lag=%.2fs event_type=%s",
+                            lag,
+                            event_type,
+                        )
                 try:
                     await websocket.send_bytes(orjson.dumps(event))
                 except Exception:
@@ -99,7 +161,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     _active_ws = websocket
 
     def event_listener(event: dict[str, Any]) -> None:
-        _enqueue_outbound(outbound_queue, event)
+        _enqueue_outbound(outbound_queue, event, obs)
 
     manager.on_client_connect()
     manager.subscribe(event_listener)
@@ -107,7 +169,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     try:
         snapshot = manager.get_snapshot()
         _enqueue_outbound(
-            outbound_queue, {"type": "session_snapshot", **snapshot}
+            outbound_queue, {"type": "session_snapshot", **snapshot}, obs
         )
 
         async for raw in websocket.iter_text():
@@ -120,9 +182,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             msg_type = msg.get("type")
 
             if msg_type == "start":
-                await _handle_start(msg, outbound_queue)
+                await _handle_start(msg, outbound_queue, obs)
             elif msg_type == "set_target_language":
-                await _handle_set_target_language(msg, outbound_queue)
+                await _handle_set_target_language(msg, outbound_queue, obs)
             elif msg_type == "stop":
                 await _handle_stop()
             elif msg_type == "export":
@@ -136,9 +198,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             elif msg_type == "tts_audio_enabled":
                 await _handle_tts_audio_enabled()
             elif msg_type == "tts_mute":
-                await _handle_tts_mute(msg, outbound_queue)
+                await _handle_tts_mute(msg, outbound_queue, obs)
             elif msg_type == "tts_replay":
-                await _handle_tts_replay(msg, outbound_queue)
+                await _handle_tts_replay(msg, outbound_queue, obs)
             else:
                 logger.debug("Unknown WS message type: %s", msg_type)
 
@@ -165,13 +227,18 @@ async def _handle_tts_audio_enabled() -> None:
     logger.debug("TTS audio unlocked by client")
 
 
-async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
+async def _handle_tts_mute(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
     assert manager is not None
     muted = msg.get("muted")
     if not isinstance(muted, bool):
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "tts_mute: 'muted' must be a boolean"},
+            obs,
         )
         return
     if manager._tts_dispatcher is None:
@@ -179,13 +246,18 @@ async def _handle_tts_mute(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[s
     manager._tts_dispatcher.set_muted(muted)
 
 
-async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
+async def _handle_tts_replay(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
     assert manager is not None
     seq = msg.get("seq")
     if not isinstance(seq, int):
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "tts_replay: 'seq' must be an integer"},
+            obs,
         )
         return
 
@@ -194,6 +266,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"tts_replay: segment {seq} not found"},
+            obs,
         )
         return
 
@@ -201,6 +274,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"tts_replay: segment {seq} has no translation"},
+            obs,
         )
         return
 
@@ -211,6 +285,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict
                 "type": "error",
                 "message": f"tts_replay: segment {seq} has no target language",
             },
+            obs,
         )
         return
 
@@ -228,6 +303,7 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict
                 "reason": "unsupported_language",
                 "tts_epoch": tts_epoch,
             },
+            obs,
         )
         return
 
@@ -248,25 +324,35 @@ async def _handle_tts_replay(msg: dict, outbound_queue: asyncio.Queue[tuple[dict
         logger.debug("tts_replay ignored: status %s", status)
 
 
-async def _handle_set_target_language(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
+async def _handle_set_target_language(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
     assert manager is not None
     language = msg.get("language")
     if language is None or not isinstance(language, str):
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": "set_target_language: missing 'language' field"},
+            obs,
         )
         return
     if not is_valid_target_language(language):
         _enqueue_outbound(
             outbound_queue,
             {"type": "error", "message": f"Unsupported target language: {language!r}"},
+            obs,
         )
         return
     manager.set_target_language(language)
 
 
-async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]]) -> None:
+async def _handle_start(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
     assert manager is not None
 
     if manager.session.status != "idle_ready":
@@ -276,6 +362,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str,
                 "type": "error",
                 "message": f"Cannot start: system is not ready (status: {manager.session.status})",
             },
+            obs,
         )
         return
 
@@ -287,6 +374,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str,
                 "type": "error",
                 "message": "Cannot start: readiness checks not passing",
             },
+            obs,
         )
         return
 
@@ -299,6 +387,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str,
                     "type": "error",
                     "message": f"Unsupported target language: {target_language!r}",
                 },
+                obs,
             )
             return
         manager.set_target_language(target_language)
@@ -316,6 +405,7 @@ async def _handle_start(msg: dict, outbound_queue: asyncio.Queue[tuple[dict[str,
                     "type": "error",
                     "message": f"Pipeline startup failed: {exc}",
                 },
+                obs,
             )
 
 
