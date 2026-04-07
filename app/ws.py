@@ -175,6 +175,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     logger.debug("Failed to send event %s", event.get("type"))
                 finally:
                     outbound_queue.task_done()
+                    depth = outbound_queue.qsize()
+                    _ws_metrics.current_depth = depth
+                    _maybe_log_outbound_depth(obs, depth, event_type)
         except asyncio.CancelledError:
             raise
 
