@@ -298,7 +298,9 @@
 
         if (isFirstConnect) {
             resetSessionPreferences();
-            send({ type: "tts_mute", muted: false });
+            if (appState.status === "idle_blocked" || appState.status === "idle_ready") {
+                send({ type: "tts_mute", muted: false });
+            }
             isFirstConnect = false;
         } else if (appState.status === "idle_blocked" || appState.status === "idle_ready") {
             resetSessionPreferences();

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -39,10 +39,30 @@ class _OutboundObsState:
     last_lag_log_mono: float = field(default=0.0)
 
 
+@dataclass
+class _WsMetrics:
+    depth_warn_crossings: int = 0
+    depth_critical_crossings: int = 0
+    depth_recovery_crossings: int = 0
+    lag_warn_crossings: int = 0
+    lag_recovery_crossings: int = 0
+    current_depth: int = 0
+    last_lag_secs: float = 0.0
+
+
+_ws_metrics = _WsMetrics()
+
+
+def get_ws_metrics() -> dict[str, Any]:
+    return asdict(_ws_metrics)
+
+
 def _maybe_log_outbound_depth(
     obs: _OutboundObsState, depth: int, event_type: Any
 ) -> None:
     """Log on band transitions, periodically while degraded, or on recovery to ok."""
+    _ws_metrics.current_depth = depth
+
     if depth >= _OUTBOUND_QUEUE_CRITICAL_DEPTH:
         band = "critical"
     elif depth >= _OUTBOUND_QUEUE_WARN_DEPTH:
@@ -60,6 +80,7 @@ def _maybe_log_outbound_depth(
             )
             obs.depth_band = "ok"
             obs.last_depth_log_mono = now
+            _ws_metrics.depth_recovery_crossings += 1
         return
 
     transition = band != obs.depth_band
@@ -75,6 +96,11 @@ def _maybe_log_outbound_depth(
             )
         else:
             logger.warning("Outbound queue pressure: depth=%s event_type=%s", depth, event_type)
+        if transition:
+            if band == "critical":
+                _ws_metrics.depth_critical_crossings += 1
+            elif band == "warn":
+                _ws_metrics.depth_warn_crossings += 1
 
 
 def _enqueue_outbound(
@@ -87,6 +113,7 @@ def _enqueue_outbound(
     event_type = event.get("type")
     queue.put_nowait((event, enqueue_time))
     depth = queue.qsize()
+    _ws_metrics.current_depth = depth
     _maybe_log_outbound_depth(obs, depth, event_type)
 
 
@@ -115,6 +142,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             while True:
                 event, enqueue_time = await outbound_queue.get()
                 lag = time.monotonic() - enqueue_time
+                _ws_metrics.last_lag_secs = lag
                 now = time.monotonic()
                 event_type = event.get("type")
                 above = lag >= _OUTBOUND_SEND_LAG_WARN_SECS
@@ -127,6 +155,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         )
                         obs.lag_above_warn = False
                         obs.last_lag_log_mono = now
+                        _ws_metrics.lag_recovery_crossings += 1
                 else:
                     transition = not obs.lag_above_warn
                     periodic = (now - obs.last_lag_log_mono) >= _OBS_LOG_REPEAT_INTERVAL_SECS
@@ -138,6 +167,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             lag,
                             event_type,
                         )
+                        if transition:
+                            _ws_metrics.lag_warn_crossings += 1
                 try:
                     await websocket.send_bytes(orjson.dumps(event))
                 except Exception:
