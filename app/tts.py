@@ -148,11 +148,7 @@ class TTSDispatcher:
         else:
             self._unmute_event.clear()
             task = self._synth_task
-            if (
-                task is not None
-                and not task.done()
-                and self._active_synth_kind == "live"
-            ):
+            if task is not None and not task.done():
                 task.cancel()
 
     def set_audio_unlocked(self, unlocked: bool) -> None:
@@ -187,7 +183,7 @@ class TTSDispatcher:
                             self._tts_epoch,
                         )
                         continue
-                    if job.kind == "live" and self._muted:
+                    if self._muted:
                         await self._unmute_event.wait()
                     if self._job_stale(job):
                         logger.debug(

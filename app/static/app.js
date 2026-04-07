@@ -571,6 +571,9 @@
         if (ttsActiveSourceNode || ttsPlaybackStarting || ttsPlaybackQueue.length === 0) {
             return;
         }
+        if (appState.ttsMuted) {
+            return;
+        }
         if (!audioContext) {
             audioContext = new AudioContext();
         }
