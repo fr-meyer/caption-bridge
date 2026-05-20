@@ -44,6 +44,7 @@
         ttsSpeakingSeq: null,
         currentTtsEpoch: 0,
         ttsMuted: false,
+        providerCapacityWarning: null,
     };
 
     let ws = null;
@@ -222,6 +223,9 @@
                 break;
             case "tts_skipped":
                 handleTtsSkipped(msg);
+                break;
+            case "provider_capacity_warning":
+                handleProviderCapacityWarning(msg);
                 break;
             default:
                 console.log("Unknown event type:", msg.type);
@@ -464,6 +468,20 @@
 
     function handleTtsSkipped(msg) {
         handleTtsError(msg);
+    }
+
+    function handleProviderCapacityWarning(msg) {
+        console.warn("Provider capacity warning:", msg);
+        appState.providerCapacityWarning = msg;
+        if (els.drawerLangError) {
+            els.drawerLangError.textContent =
+                "Translation provider capacity is temporarily limited. " +
+                "Some captions may be skipped; processing will continue.";
+            els.drawerLangError.classList.remove("hidden");
+            setTimeout(function () {
+                els.drawerLangError.classList.add("hidden");
+            }, 5000);
+        }
     }
 
     function purgeTtsChunkBuffersNotEpoch(epoch) {
