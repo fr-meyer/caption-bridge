@@ -103,10 +103,88 @@ class TranslationDispatcher:
             self._handle_translation_timeout(seq, target_language, session_id)
             return None
         except Exception as retry_exc:
+            retry_info = extract_provider_error_info(retry_exc)
+            if is_capacity_exceeded(retry_info):
+                raise
             logger.error(
                 "Translation retry failed for segment #%d: %s",
                 seq,
                 retry_exc,
+            )
+            self._session_manager.mark_translation_failed(seq, session_id)
+            return None
+
+    async def _retry_translation_on_capacity(
+        self,
+        messages: list[dict],
+        timeout_s: float,
+        seq: int,
+        session_id: str,
+        target_language: str,
+    ) -> str | None:
+        """Exponential backoff retry for 429 capacity errors. Returns text or None if settled."""
+        base_ms = self._config.translation_429_base_delay_ms
+        max_delay_ms = self._config.translation_429_max_delay_ms
+        jitter_factor = self._config.translation_429_jitter_factor
+        max_retries = self._config.translation_429_max_retries
+        for attempt in range(max_retries):
+            raw_delay_ms = min(base_ms * (2**attempt), max_delay_ms)
+            delay_ms = raw_delay_ms * random.uniform(
+                1 - jitter_factor, 1 + jitter_factor
+            )
+            delay_s = delay_ms / 1000
+            logger.warning(
+                "Translation 429 capacity error for segment #%d: "
+                "attempt %d/%d, retrying in %.0fms",
+                seq,
+                attempt + 1,
+                max_retries,
+                delay_ms,
+            )
+            await asyncio.sleep(delay_s)
+            try:
+                return await self._await_translation(messages, timeout_s)
+            except asyncio.TimeoutError:
+                self._handle_translation_timeout(seq, target_language, session_id)
+                return None
+            except Exception as retry_exc:
+                retry_info = extract_provider_error_info(retry_exc)
+                if is_capacity_exceeded(retry_info):
+                    continue
+                try:
+                    translated = await self._generic_one_second_retry(
+                        messages,
+                        timeout_s,
+                        seq,
+                        session_id,
+                        target_language,
+                        retry_exc,
+                    )
+                except Exception as nested_exc:
+                    nested_info = extract_provider_error_info(nested_exc)
+                    if is_capacity_exceeded(nested_info):
+                        continue
+                    raise
+                if translated is None:
+                    return None
+                return translated
+        else:
+            logger.warning(
+                "Translation provider capacity exhausted for "
+                "segment #%d after %d retries",
+                seq,
+                max_retries,
+            )
+            self._session_manager._emit(
+                "provider_capacity_warning",
+                {
+                    "provider": "mistral",
+                    "model": self._config.translate_model,
+                    "reason": "service_tier_capacity_exceeded",
+                    "status_code": 429,
+                    "segment_seq": seq,
+                    "recoverable": True,
+                },
             )
             self._session_manager.mark_translation_failed(seq, session_id)
             return None
@@ -127,81 +205,31 @@ class TranslationDispatcher:
             except Exception as first_exc:
                 info = extract_provider_error_info(first_exc)
                 if is_capacity_exceeded(info):
-                    base_ms = self._config.translation_429_base_delay_ms
-                    max_delay_ms = self._config.translation_429_max_delay_ms
-                    jitter_factor = self._config.translation_429_jitter_factor
-                    max_retries = self._config.translation_429_max_retries
-                    for attempt in range(max_retries):
-                        raw_delay_ms = min(base_ms * (2**attempt), max_delay_ms)
-                        delay_ms = raw_delay_ms * random.uniform(
-                            1 - jitter_factor, 1 + jitter_factor
-                        )
-                        delay_s = delay_ms / 1000
-                        logger.warning(
-                            "Translation 429 capacity error for segment #%d: "
-                            "attempt %d/%d, retrying in %.0fms",
+                    translated = await self._retry_translation_on_capacity(
+                        messages, timeout_s, seq, session_id, target_language
+                    )
+                    if translated is None:
+                        return
+                else:
+                    try:
+                        translated = await self._generic_one_second_retry(
+                            messages,
+                            timeout_s,
                             seq,
-                            attempt + 1,
-                            max_retries,
-                            delay_ms,
+                            session_id,
+                            target_language,
+                            first_exc,
                         )
-                        await asyncio.sleep(delay_s)
-                        try:
-                            translated = await self._await_translation(
-                                messages, timeout_s
-                            )
-                            break
-                        except asyncio.TimeoutError:
-                            self._handle_translation_timeout(
-                                seq, target_language, session_id
-                            )
-                            return
-                        except Exception as retry_exc:
-                            retry_info = extract_provider_error_info(retry_exc)
-                            if is_capacity_exceeded(retry_info):
-                                continue
-                            translated = await self._generic_one_second_retry(
-                                messages,
-                                timeout_s,
-                                seq,
-                                session_id,
-                                target_language,
-                                retry_exc,
+                    except Exception as nested_exc:
+                        nested_info = extract_provider_error_info(nested_exc)
+                        if is_capacity_exceeded(nested_info):
+                            translated = await self._retry_translation_on_capacity(
+                                messages, timeout_s, seq, session_id, target_language
                             )
                             if translated is None:
                                 return
-                            break
-                    else:
-                        logger.warning(
-                            "Translation provider capacity exhausted for "
-                            "segment #%d after %d retries",
-                            seq,
-                            max_retries,
-                        )
-                        self._session_manager._emit(
-                            "provider_capacity_warning",
-                            {
-                                "provider": "mistral",
-                                "model": self._config.translate_model,
-                                "reason": "service_tier_capacity_exceeded",
-                                "status_code": 429,
-                                "segment_seq": seq,
-                                "recoverable": True,
-                            },
-                        )
-                        self._session_manager.mark_translation_failed(
-                            seq, session_id
-                        )
-                        return
-                else:
-                    translated = await self._generic_one_second_retry(
-                        messages,
-                        timeout_s,
-                        seq,
-                        session_id,
-                        target_language,
-                        first_exc,
-                    )
+                        else:
+                            raise
                     if translated is None:
                         return
 
