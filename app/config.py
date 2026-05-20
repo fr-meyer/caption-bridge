@@ -33,6 +33,26 @@ class AppConfig(BaseSettings):
         default=None,
         validation_alias="MISTRAL_REALTIME_BASE_URL",
     )
+    tts_model: str = Field(
+        default="voxtral-mini-tts-2603",
+        validation_alias="MISTRAL_TTS_MODEL",
+    )
+    tts_enabled: bool = Field(
+        default=True,
+        validation_alias="MISTRAL_TTS_ENABLED",
+    )
+    tts_sample_rate: int = Field(
+        default=24000,
+        validation_alias="MISTRAL_TTS_SAMPLE_RATE",
+    )
+    tts_queue_max: int = Field(
+        default=50,
+        validation_alias="MISTRAL_TTS_QUEUE_MAX",
+    )
+    tts_voice_id: str | None = Field(
+        default=None,
+        validation_alias="MISTRAL_TTS_VOICE_ID",
+    )
 
 
 settings = AppConfig()

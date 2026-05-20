@@ -17,6 +17,7 @@ from app.languages import is_valid_target_language
 if TYPE_CHECKING:
     from app.journal import SessionJournal
     from app.translate import TranslationDispatcher
+    from app.tts import TTSDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +150,14 @@ class SessionManager:
         self._grace_task: asyncio.Task[None] | None = None
         self._on_grace_expiry: Callable[[], Awaitable[None]] | None = None
         self._dispatcher: TranslationDispatcher | None = None
+        self._tts_dispatcher: TTSDispatcher | None = None
         self._journal: SessionJournal | None = None
 
     def set_dispatcher(self, dispatcher: TranslationDispatcher) -> None:
         self._dispatcher = dispatcher
+
+    def set_tts_dispatcher(self, dispatcher: TTSDispatcher) -> None:
+        self._tts_dispatcher = dispatcher
 
     def set_journal(self, journal: SessionJournal) -> None:
         self._journal = journal
@@ -333,6 +338,12 @@ class SessionManager:
                     "segment_kind": seg.segment_kind,
                 },
             )
+            if (
+                self._tts_dispatcher is not None
+                and self.config.tts_enabled
+                and seg.translation_status == "done"
+            ):
+                self._tts_dispatcher.enqueue_live(seg)
 
     # -- status transitions -------------------------------------------------
 
@@ -404,11 +415,13 @@ class SessionManager:
 
     # -- reset --------------------------------------------------------------
 
-    def reset(self, *, emit_snapshot: bool = True) -> None:
+    async def reset(self, *, emit_snapshot: bool = True) -> None:
         if not self.session.exported and self._journal is not None:
             self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
+        if self._tts_dispatcher is not None:
+            await self._tts_dispatcher.drain()
         self.session = self._new_session()
         self._journal = None
         if emit_snapshot:
