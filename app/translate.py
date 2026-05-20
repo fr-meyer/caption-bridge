@@ -78,7 +78,14 @@ class TranslationDispatcher:
                     self._call_api(messages), timeout=timeout_s
                 )
             except asyncio.TimeoutError:
-                logger.warning("Translation timed out for segment #%d", seq)
+                logger.warning(
+                    "Translation timed out for segment #%d: budget=%dms, lang=%s, model=%s, provider=%s",
+                    seq,
+                    self._config.translation_timeout_ms,
+                    target_language,
+                    self._config.translate_model,
+                    "mistral",
+                )
                 self._session_manager.mark_translation_timed_out(seq, session_id)
                 return
             except Exception as first_exc:
