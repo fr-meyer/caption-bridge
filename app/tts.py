@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from mistralai.client import Mistral
 
 from app.config import AppConfig
+from app.errors import extract_provider_error_info, is_tts_guardrail_violation
 
 if TYPE_CHECKING:
     from app.state import SessionManager
@@ -284,6 +285,32 @@ class TTSDispatcher:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            _info = extract_provider_error_info(exc)
+            if is_tts_guardrail_violation(_info):
+                logger.warning(
+                    "TTS guardrail rejection seq=%s type=%s code=%s status=%s",
+                    job.seq,
+                    _info.error_type,
+                    _info.code,
+                    _info.status_code,
+                )
+                logger.debug(
+                    "TTS guardrail rejection detail seq=%s",
+                    job.seq,
+                    exc_info=True,
+                )
+                self._session_manager._emit(
+                    "tts_skipped",
+                    {
+                        "seq": job.seq,
+                        "reason": "guardrail_violation",
+                        "provider": "mistral",
+                        "provider_code": _info.code,
+                        "status_code": _info.status_code,
+                        "tts_epoch": job.tts_epoch,
+                    },
+                )
+                return
             error_text = str(exc)
             if "invalid_voice" in error_text or "Voice '" in error_text:
                 self._voice_invalid = True
