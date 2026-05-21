@@ -65,6 +65,24 @@ def test_residual_source_script_clean() -> None:
     assert "residual_source_script" not in result.reasons
 
 
+def test_residual_source_script_greek_in_latin_target() -> None:
+    result = check("Γεια σου κόσμε", "Hello world", "en")
+
+    assert "residual_source_script" in result.reasons
+
+
+def test_residual_source_script_bengali_in_latin_target() -> None:
+    result = check("হ্যালো বিশ্ব", "Hello world", "en")
+
+    assert "residual_source_script" in result.reasons
+
+
+def test_residual_source_script_tamil_in_latin_target() -> None:
+    result = check("வணக்கம் உலகம்", "Hello world", "en")
+
+    assert "residual_source_script" in result.reasons
+
+
 def test_residual_source_script_mixed_ja_not_flagged() -> None:
     result = check("ResNet-50は画像分類モデルです", "ResNet-50 is an image classification model", "ja")
 

@@ -950,6 +950,9 @@ _NON_LATIN_SCRIPT_PATTERN = re.compile(
     r"\u0E00-\u0E7F"  # Thai
     r"\u0590-\u05FF"  # Hebrew
     r"\u0400-\u04FF"  # Cyrillic
+    r"\u0370-\u03FF"  # Greek
+    r"\u0980-\u09FF"  # Bengali
+    r"\u0B80-\u0BFF"  # Tamil
     r"]"
 )
 
