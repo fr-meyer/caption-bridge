@@ -71,6 +71,17 @@ def test_residual_source_script_mixed_ja_not_flagged() -> None:
     assert "residual_source_script" not in result.reasons
 
 
+def test_residual_source_script_native_punctuation_not_flagged() -> None:
+    """Native punctuation must not count as significant non-target script characters."""
+    result = check(
+        "GPT-4は、大規模言語モデル（LLM）です！",
+        "GPT-4 is a large language model",
+        "ja",
+    )
+
+    assert "residual_source_script" not in result.reasons
+
+
 def test_residual_source_script_high_latin_ratio_with_target_script_not_flagged() -> None:
     """Preserved ASCII terms can dominate latin ratio while target-script text is present."""
     translated = (
@@ -109,6 +120,16 @@ def test_residual_source_script_fully_latin_ko_flagged() -> None:
         "The transformer architecture uses attention mechanisms",
         "트랜스포머 아키텍처는 어텐션 메커니즘을 사용합니다",
         "ko",
+    )
+
+    assert "residual_source_script" in result.reasons
+
+
+def test_residual_source_script_token_target_script_still_flagged() -> None:
+    result = check(
+        "Transformer attention mechanism の",
+        "トランスフォーマーのアテンションメカニズム",
+        "ja",
     )
 
     assert "residual_source_script" in result.reasons

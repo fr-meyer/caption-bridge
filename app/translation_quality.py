@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 import string
+import unicodedata
 from typing import NamedTuple
 
 MIN_SOURCE_CHARS_FOR_RATIO_CHECK = 25
 MIN_LENGTH_RATIO = 0.25
 MAX_LENGTH_RATIO = 4.5
+MIN_TARGET_SCRIPT_RATIO = 0.15
 
 LATIN_SCRIPT_LANGUAGES = frozenset(
     {
@@ -973,6 +975,10 @@ _TARGET_SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
 _PUNCTUATION = string.punctuation
 
 
+def _is_unicode_punctuation(char: str) -> bool:
+    return unicodedata.category(char).startswith("P")
+
+
 class QualityCheckResult(NamedTuple):
     flagged: bool
     reasons: list[str]
@@ -999,7 +1005,7 @@ def _latin_letter_ratio(text: str) -> float:
     significant = 0
     latin = 0
     for char in text:
-        if char.isspace() or char in _PUNCTUATION:
+        if char.isspace() or _is_unicode_punctuation(char):
             continue
         significant += 1
         if "A" <= char <= "Z" or "a" <= char <= "z":
@@ -1009,12 +1015,21 @@ def _latin_letter_ratio(text: str) -> float:
     return latin / significant
 
 
-def _has_target_script_chars(text: str, target_language: str) -> bool:
+def _target_script_ratio(text: str, target_language: str) -> float:
     pattern = _TARGET_SCRIPT_PATTERNS.get(target_language)
     if pattern is None:
-        # Unmapped targets rely on the legacy latin-ratio heuristic only.
-        return False
-    return pattern.search(text) is not None
+        return 0.0
+    significant = 0
+    target = 0
+    for char in text:
+        if char.isspace() or _is_unicode_punctuation(char):
+            continue
+        significant += 1
+        if pattern.fullmatch(char):
+            target += 1
+    if significant == 0:
+        return 0.0
+    return target / significant
 
 
 def _has_residual_source_script(
@@ -1024,12 +1039,11 @@ def _has_residual_source_script(
         return _NON_LATIN_SCRIPT_PATTERN.search(translated_text) is not None
 
     source_stripped = source_text.strip()
-    if source_stripped and target_language not in LATIN_SCRIPT_LANGUAGES:
+    if source_stripped:
         latin_ratio_high = _latin_letter_ratio(translated_text) > 0.7
         if target_language in _TARGET_SCRIPT_PATTERNS:
-            return latin_ratio_high and not _has_target_script_chars(
-                translated_text, target_language
-            )
+            target_ratio = _target_script_ratio(translated_text, target_language)
+            return latin_ratio_high and target_ratio < MIN_TARGET_SCRIPT_RATIO
         return latin_ratio_high
     return False
 
