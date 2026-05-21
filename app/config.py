@@ -53,6 +53,22 @@ class AppConfig(BaseSettings):
         default=None,
         validation_alias="MISTRAL_TTS_VOICE_ID",
     )
+    translation_429_max_retries: int = Field(
+        default=3,
+        validation_alias="TRANSLATION_429_MAX_RETRIES",
+    )
+    translation_429_base_delay_ms: int = Field(
+        default=1000,
+        validation_alias="TRANSLATION_429_BASE_DELAY_MS",
+    )
+    translation_429_max_delay_ms: int = Field(
+        default=16000,
+        validation_alias="TRANSLATION_429_MAX_DELAY_MS",
+    )
+    translation_429_jitter_factor: float = Field(
+        default=0.25,
+        validation_alias="TRANSLATION_429_JITTER_FACTOR",
+    )
 
 
 settings = AppConfig()
