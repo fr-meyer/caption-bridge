@@ -21,6 +21,12 @@ def export_session(session: Session, config: AppConfig, recovery: bool = False) 
     export_dir = Path(base) / timestamp_str
     export_dir.mkdir(parents=True, exist_ok=True)
 
+    if recovery:
+        for seg in session.segments:
+            if seg.translation_status == "pending":
+                seg.translation_status = "failed"
+                seg.failure_reason = "recovered_pending"
+
     _write_transcript_txt(export_dir, session)
     _write_transcript_json(export_dir, session, config)
 
@@ -61,6 +67,23 @@ def _write_transcript_txt(export_dir: Path, session: Session) -> None:
     (export_dir / "transcript.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _compute_quality_summary(session: Session) -> dict:
+    return {
+        "total_segments": len(session.segments),
+        "done": sum(1 for seg in session.segments if seg.translation_status == "done"),
+        "failed": sum(1 for seg in session.segments if seg.translation_status == "failed"),
+        "timed_out": sum(
+            1 for seg in session.segments if seg.translation_status == "timed_out"
+        ),
+        "retried": sum(
+            1 for seg in session.segments if seg.quality is not None and seg.quality.retried
+        ),
+        "quality_flagged": sum(
+            1 for seg in session.segments if seg.quality is not None and seg.quality.flagged
+        ),
+    }
+
+
 def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig) -> None:
     data = {
         "session_id": session.id,
@@ -81,9 +104,12 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
                 "translated_text": seg.translated_text,
                 "target_language": seg.target_language,
                 "translation_status": seg.translation_status,
+                "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
+                "failure_reason": seg.failure_reason,
             }
             for seg in session.segments
         ],
+        "quality_summary": _compute_quality_summary(session),
     }
     (export_dir / "transcript.json").write_bytes(
         orjson.dumps(data, option=orjson.OPT_INDENT_2)
