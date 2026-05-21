@@ -945,6 +945,8 @@ _INLINE_ALTERNATIVE_PATTERN = re.compile(
 _NON_LATIN_SCRIPT_PATTERN = re.compile(
     r"[\uAC00-\uD7A3\u1100-\u11FF"  # Hangul
     r"\u4E00-\u9FFF\u3400-\u4DBF"  # CJK
+    r"\u3040-\u309F"  # Hiragana
+    r"\u30A0-\u30FF"  # Katakana
     r"\u0600-\u06FF"  # Arabic
     r"\u0900-\u097F"  # Devanagari
     r"\u0E00-\u0E7F"  # Thai

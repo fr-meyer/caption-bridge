@@ -83,6 +83,18 @@ def test_residual_source_script_tamil_in_latin_target() -> None:
     assert "residual_source_script" in result.reasons
 
 
+def test_residual_source_script_hiragana_in_latin_target() -> None:
+    result = check("こんにちは", "Hello world", "en")
+
+    assert "residual_source_script" in result.reasons
+
+
+def test_residual_source_script_katakana_in_latin_target() -> None:
+    result = check("コンニチハ", "Hello world", "en")
+
+    assert "residual_source_script" in result.reasons
+
+
 def test_residual_source_script_mixed_ja_not_flagged() -> None:
     result = check("ResNet-50は画像分類モデルです", "ResNet-50 is an image classification model", "ja")
 
