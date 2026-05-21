@@ -951,6 +951,25 @@ _NON_LATIN_SCRIPT_PATTERN = re.compile(
     r"]"
 )
 
+_CJK_PATTERN = re.compile(r"[\u4E00-\u9FFF\u3400-\u4DBF]")
+_CYRILLIC_PATTERN = re.compile(r"[\u0400-\u04FF]")
+
+_TARGET_SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ko": re.compile(r"[\uAC00-\uD7A3\u1100-\u11FF]"),
+    "ja": re.compile(r"[\u3040-\u30FF\u4E00-\u9FFF]"),
+    "zh-CN": _CJK_PATTERN,
+    "zh-TW": _CJK_PATTERN,
+    "ar": re.compile(r"[\u0600-\u06FF]"),
+    "hi": re.compile(r"[\u0900-\u097F]"),
+    "bn": re.compile(r"[\u0980-\u09FF]"),
+    "th": re.compile(r"[\u0E00-\u0E7F]"),
+    "he": re.compile(r"[\u0590-\u05FF]"),
+    "ru": _CYRILLIC_PATTERN,
+    "uk": _CYRILLIC_PATTERN,
+    "el": re.compile(r"[\u0370-\u03FF]"),
+    "ta": re.compile(r"[\u0B80-\u0BFF]"),
+}
+
 _PUNCTUATION = string.punctuation
 
 
@@ -990,6 +1009,14 @@ def _latin_letter_ratio(text: str) -> float:
     return latin / significant
 
 
+def _has_target_script_chars(text: str, target_language: str) -> bool:
+    pattern = _TARGET_SCRIPT_PATTERNS.get(target_language)
+    if pattern is None:
+        # Unmapped targets rely on the legacy latin-ratio heuristic only.
+        return False
+    return pattern.search(text) is not None
+
+
 def _has_residual_source_script(
     translated_text: str, source_text: str, target_language: str
 ) -> bool:
@@ -998,7 +1025,12 @@ def _has_residual_source_script(
 
     source_stripped = source_text.strip()
     if source_stripped and target_language not in LATIN_SCRIPT_LANGUAGES:
-        return _latin_letter_ratio(translated_text) > 0.7
+        latin_ratio_high = _latin_letter_ratio(translated_text) > 0.7
+        if target_language in _TARGET_SCRIPT_PATTERNS:
+            return latin_ratio_high and not _has_target_script_chars(
+                translated_text, target_language
+            )
+        return latin_ratio_high
     return False
 
 

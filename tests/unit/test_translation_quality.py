@@ -65,6 +65,55 @@ def test_residual_source_script_clean() -> None:
     assert "residual_source_script" not in result.reasons
 
 
+def test_residual_source_script_mixed_ja_not_flagged() -> None:
+    result = check("ResNet-50は画像分類モデルです", "ResNet-50 is an image classification model", "ja")
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_residual_source_script_high_latin_ratio_with_target_script_not_flagged() -> None:
+    """Preserved ASCII terms can dominate latin ratio while target-script text is present."""
+    translated = (
+        "ResNet-50 BERT GPT-4 Transformer CNN RNN LSTM GRU "
+        "Attention LayerNorm BatchNorm は深層学習モデルです"
+    )
+    result = check(translated, "ResNet-50 is a deep learning model", "ja")
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_residual_source_script_mixed_ko_not_flagged() -> None:
+    result = check("BERT모델은 자연어 처리에 사용됩니다", "BERT model is used for natural language processing", "ko")
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_residual_source_script_mixed_ar_not_flagged() -> None:
+    result = check("GPT-4 هو نموذج لغوي كبير", "GPT-4 is a large language model", "ar")
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_residual_source_script_fully_latin_ja_flagged() -> None:
+    result = check(
+        "This is a neural network model for image classification",
+        "これは画像分類のためのニューラルネットワークモデルです",
+        "ja",
+    )
+
+    assert "residual_source_script" in result.reasons
+
+
+def test_residual_source_script_fully_latin_ko_flagged() -> None:
+    result = check(
+        "The transformer architecture uses attention mechanisms",
+        "트랜스포머 아키텍처는 어텐션 메커니즘을 사용합니다",
+        "ko",
+    )
+
+    assert "residual_source_script" in result.reasons
+
+
 def test_length_ratio_too_short() -> None:
     source = "A" * 25
     result = check("Hi", source, "en")
