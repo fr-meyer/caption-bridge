@@ -137,24 +137,24 @@ class BoundaryDetector:
 
     def flush_buffer(self) -> str | None:
         """Return and clear the current buffer for normal stop-path draining."""
-        if not self._buffer:
-            return None
         self._cancel_timer()
-        text = self._buffer
-        self._buffer = ""
         self._held = False
         self._hold_started_at = None
+        if not self._buffer:
+            return None
+        text = self._buffer
+        self._buffer = ""
         return text
 
     def flush_reconnect_fragment(self) -> str | None:
         """Return and clear the current buffer (hook for reconnection manager)."""
-        if not self._buffer:
-            return None
         self._cancel_timer()
-        text = self._buffer
-        self._buffer = ""
         self._held = False
         self._hold_started_at = None
+        if not self._buffer:
+            return None
+        text = self._buffer
+        self._buffer = ""
         return text
 
     def reset(self) -> None:
