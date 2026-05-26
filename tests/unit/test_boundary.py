@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.boundary import BoundaryDetector, MIN_SEGMENT_CHARS, MIN_SEGMENT_TOKENS
 
@@ -21,7 +21,8 @@ def _make_detector(
     return detector, on_partial, on_finalize
 
 
-def test_hold_fires_on_short_buffer() -> None:
+@patch("asyncio.get_running_loop")
+def test_hold_fires_on_short_buffer(mock_loop: MagicMock) -> None:
     detector, on_partial, on_finalize = _make_detector()
     detector.push("hello")
 
@@ -32,7 +33,8 @@ def test_hold_fires_on_short_buffer() -> None:
     on_partial.assert_called()
 
 
-def test_hold_budget_exhaustion_finalizes() -> None:
+@patch("asyncio.get_running_loop")
+def test_hold_budget_exhaustion_finalizes(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     detector.push("hello")
     detector._hold_started_at = time.monotonic() - (detector._max_hold_ms / 1000 + 1)
@@ -43,7 +45,8 @@ def test_hold_budget_exhaustion_finalizes() -> None:
     assert on_finalize.call_args[0][0] == "hello"
 
 
-def test_fragment_merge_after_hold() -> None:
+@patch("asyncio.get_running_loop")
+def test_fragment_merge_after_hold(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     detector.push("hello")
     detector._on_pause_timeout()
@@ -60,7 +63,8 @@ def test_fragment_merge_after_hold() -> None:
     assert on_finalize.call_args[0][0] == merged_text
 
 
-def test_punctuation_bypass_hold() -> None:
+@patch("asyncio.get_running_loop")
+def test_punctuation_bypass_hold(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     short_sentence = "Hello."
     assert len(short_sentence) < MIN_SEGMENT_CHARS
@@ -71,7 +75,8 @@ def test_punctuation_bypass_hold() -> None:
     assert detector._held is False
 
 
-def test_reconnect_fragment_bypasses_hold() -> None:
+@patch("asyncio.get_running_loop")
+def test_reconnect_fragment_bypasses_hold(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     detector.push("short")
 
@@ -83,7 +88,8 @@ def test_reconnect_fragment_bypasses_hold() -> None:
     on_finalize.assert_not_called()
 
 
-def test_hold_state_reset_on_new_delta() -> None:
+@patch("asyncio.get_running_loop")
+def test_hold_state_reset_on_new_delta(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     detector.push("hello")
     detector._on_pause_timeout()
@@ -95,7 +101,8 @@ def test_hold_state_reset_on_new_delta() -> None:
     on_finalize.assert_not_called()
 
 
-def test_long_buffer_finalizes_immediately() -> None:
+@patch("asyncio.get_running_loop")
+def test_long_buffer_finalizes_immediately(mock_loop: MagicMock) -> None:
     detector, _on_partial, on_finalize = _make_detector()
     long_buffer = "one two three four five"
     assert len(long_buffer.strip()) >= MIN_SEGMENT_CHARS

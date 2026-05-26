@@ -78,14 +78,14 @@ class BoundaryDetector:
             if self._buffer:
                 if self._on_partial is not None:
                     self._on_partial(self._buffer)
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 self._timer_handle = loop.call_later(
                     self._pause_timeout_s, self._on_pause_timeout
                 )
         else:
             if self._on_partial is not None:
                 self._on_partial(self._buffer)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._timer_handle = loop.call_later(
                 self._pause_timeout_s, self._on_pause_timeout
             )
@@ -122,7 +122,7 @@ class BoundaryDetector:
             self._held = True
             if self._on_partial is not None:
                 self._on_partial(self._buffer)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._timer_handle = loop.call_later(
                 self._pause_timeout_s, self._on_pause_timeout
             )
