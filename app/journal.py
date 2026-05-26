@@ -11,7 +11,7 @@ import orjson
 
 from app.config import AppConfig
 from app.exporter import export_session
-from app.state import RecoveryNotice, RecoveryState, Segment, Session
+from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,8 @@ class SessionJournal:
             "translated_text": seg.translated_text,
             "target_language": seg.target_language,
             "translation_status": seg.translation_status,
+            "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
+            "failure_reason": seg.failure_reason,
         })
 
     def record_session_stopped(self) -> None:
@@ -126,12 +128,26 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     seg.translated_text = rec.get("translated_text")
                     seg.target_language = rec.get("target_language")
                     seg.translation_status = rec.get("translation_status", "pending")
+                    quality_data = rec.get("quality")
+                    if quality_data is not None and isinstance(quality_data, dict):
+                        try:
+                            seg.quality = SegmentQuality.model_validate(quality_data)
+                        except Exception:
+                            seg.quality = None
+                    else:
+                        seg.quality = None
+                    seg.failure_reason = rec.get("failure_reason")
 
         session.segments = [segments_by_seq[k] for k in sorted(segments_by_seq)]
         if session.segments:
             session.next_seq = max(s.seq for s in session.segments) + 1
         else:
             session.next_seq = 1
+
+        for seg in session.segments:
+            if seg.translation_status == "pending":
+                seg.translation_status = "failed"
+                seg.failure_reason = "recovered_pending"
 
         latest_ts = max(
             (datetime.fromisoformat(r["ts"]) for r in records if "ts" in r),

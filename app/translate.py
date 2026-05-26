@@ -8,8 +8,10 @@ import random
 
 from mistralai.client import Mistral
 
+from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
+from app.state import SegmentQuality
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +28,13 @@ def _build_system_prompt(target_language: str) -> str:
     return (
         f"Translate spoken academic seminar text into concise, natural "
         f"{label} captions. Preserve names, code identifiers, equations, "
-        f"technical terms, and acronyms. Do not explain or summarize beyond "
-        f"the spoken content. If the source text is fragmentary, produce the "
-        f"best readable caption possible."
+        f"technical terms, and acronyms. Output only the translated caption "
+        f"text with no wrapper phrases (e.g. \"Caption:\", \"Here's the "
+        f"translation:\", \"Translation:\"), no multiple alternatives or "
+        f"options, no markdown formatting, bullets, or numbering, and no "
+        f"explanations, summaries, or commentary beyond the spoken content. "
+        f"Do not translate or echo any context block. If the source text is "
+        f"fragmentary, produce the best readable caption possible."
     )
 
 
@@ -233,10 +239,15 @@ class TranslationDispatcher:
                     if translated is None:
                         return
 
+            translated, quality = await self._check_and_repair(
+                translated, segment, target_language
+            )
             logger.info(
                 "Translated segment #%d: %s", seq, translated[:80] if translated else ""
             )
-            self._session_manager.mark_translated(seq, translated, target_language, session_id)
+            self._session_manager.mark_translated(
+                seq, translated, target_language, session_id, quality=quality
+            )
 
         except asyncio.CancelledError:
             logger.warning(
@@ -260,26 +271,94 @@ class TranslationDispatcher:
         )
         return response.choices[0].message.content.strip()
 
+    async def _call_repair_api(self, messages: list[dict]) -> str:
+        response = await self._client.chat.complete_async(
+            model=self._config.translate_model,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=200,
+        )
+        return response.choices[0].message.content.strip()
+
+    async def _check_and_repair(
+        self, raw_text: str, segment, target_language: str
+    ) -> tuple[str, SegmentQuality]:
+        result = translation_quality.check(
+            raw_text, segment.source_text, target_language
+        )
+        if not result.flagged:
+            return raw_text, SegmentQuality(
+                flagged=False,
+                reasons=[],
+                retried=False,
+                repair_succeeded=None,
+            )
+
+        initial_reasons = list(result.reasons)
+        label = get_language_label(target_language)
+        repair_messages = translation_quality.build_repair_prompt(
+            segment.source_text, label, initial_reasons
+        )
+        repair_timeout_s = min(
+            self._config.translation_timeout_ms / 2, 5000
+        ) / 1000
+
+        try:
+            repair_text = await asyncio.wait_for(
+                self._call_repair_api(repair_messages),
+                timeout=repair_timeout_s,
+            )
+        except (asyncio.TimeoutError, Exception):
+            return raw_text, SegmentQuality(
+                flagged=True,
+                reasons=initial_reasons,
+                retried=True,
+                repair_succeeded=False,
+            )
+
+        repair_result = translation_quality.check(
+            repair_text, segment.source_text, target_language
+        )
+        if not repair_result.flagged:
+            return repair_text, SegmentQuality(
+                flagged=True,
+                reasons=initial_reasons,
+                retried=True,
+                repair_succeeded=True,
+            )
+        best_text = translation_quality.choose_better_translation(
+            raw_text, repair_text, segment.source_text, target_language
+        )
+        return best_text, SegmentQuality(
+            flagged=True,
+            reasons=initial_reasons,
+            retried=True,
+            repair_succeeded=False,
+        )
+
     def _build_messages(self, segment, context_segments: list, target_language: str) -> list[dict]:
         system_content = _build_system_prompt(target_language)
         if segment.segment_kind == "reconnect_fragment":
             system_content += _RECONNECT_ADDENDUM
 
-        label = get_language_label(target_language)
         if context_segments:
             context_lines = "\n".join(
                 f"{i}. {seg.source_text}"
                 for i, seg in enumerate(context_segments, 1)
             )
             user_content = (
-                f"Context (previous segments):\n{context_lines}\n\n"
-                f"Translate the following segment into {label}:\n"
-                f"{segment.source_text}"
+                f"<context_do_not_translate>\n"
+                f"{context_lines}\n"
+                f"</context_do_not_translate>\n\n"
+                f"<segment_to_translate>\n"
+                f"{segment.source_text}\n"
+                f"</segment_to_translate>"
             )
         else:
             user_content = (
-                f"Translate the following segment into {label}:\n"
-                f"{segment.source_text}"
+                f"<segment_to_translate>\n"
+                f"{segment.source_text}\n"
+                f"</segment_to_translate>"
             )
 
         return [

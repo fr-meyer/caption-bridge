@@ -45,6 +45,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class SegmentQuality(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    flagged: bool
+    reasons: list[str]
+    retried: bool
+    repair_succeeded: bool | None
+
+
 class Segment(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,6 +66,8 @@ class Segment(BaseModel):
     target_language: str | None = None
     translation_status: TranslationStatus = "pending"
     translated_at: datetime | None = None
+    quality: SegmentQuality | None = None
+    failure_reason: str | None = None
 
 
 class ReadinessCheck(BaseModel):
@@ -253,7 +264,14 @@ class SessionManager:
                 return seg
         return None
 
-    def mark_translated(self, seq: int, translated_text: str, target_language: str, session_id: str) -> None:
+    def mark_translated(
+        self,
+        seq: int,
+        translated_text: str,
+        target_language: str,
+        session_id: str,
+        quality: SegmentQuality | None = None,
+    ) -> None:
         if session_id != self.session.id:
             logger.warning(
                 "mark_translated: ignoring stale callback for seq #%d "
@@ -269,6 +287,7 @@ class SessionManager:
         seg.target_language = target_language
         seg.translation_status = "done"
         seg.translated_at = _utcnow()
+        seg.quality = quality
         if self._journal is not None:
             self._journal.record_translation_updated(seg)
         self._try_deliver()

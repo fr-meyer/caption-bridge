@@ -12,3 +12,4 @@ dependencies:
   - pydantic-settings
   - python-dotenv
   - orjson
+  - pytest

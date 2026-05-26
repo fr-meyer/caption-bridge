@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,10 @@ logger = logging.getLogger(__name__)
 #   2. CJK / Arabic (。 ！ ？ ؟) split immediately — these scripts don't use
 #      inter-sentence whitespace.
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)|[。！？؟]")
+
+MIN_SEGMENT_CHARS = 15
+MIN_SEGMENT_TOKENS = 3
+_TERMINAL_PUNCT_RE = re.compile(r"[.!?。！？؟]\s*$")
 
 
 class BoundaryDetector:
@@ -44,9 +49,13 @@ class BoundaryDetector:
 
         self._buffer: str = ""
         self._timer_handle: asyncio.TimerHandle | None = None
+        self._max_hold_ms = min(2 * pause_timeout_s * 1000, 3000)
+        self._held: bool = False
+        self._hold_started_at: float | None = None
 
     def push(self, text: str) -> None:
         """Append a text delta and evaluate boundary conditions."""
+        self._held = False
         self._buffer += text
         self._cancel_timer()
 
@@ -69,14 +78,14 @@ class BoundaryDetector:
             if self._buffer:
                 if self._on_partial is not None:
                     self._on_partial(self._buffer)
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 self._timer_handle = loop.call_later(
                     self._pause_timeout_s, self._on_pause_timeout
                 )
         else:
             if self._on_partial is not None:
                 self._on_partial(self._buffer)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._timer_handle = loop.call_later(
                 self._pause_timeout_s, self._on_pause_timeout
             )
@@ -87,11 +96,38 @@ class BoundaryDetector:
         self._cancel_timer()
         text = self._buffer
         self._buffer = ""
+        self._held = False
+        self._hold_started_at = None
         if self._on_finalize is not None:
             self._on_finalize(text)
 
     def _on_pause_timeout(self) -> None:
         logger.debug("Pause timeout fired — finalizing segment")
+
+        if _TERMINAL_PUNCT_RE.search(self._buffer):
+            self._finalize()
+            return
+
+        stripped = self._buffer.strip()
+        token_count = len(self._buffer.split())
+        if len(stripped) >= MIN_SEGMENT_CHARS and token_count >= MIN_SEGMENT_TOKENS:
+            self._finalize()
+            return
+
+        if self._hold_started_at is None:
+            self._hold_started_at = time.monotonic()
+
+        elapsed_ms = (time.monotonic() - self._hold_started_at) * 1000
+        if elapsed_ms < self._max_hold_ms:
+            self._held = True
+            if self._on_partial is not None:
+                self._on_partial(self._buffer)
+            loop = asyncio.get_running_loop()
+            self._timer_handle = loop.call_later(
+                self._pause_timeout_s, self._on_pause_timeout
+            )
+            return
+
         self._finalize()
 
     def _cancel_timer(self) -> None:
@@ -101,18 +137,22 @@ class BoundaryDetector:
 
     def flush_buffer(self) -> str | None:
         """Return and clear the current buffer for normal stop-path draining."""
+        self._cancel_timer()
+        self._held = False
+        self._hold_started_at = None
         if not self._buffer:
             return None
-        self._cancel_timer()
         text = self._buffer
         self._buffer = ""
         return text
 
     def flush_reconnect_fragment(self) -> str | None:
         """Return and clear the current buffer (hook for reconnection manager)."""
+        self._cancel_timer()
+        self._held = False
+        self._hold_started_at = None
         if not self._buffer:
             return None
-        self._cancel_timer()
         text = self._buffer
         self._buffer = ""
         return text
@@ -121,3 +161,5 @@ class BoundaryDetector:
         """Clear all state. Used on clean shutdown."""
         self._buffer = ""
         self._cancel_timer()
+        self._held = False
+        self._hold_started_at = None
