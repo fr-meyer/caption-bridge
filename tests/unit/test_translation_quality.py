@@ -113,10 +113,10 @@ def test_residual_source_script_native_punctuation_not_flagged() -> None:
 
 
 def test_residual_source_script_high_latin_ratio_with_target_script_not_flagged() -> None:
-    """Preserved ASCII terms can dominate latin ratio while target-script text is present."""
+    """Valid mixed-script academic caption: preserved ASCII technical terms dominate the Latin ratio, but sufficient Japanese target-script text keeps the target-script ratio above MIN_TARGET_SCRIPT_RATIO (0.15), so the heuristic must not flag it."""
     translated = (
         "ResNet-50 BERT GPT-4 Transformer CNN RNN LSTM GRU "
-        "Attention LayerNorm BatchNorm は深層学習モデルです"
+        "Attention LayerNorm BatchNorm は深層学習モデルであり、画像認識に使われます"
     )
     result = check(translated, "ResNet-50 is a deep learning model", "ja")
 
