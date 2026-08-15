@@ -5,7 +5,7 @@ PORT ?= 8765
 UV ?= uv
 PYTHON ?= python3
 
-.PHONY: run dev ctl-start ctl-status ctl-stop smoke setup test quality-benchmark retention-preview lint check setup-conda
+.PHONY: run dev ctl-start ctl-status ctl-stop smoke setup test quality-benchmark resilience-soak retention-preview lint check setup-conda
 
 run:
 	$(UV) run uvicorn app.main:app --host $(HOST) --port $(PORT)
@@ -35,13 +35,16 @@ quality-benchmark:
 	$(UV) run python -m scripts.benchmark_translation_quality \
 		--max-false-positive-rate 0.05 --min-recall 1.0 --require-exact-reasons
 
+resilience-soak:
+	$(UV) run python -m scripts.resilience_soak --segments 1000
+
 retention-preview:
 	$(UV) run python -m scripts.prune_transcripts
 
 lint:
 	$(UV) run ruff check .
 
-check: lint quality-benchmark test
+check: lint quality-benchmark resilience-soak test
 	node --check app/static/app.js
 
 setup-conda:

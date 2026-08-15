@@ -52,6 +52,11 @@ jobs:
           uv run --python ${{ matrix.python-version }} python -m scripts.benchmark_translation_quality
           --max-false-positive-rate 0.05 --min-recall 1.0 --require-exact-reasons
 
+      - name: Translation resilience soak
+        run: >-
+          uv run --python ${{ matrix.python-version }} python -m scripts.resilience_soak
+          --segments 1000 --json
+
       - name: Test
         run: uv run --python ${{ matrix.python-version }} python -m pytest -q
 
