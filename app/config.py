@@ -20,6 +20,10 @@ class AppConfig(BaseSettings):
     pause_timeout_ms: int = 1500
     translation_context_segments: int = 5
     translation_timeout_ms: int = 10000
+    translation_repair_max_attempts: int = Field(
+        default=1, ge=0, le=1,
+        validation_alias="TRANSLATION_REPAIR_MAX_ATTEMPTS",
+    )
     readiness_poll_interval_ms: int = 3000
     client_disconnect_grace_ms: int = 45000
     ws_outbound_queue_max: int = Field(default=256, ge=32, le=4096)

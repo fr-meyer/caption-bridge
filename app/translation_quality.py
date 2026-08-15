@@ -11,6 +11,9 @@ MIN_SOURCE_CHARS_FOR_RATIO_CHECK = 25
 MIN_LENGTH_RATIO = 0.25
 MAX_LENGTH_RATIO = 4.5
 MIN_TARGET_SCRIPT_RATIO = 0.15
+MIN_SOURCE_CHARS_FOR_FUNCTION_WORD_CHECK = 20
+MIN_RESIDUAL_SCRIPT_CHARS = 4
+MIN_RESIDUAL_SCRIPT_RATIO = 0.10
 
 LATIN_SCRIPT_LANGUAGES = frozenset(
     {
@@ -938,8 +941,8 @@ _FUNCTION_WORDS_BY_LANGUAGE: dict[str, frozenset[str]] = {
 
 _NUMBERED_LIST_PATTERN = re.compile(r"^\s*\d+[.)]\s", re.MULTILINE)
 _BULLET_PATTERN = re.compile(r"^\s*[-*•]\s", re.MULTILINE)
-_INLINE_ALTERNATIVE_PATTERN = re.compile(
-    r" or:| alternative:| option ", re.IGNORECASE
+_LABELED_ALTERNATIVE_PATTERN = re.compile(
+    r"^\s*(?:alternative|option)\s+(?:[a-z]|\d+)[.):]\s*", re.IGNORECASE | re.MULTILINE
 )
 
 _NON_LATIN_SCRIPT_PATTERN = re.compile(
@@ -990,10 +993,7 @@ class QualityCheckResult(NamedTuple):
 
 
 def _has_prompt_leakage(text_lower: str) -> bool:
-    for phrase in _WRAPPER_PHRASES:
-        if text_lower.startswith(phrase) or phrase in text_lower:
-            return True
-    return False
+    return any(text_lower.startswith(phrase) for phrase in _WRAPPER_PHRASES)
 
 
 def _has_multiple_alternatives(text: str) -> bool:
@@ -1001,7 +1001,7 @@ def _has_multiple_alternatives(text: str) -> bool:
         return True
     if _BULLET_PATTERN.search(text):
         return True
-    if _INLINE_ALTERNATIVE_PATTERN.search(text):
+    if len(_LABELED_ALTERNATIVE_PATTERN.findall(text)) >= 2:
         return True
     return False
 
@@ -1037,11 +1037,28 @@ def _target_script_ratio(text: str, target_language: str) -> float:
     return target / significant
 
 
+def _non_latin_script_stats(text: str) -> tuple[int, int]:
+    significant = 0
+    non_latin = 0
+    for char in text:
+        if char.isspace() or _is_unicode_punctuation(char):
+            continue
+        significant += 1
+        if _NON_LATIN_SCRIPT_PATTERN.fullmatch(char):
+            non_latin += 1
+    return non_latin, significant
+
+
 def _has_residual_source_script(
     translated_text: str, source_text: str, target_language: str
 ) -> bool:
     if target_language in LATIN_SCRIPT_LANGUAGES:
-        return _NON_LATIN_SCRIPT_PATTERN.search(translated_text) is not None
+        non_latin, significant = _non_latin_script_stats(translated_text)
+        return (
+            significant > 0
+            and non_latin >= MIN_RESIDUAL_SCRIPT_CHARS
+            and non_latin / significant >= MIN_RESIDUAL_SCRIPT_RATIO
+        )
 
     source_stripped = source_text.strip()
     if source_stripped:
@@ -1064,7 +1081,11 @@ def _has_suspicious_length_ratio(translated_text: str, source_text: str) -> bool
     return ratio < MIN_LENGTH_RATIO or ratio > MAX_LENGTH_RATIO
 
 
-def _is_function_word_only(translated_text: str, target_language: str) -> bool:
+def _is_function_word_only(
+    translated_text: str, target_language: str, source_text: str
+) -> bool:
+    if len(source_text.strip()) < MIN_SOURCE_CHARS_FOR_FUNCTION_WORD_CHECK:
+        return False
     function_words = _FUNCTION_WORDS_BY_LANGUAGE.get(target_language)
     if not function_words:
         return False
@@ -1096,7 +1117,7 @@ def check(
     if _has_suspicious_length_ratio(translated_text, source_text):
         reasons.append("length_ratio")
 
-    if _is_function_word_only(translated_text, target_language):
+    if _is_function_word_only(translated_text, target_language, source_text):
         reasons.append("function_word_only")
 
     return QualityCheckResult(flagged=len(reasons) > 0, reasons=reasons)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 
 from mistralai.client import Mistral
 
@@ -298,9 +299,25 @@ class TranslationDispatcher:
                 reasons=[],
                 retried=False,
                 repair_succeeded=None,
+                final_flagged=False,
+                final_reasons=[],
+                repair_attempts=0,
+                repair_latency_ms=None,
             )
 
         initial_reasons = list(result.reasons)
+        if self._config.translation_repair_max_attempts == 0:
+            return raw_text, SegmentQuality(
+                flagged=True,
+                reasons=initial_reasons,
+                retried=False,
+                repair_succeeded=None,
+                final_flagged=True,
+                final_reasons=initial_reasons,
+                repair_attempts=0,
+                repair_latency_ms=None,
+            )
+
         label = get_language_label(target_language)
         repair_messages = translation_quality.build_repair_prompt(
             segment.source_text, label, initial_reasons
@@ -309,17 +326,24 @@ class TranslationDispatcher:
             self._config.translation_timeout_ms / 2, 5000
         ) / 1000
 
+        repair_started = time.monotonic()
         try:
             repair_text = await asyncio.wait_for(
                 self._call_repair_api(repair_messages),
                 timeout=repair_timeout_s,
             )
-        except (asyncio.TimeoutError, Exception):
+        except Exception:
             return raw_text, SegmentQuality(
                 flagged=True,
                 reasons=initial_reasons,
                 retried=True,
                 repair_succeeded=False,
+                final_flagged=True,
+                final_reasons=initial_reasons,
+                repair_attempts=1,
+                repair_latency_ms=max(
+                    0, round((time.monotonic() - repair_started) * 1000)
+                ),
             )
 
         repair_result = translation_quality.check(
@@ -331,15 +355,31 @@ class TranslationDispatcher:
                 reasons=initial_reasons,
                 retried=True,
                 repair_succeeded=True,
+                final_flagged=False,
+                final_reasons=[],
+                repair_attempts=1,
+                repair_latency_ms=max(
+                    0, round((time.monotonic() - repair_started) * 1000)
+                ),
             )
+
         best_text = translation_quality.choose_better_translation(
             raw_text, repair_text, segment.source_text, target_language
+        )
+        final_result = translation_quality.check(
+            best_text, segment.source_text, target_language
         )
         return best_text, SegmentQuality(
             flagged=True,
             reasons=initial_reasons,
             retried=True,
             repair_succeeded=False,
+            final_flagged=final_result.flagged,
+            final_reasons=list(final_result.reasons),
+            repair_attempts=1,
+            repair_latency_ms=max(
+                0, round((time.monotonic() - repair_started) * 1000)
+            ),
         )
 
     def _build_messages(self, segment, context_segments: list, target_language: str) -> list[dict]:

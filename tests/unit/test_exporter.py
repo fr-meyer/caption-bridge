@@ -51,6 +51,21 @@ def _mock_config(export_dir: str) -> MagicMock:
     return config
 
 
+def test_legacy_quality_metadata_backfills_final_state() -> None:
+    quality = SegmentQuality.model_validate(
+        {
+            "flagged": True,
+            "reasons": ["prompt_leakage"],
+            "retried": True,
+            "repair_succeeded": False,
+        }
+    )
+
+    assert quality.final_flagged is True
+    assert quality.final_reasons == ["prompt_leakage"]
+    assert quality.repair_attempts == 1
+
+
 def test_quality_summary_counts_done() -> None:
     session = make_session(
         [
@@ -115,6 +130,74 @@ def test_quality_summary_total() -> None:
     summary = _compute_quality_summary(session)
 
     assert summary["total_segments"] == 5
+
+
+def test_quality_summary_reports_repair_outcomes_reasons_and_latency() -> None:
+    repaired = SegmentQuality(
+        flagged=True,
+        reasons=["prompt_leakage"],
+        retried=True,
+        repair_succeeded=True,
+        final_flagged=False,
+        final_reasons=[],
+        repair_attempts=1,
+        repair_latency_ms=120,
+    )
+    still_flagged = SegmentQuality(
+        flagged=True,
+        reasons=["residual_source_script"],
+        retried=True,
+        repair_succeeded=False,
+        final_flagged=True,
+        final_reasons=["residual_source_script"],
+        repair_attempts=1,
+        repair_latency_ms=80,
+    )
+    repair_disabled = SegmentQuality(
+        flagged=True,
+        reasons=["length_ratio"],
+        retried=False,
+        repair_succeeded=None,
+        final_flagged=True,
+        final_reasons=["length_ratio"],
+        repair_attempts=0,
+        repair_latency_ms=None,
+    )
+    clean = SegmentQuality(
+        flagged=False,
+        reasons=[],
+        retried=False,
+        repair_succeeded=None,
+    )
+    session = make_session(
+        [
+            {"translation_status": "done", "quality": repaired},
+            {"translation_status": "done", "quality": still_flagged},
+            {"translation_status": "done", "quality": repair_disabled},
+            {"translation_status": "done", "quality": clean},
+        ]
+    )
+
+    summary = _compute_quality_summary(session)
+
+    assert summary["quality_checked"] == 4
+    assert summary["quality_flagged"] == 3
+    assert summary["repair_attempts"] == 2
+    assert summary["repair_succeeded"] == 1
+    assert summary["quality_still_flagged"] == 2
+    assert summary["initial_reason_counts"] == {
+        "length_ratio": 1,
+        "prompt_leakage": 1,
+        "residual_source_script": 1,
+    }
+    assert summary["final_reason_counts"] == {
+        "length_ratio": 1,
+        "residual_source_script": 1,
+    }
+    assert summary["repair_latency_samples"] == 2
+    assert summary["repair_latency_ms_total"] == 200
+    assert summary["repair_latency_ms_average"] == 100.0
+    assert summary["repair_latency_ms_max"] == 120
 
 
 def test_per_segment_quality_in_json(tmp_path: Path) -> None:

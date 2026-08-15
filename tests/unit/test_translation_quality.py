@@ -6,7 +6,6 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from app.state import SegmentQuality
 from app.translate import TranslationDispatcher
 from app.translation_quality import (
     QualityCheckResult,
@@ -21,6 +20,7 @@ def _make_dispatcher() -> TranslationDispatcher:
     config.mistral_api_key = "test-key"
     config.translate_model = "test-model"
     config.translation_timeout_ms = 10_000
+    config.translation_repair_max_attempts = 1
     return TranslationDispatcher(MagicMock(), config)
 
 
@@ -41,6 +41,16 @@ def test_prompt_leakage_clean() -> None:
     assert result.flagged is False
 
 
+def test_prompt_leakage_term_inside_caption_is_clean() -> None:
+    result = check(
+        "The figure caption: attention weights by layer.",
+        "Synthetic source",
+        "en",
+    )
+
+    assert "prompt_leakage" not in result.reasons
+
+
 def test_multiple_alternatives_numbered() -> None:
     result = check("1. Option A\n2. Option B", "Choose one", "en")
 
@@ -53,14 +63,50 @@ def test_multiple_alternatives_bullet() -> None:
     assert "multiple_alternatives" in result.reasons
 
 
+def test_multiple_alternatives_labeled() -> None:
+    result = check(
+        "Option A: First result\nOption B: Second result",
+        "Choose one result",
+        "en",
+    )
+
+    assert "multiple_alternatives" in result.reasons
+
+
+def test_natural_option_term_is_clean() -> None:
+    result = check("This option improves accuracy.", "Synthetic source", "en")
+
+    assert "multiple_alternatives" not in result.reasons
+
+
 def test_residual_source_script_hangul_in_latin_target() -> None:
-    result = check("Hello 안녕", "Hello", "en")
+    result = check("The result is 매우 중요합니다", "Synthetic source", "en")
 
     assert "residual_source_script" in result.reasons
 
 
 def test_residual_source_script_clean() -> None:
     result = check("Hello world", "Hello world", "en")
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_preserved_short_hangul_name_is_clean() -> None:
+    result = check(
+        "Professor 김 explained the synthetic experiment.",
+        "Synthetic source",
+        "en",
+    )
+
+    assert "residual_source_script" not in result.reasons
+
+
+def test_preserved_full_hangul_name_is_clean() -> None:
+    result = check(
+        "Dr. 김민수 presented a new method.",
+        "Synthetic source",
+        "en",
+    )
 
     assert "residual_source_script" not in result.reasons
 
@@ -187,13 +233,27 @@ def test_length_ratio_skipped_short_source() -> None:
 
 
 def test_function_word_only() -> None:
-    result = check("the a is", "Some source text", "en")
+    result = check(
+        "the a is",
+        "Synthetic source text with substantive details.",
+        "en",
+    )
 
     assert "function_word_only" in result.reasons
 
 
+def test_function_word_only_skipped_for_short_source() -> None:
+    result = check("That is it.", "Short source", "en")
+
+    assert "function_word_only" not in result.reasons
+
+
 def test_function_word_only_clean() -> None:
-    result = check("the neural network", "Some source text", "en")
+    result = check(
+        "the neural network",
+        "Synthetic source text with substantive details.",
+        "en",
+    )
 
     assert "function_word_only" not in result.reasons
 
@@ -232,9 +292,9 @@ def test_choose_better_translation_prefers_clean() -> None:
 
 
 def test_choose_better_translation_prefers_fewer_flags() -> None:
-    raw = "Caption: Hello 안녕"
-    repair = "Caption: Hello"
-    source = "Hello world"
+    raw = "Caption: The result is 매우 중요합니다"
+    repair = "Caption: The result is important"
+    source = "Synthetic source"
 
     chosen = choose_better_translation(raw, repair, source, "en")
 
@@ -259,6 +319,21 @@ def test_quality_check_result_shape() -> None:
     assert isinstance(result.reasons, list)
 
 
+def test_check_and_repair_clean_input_uses_no_repair() -> None:
+    dispatcher = _make_dispatcher()
+    segment = _make_segment()
+
+    text, quality = asyncio.run(
+        dispatcher._check_and_repair("Hello world", segment, "en")
+    )
+
+    assert text == "Hello world"
+    assert quality.flagged is False
+    assert quality.final_flagged is False
+    assert quality.repair_attempts == 0
+    assert quality.repair_latency_ms is None
+
+
 def test_check_and_repair_clean_repair() -> None:
     dispatcher = _make_dispatcher()
     segment = _make_segment()
@@ -269,12 +344,14 @@ def test_check_and_repair_clean_repair() -> None:
     )
 
     assert text == "Hello world"
-    assert quality == SegmentQuality(
-        flagged=True,
-        reasons=["prompt_leakage"],
-        retried=True,
-        repair_succeeded=True,
-    )
+    assert quality.flagged is True
+    assert quality.reasons == ["prompt_leakage"]
+    assert quality.retried is True
+    assert quality.repair_succeeded is True
+    assert quality.final_flagged is False
+    assert quality.final_reasons == []
+    assert quality.repair_attempts == 1
+    assert quality.repair_latency_ms is not None
     dispatcher._call_repair_api.assert_awaited_once()
 
 
@@ -288,12 +365,13 @@ def test_check_and_repair_failed_repair() -> None:
     )
 
     assert text == "Caption: Hello"
-    assert quality == SegmentQuality(
-        flagged=True,
-        reasons=["prompt_leakage"],
-        retried=True,
-        repair_succeeded=False,
-    )
+    assert quality.flagged is True
+    assert quality.retried is True
+    assert quality.repair_succeeded is False
+    assert quality.final_flagged is True
+    assert quality.final_reasons == ["prompt_leakage"]
+    assert quality.repair_attempts == 1
+    assert quality.repair_latency_ms is not None
     dispatcher._call_repair_api.assert_awaited_once()
 
 
@@ -307,10 +385,32 @@ def test_check_and_repair_timed_out_repair() -> None:
     )
 
     assert text == "Caption: Hello"
-    assert quality == SegmentQuality(
-        flagged=True,
-        reasons=["prompt_leakage"],
-        retried=True,
-        repair_succeeded=False,
-    )
+    assert quality.flagged is True
+    assert quality.retried is True
+    assert quality.repair_succeeded is False
+    assert quality.final_flagged is True
+    assert quality.final_reasons == ["prompt_leakage"]
+    assert quality.repair_attempts == 1
+    assert quality.repair_latency_ms is not None
     dispatcher._call_repair_api.assert_awaited_once()
+
+
+def test_check_and_repair_disabled_budget_makes_no_provider_call() -> None:
+    dispatcher = _make_dispatcher()
+    dispatcher._config.translation_repair_max_attempts = 0
+    segment = _make_segment()
+    dispatcher._call_repair_api = AsyncMock()
+
+    text, quality = asyncio.run(
+        dispatcher._check_and_repair("Caption: Hello", segment, "en")
+    )
+
+    assert text == "Caption: Hello"
+    assert quality.flagged is True
+    assert quality.retried is False
+    assert quality.repair_succeeded is None
+    assert quality.final_flagged is True
+    assert quality.final_reasons == ["prompt_leakage"]
+    assert quality.repair_attempts == 0
+    assert quality.repair_latency_ms is None
+    dispatcher._call_repair_api.assert_not_awaited()

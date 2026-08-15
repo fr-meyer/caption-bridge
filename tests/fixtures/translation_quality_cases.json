@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "description": "Synthetic academic-caption quality cases; contains no production transcript text.",
+  "cases": [
+    {
+      "id": "clean_en_academic",
+      "target_language": "en",
+      "source_text": "합성 예제 문장은 학술 발표의 결과를 설명합니다.",
+      "translated_text": "The synthetic example explains the seminar result.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_preserved_surname",
+      "target_language": "en",
+      "source_text": "김 교수는 합성 실험을 설명했습니다.",
+      "translated_text": "Professor 김 explained the synthetic experiment.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_preserved_full_name",
+      "target_language": "en",
+      "source_text": "김민수 박사는 새로운 방법을 발표했습니다.",
+      "translated_text": "Dr. 김민수 presented a new method.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_natural_option",
+      "target_language": "en",
+      "source_text": "이 선택지는 정확도를 향상시킵니다.",
+      "translated_text": "This option improves accuracy.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_natural_caption_term",
+      "target_language": "en",
+      "source_text": "그림 설명은 층별 주의 가중치를 보여 줍니다.",
+      "translated_text": "The figure caption: attention weights by layer.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_short_function_caption",
+      "target_language": "en",
+      "source_text": "그게 다예요.",
+      "translated_text": "That is it.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_short_answer",
+      "target_language": "en",
+      "source_text": "네.",
+      "translated_text": "Yes.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_technical_terms",
+      "target_language": "en",
+      "source_text": "합성 모델은 CNN과 ReLU를 사용합니다.",
+      "translated_text": "The synthetic model uses CNN and ReLU.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_ja_mixed_script",
+      "target_language": "ja",
+      "source_text": "ResNet-50 is used for image classification.",
+      "translated_text": "ResNet-50は画像分類モデルです。",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_ko_mixed_script",
+      "target_language": "ko",
+      "source_text": "BERT is used for language processing.",
+      "translated_text": "BERT모델은 자연어 처리에 사용됩니다.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_fr_function_words_with_content",
+      "target_language": "fr",
+      "source_text": "The synthetic network is evaluated on a small dataset.",
+      "translated_text": "Le réseau synthétique est évalué sur un petit jeu de données.",
+      "expected_reasons": []
+    },
+    {
+      "id": "clean_en_compact_translation",
+      "target_language": "en",
+      "source_text": "이 합성 문장은 비교 실험의 전체 결과를 간단하게 설명합니다.",
+      "translated_text": "This summarizes the comparison.",
+      "expected_reasons": []
+    },
+    {
+      "id": "bad_prompt_caption_prefix",
+      "target_language": "en",
+      "source_text": "안녕하세요.",
+      "translated_text": "Caption: Hello.",
+      "expected_reasons": ["prompt_leakage"]
+    },
+    {
+      "id": "bad_prompt_translation_prefix",
+      "target_language": "en",
+      "source_text": "결과를 설명합니다.",
+      "translated_text": "Here's the translation: The result is explained.",
+      "expected_reasons": ["prompt_leakage"]
+    },
+    {
+      "id": "bad_numbered_alternatives",
+      "target_language": "en",
+      "source_text": "하나의 결과를 선택합니다.",
+      "translated_text": "1. First result\n2. Second result",
+      "expected_reasons": ["multiple_alternatives"]
+    },
+    {
+      "id": "bad_labeled_alternatives",
+      "target_language": "en",
+      "source_text": "하나의 결과를 선택합니다.",
+      "translated_text": "Option A: First result\nOption B: Second result",
+      "expected_reasons": ["multiple_alternatives"]
+    },
+    {
+      "id": "bad_bulleted_alternatives",
+      "target_language": "en",
+      "source_text": "하나의 결과를 선택합니다.",
+      "translated_text": "- First result\n- Second result",
+      "expected_reasons": ["multiple_alternatives"]
+    },
+    {
+      "id": "bad_en_residual_hangul_phrase",
+      "target_language": "en",
+      "source_text": "이 결과는 매우 중요합니다.",
+      "translated_text": "The result is 매우 중요합니다.",
+      "expected_reasons": ["residual_source_script"]
+    },
+    {
+      "id": "bad_en_residual_japanese_phrase",
+      "target_language": "en",
+      "source_text": "The result is important.",
+      "translated_text": "The result is とても重要です.",
+      "expected_reasons": ["residual_source_script"]
+    },
+    {
+      "id": "bad_ja_fully_latin",
+      "target_language": "ja",
+      "source_text": "これは合成画像分類モデルです。",
+      "translated_text": "This is a synthetic image classification model.",
+      "expected_reasons": ["residual_source_script"]
+    },
+    {
+      "id": "bad_length_too_short",
+      "target_language": "en",
+      "source_text": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "translated_text": "AI",
+      "expected_reasons": ["length_ratio"]
+    },
+    {
+      "id": "bad_length_too_long",
+      "target_language": "en",
+      "source_text": "AAAAAAAAAAAAAAAAAAAAAAAAA",
+      "translated_text": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "expected_reasons": ["length_ratio"]
+    },
+    {
+      "id": "bad_function_words_only",
+      "target_language": "en",
+      "source_text": "Synthetic details are described here.",
+      "translated_text": "the and it",
+      "expected_reasons": ["function_word_only"]
+    },
+    {
+      "id": "bad_empty_translation",
+      "target_language": "en",
+      "source_text": "Synthetic content carries several substantive experimental details.",
+      "translated_text": "",
+      "expected_reasons": ["length_ratio"]
+    },
+    {
+      "id": "bad_en_residual_korean_clause",
+      "target_language": "en",
+      "source_text": "신경망 모델은 합성 데이터를 사용합니다.",
+      "translated_text": "The network 합성 데이터를 사용합니다.",
+      "expected_reasons": ["residual_source_script"]
+    },
+    {
+      "id": "bad_prompt_output_prefix",
+      "target_language": "en",
+      "source_text": "실험이 완료되었습니다.",
+      "translated_text": "Output: The experiment is complete.",
+      "expected_reasons": ["prompt_leakage"]
+    }
+  ]
+}
