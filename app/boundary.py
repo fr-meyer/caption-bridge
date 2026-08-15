@@ -20,6 +20,21 @@ _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)|[。！？؟]")
 MIN_SEGMENT_CHARS = 15
 MIN_SEGMENT_TOKENS = 3
 _TERMINAL_PUNCT_RE = re.compile(r"[.!?。！？؟]\s*$")
+_HANGUL_RE = re.compile(r"[가-힣]")
+_TRAILING_CLOSERS_RE = re.compile(r"[\"'’”)}\]〉》」』]+$")
+
+# Korean transcription commonly arrives without punctuation. Clear formal and
+# polite sentence-closing endings can finalize at the ordinary pause timeout.
+# Other Hangul endings are conservatively held for more speech or a bounded
+# longer silence. This avoids pretending that a lightweight regex is a full
+# morphological analyzer.
+_KOREAN_CLEAR_FINAL_END_RE = re.compile(
+    r"(?:"
+    r"니다|"
+    r"아요|어요|해요|예요|이에요|"
+    r"지요|죠|네요|군요|구나|나요|까요|세요|십시오"
+    r")$"
+)
 
 
 class BoundaryDetector:
@@ -42,14 +57,21 @@ class BoundaryDetector:
         pause_timeout_s: float = 1.5,
         on_partial: Callable[[str], None] | None = None,
         on_finalize: Callable[[str], None] | None = None,
+        fragment_merge_enabled: bool = True,
+        fragment_max_hold_s: float = 3.0,
+        min_segment_chars: int = MIN_SEGMENT_CHARS,
+        min_segment_tokens: int = MIN_SEGMENT_TOKENS,
     ) -> None:
         self._pause_timeout_s = pause_timeout_s
         self._on_partial = on_partial
         self._on_finalize = on_finalize
+        self._fragment_merge_enabled = fragment_merge_enabled
+        self._min_segment_chars = min_segment_chars
+        self._min_segment_tokens = min_segment_tokens
 
         self._buffer: str = ""
         self._timer_handle: asyncio.TimerHandle | None = None
-        self._max_hold_ms = min(2 * pause_timeout_s * 1000, 3000)
+        self._max_hold_ms = max(0.0, fragment_max_hold_s * 1000)
         self._held: bool = False
         self._hold_started_at: float | None = None
 
@@ -102,15 +124,14 @@ class BoundaryDetector:
             self._on_finalize(text)
 
     def _on_pause_timeout(self) -> None:
-        logger.debug("Pause timeout fired — finalizing segment")
+        logger.debug("Pause timeout fired — evaluating segment")
 
         if _TERMINAL_PUNCT_RE.search(self._buffer):
             self._finalize()
             return
 
-        stripped = self._buffer.strip()
-        token_count = len(self._buffer.split())
-        if len(stripped) >= MIN_SEGMENT_CHARS and token_count >= MIN_SEGMENT_TOKENS:
+        defer_reason = self._pause_defer_reason()
+        if defer_reason is None:
             self._finalize()
             return
 
@@ -120,15 +141,52 @@ class BoundaryDetector:
         elapsed_ms = (time.monotonic() - self._hold_started_at) * 1000
         if elapsed_ms < self._max_hold_ms:
             self._held = True
+            logger.debug(
+                "Deferring pause boundary: reason=%s chars=%d",
+                defer_reason,
+                len(self._buffer),
+            )
             if self._on_partial is not None:
                 self._on_partial(self._buffer)
             loop = asyncio.get_running_loop()
+            remaining_s = (self._max_hold_ms - elapsed_ms) / 1000
             self._timer_handle = loop.call_later(
-                self._pause_timeout_s, self._on_pause_timeout
+                min(self._pause_timeout_s, remaining_s),
+                self._on_pause_timeout,
             )
             return
 
+        logger.debug(
+            "Fragment hold ceiling reached: reason=%s chars=%d",
+            defer_reason,
+            len(self._buffer),
+        )
         self._finalize()
+
+    def _pause_defer_reason(self) -> str | None:
+        """Return a content-free reason when a pause is not a strong boundary."""
+        if not self._fragment_merge_enabled:
+            return None
+
+        stripped = self._buffer.strip()
+        if not stripped:
+            return None
+
+        tail = _TRAILING_CLOSERS_RE.sub("", stripped)
+        last_token = tail.rsplit(maxsplit=1)[-1] if tail else ""
+        if _HANGUL_RE.search(last_token):
+            if _KOREAN_CLEAR_FINAL_END_RE.search(last_token):
+                return None
+            return "korean_nonfinal_ending"
+
+        token_count = len(stripped.split())
+        if (
+            len(stripped) < self._min_segment_chars
+            or token_count < self._min_segment_tokens
+        ):
+            return "short_fragment"
+
+        return None
 
     def _cancel_timer(self) -> None:
         if self._timer_handle is not None:

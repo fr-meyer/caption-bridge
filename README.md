@@ -128,6 +128,19 @@ The microphone smoke test must run on the Mac because the GCP server has no audi
 uv run python -m scripts.smoke_test
 ```
 
+## Semantic fragment merging
+
+Browser source partials remain immediate. Translation, export, and TTS finalization
+use a stronger boundary: punctuation, a clear Korean formal/polite sentence ending,
+or a bounded longer silence. Other Korean endings and short non-Korean fragments
+are held and merged with later deltas when possible.
+
+The default additional hold budget is 3000 ms after the first
+`PAUSE_TIMEOUT_MS` expiry. It cannot exceed 15000 ms. Tune
+`FRAGMENT_MAX_HOLD_MS`, `FRAGMENT_MIN_CHARS`, and
+`FRAGMENT_MIN_TOKENS` only with regression fixtures. Set
+`FRAGMENT_MERGE_ENABLED=false` for the explicit legacy pause behavior.
+
 ## Outage behavior
 
 - Realtime transcription retries provider restarts and transient transport failures with bounded exponential backoff and jitter.
