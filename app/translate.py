@@ -98,8 +98,12 @@ class TranslationDispatcher:
         cause_exc: Exception,
     ) -> str | None:
         """Fixed one-second sleep retry for non-429 errors. Returns text or None if settled."""
+        cause_info = extract_provider_error_info(cause_exc)
         logger.warning(
-            "Translation API error for segment #%d: %s", seq, cause_exc
+            "Translation API error: seq=%d error_type=%s status_code=%s",
+            seq,
+            type(cause_exc).__name__,
+            cause_info.status_code if cause_info is not None else None,
         )
         await asyncio.sleep(1)
         try:
@@ -112,9 +116,10 @@ class TranslationDispatcher:
             if is_capacity_exceeded(retry_info):
                 raise
             logger.error(
-                "Translation retry failed for segment #%d: %s",
+                "Translation retry failed: seq=%d error_type=%s status_code=%s",
                 seq,
-                retry_exc,
+                type(retry_exc).__name__,
+                retry_info.status_code if retry_info is not None else None,
             )
             self._session_manager.mark_translation_failed(seq, session_id)
             return None
