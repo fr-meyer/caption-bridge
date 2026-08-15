@@ -121,3 +121,13 @@ uv run python -m scripts.smoke_test
 ## Privacy and diagnostics
 
 Default logs contain sequence numbers, lengths, timings, status codes, and failure classes—not caption text or provider response bodies. Session journals and exports still contain transcript content and should follow the retention policy in `docs/operations.md`.
+
+Preview aged transcript exports and archived journals without reading or deleting them:
+
+```bash
+make retention-preview
+```
+
+Deletion is never automatic. After reviewing the content-free counts, an operator
+may run `uv run python -m scripts.prune_transcripts --apply`. The tool preserves
+active journals, recent artifacts, symlinks, partial exports, and unexpected files.
