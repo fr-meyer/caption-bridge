@@ -4,7 +4,7 @@ HOST ?= 127.0.0.1
 PORT ?= 8765
 UV ?= uv
 
-.PHONY: run dev smoke setup test quality-benchmark lint check setup-conda
+.PHONY: run dev smoke setup test quality-benchmark retention-preview lint check setup-conda
 
 run:
 	$(UV) run uvicorn app.main:app --host $(HOST) --port $(PORT)
@@ -24,6 +24,9 @@ test:
 quality-benchmark:
 	$(UV) run python -m scripts.benchmark_translation_quality \
 		--max-false-positive-rate 0.05 --min-recall 1.0 --require-exact-reasons
+
+retention-preview:
+	$(UV) run python -m scripts.prune_transcripts
 
 lint:
 	$(UV) run ruff check .

@@ -85,6 +85,19 @@ Do not create a LaunchAgent yet. The future OpenClaw `start`, `status`, and `sto
 - `runs/.journal` and exported JSON contain transcript content.
 - Keep transcript-bearing artifacts only as long as needed for the seminar or an explicitly consented, redacted quality corpus.
 - Before sharing diagnostics, use aggregate metrics and remove transcript-bearing files.
+- `TRANSCRIPT_RETENTION_DAYS` defaults to 30 days and controls only the manual
+  retention tool; it does not install or enable automatic cleanup.
+- Preview eligible timestamped exports and archived journals with
+  `make retention-preview`. The scanner reads file names, sizes, and modification
+  times only. Its output contains counts and byte totals, not transcript text or paths.
+- After reviewing the preview, apply the same policy explicitly with
+  `uv run python -m scripts.prune_transcripts --apply`.
+- The tool never removes live journals. It refuses broad roots and symlinks, and
+  preserves partial export directories or directories containing unexpected files.
+  It deletes exact known files individually and removes a timestamp directory only
+  after that directory is empty.
+- Do not schedule retention with cron or a LaunchAgent until the Mac lifecycle and
+  operator policy are separately reviewed and approved.
 
 ## Release procedure
 
