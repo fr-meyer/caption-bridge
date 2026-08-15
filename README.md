@@ -108,6 +108,7 @@ uv sync --frozen
 uv run ruff check .
 uv run python -m pytest -q
 make quality-benchmark
+make segmentation-benchmark
 make resilience-soak
 node --check app/static/app.js
 ```
@@ -134,6 +135,12 @@ Browser source partials remain immediate. Translation, export, and TTS finalizat
 use a stronger boundary: punctuation, a clear Korean formal/polite sentence ending,
 or a bounded longer silence. Other Korean endings and short non-Korean fragments
 are held and merged with later deltas when possible.
+
+The deterministic `make segmentation-benchmark` gate uses ten synthetic cases.
+Under defaults it requires immediate partial callbacks for all cases, zero
+premature standalone fragments, zero delayed clear boundaries, exact merge and
+forced-release outcomes, and a maximum policy boundary of 4500 ms: the 1500 ms
+base pause plus at most 3000 ms additional hold.
 
 The default additional hold budget is 3000 ms after the first
 `PAUSE_TIMEOUT_MS` expiry. It cannot exceed 15000 ms. Tune
