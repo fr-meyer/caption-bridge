@@ -31,26 +31,52 @@ The GCP host can run unit, lint, syntax, and server-startup checks. It cannot pe
 Use [`mac-acceptance.md`](mac-acceptance.md) for the complete content-free
 candidate-release checklist.
 
-## Manual lifecycle
+## Safe on-demand lifecycle
 
-Until GitHub issue #14 is implemented, lifecycle control remains explicit and on demand.
+The repository-owned controller is the supported OpenClaw control surface. It
+does not install persistent services, a LaunchAgent, login item, cron entry, or
+automatic cleanup.
 
 Start:
 
 ```bash
 cd /path/to/caption-bridge
-make run
+make ctl-start
 ```
 
 Status:
 
 ```bash
-curl --fail http://127.0.0.1:8765/
+make ctl-status
 ```
 
-Stop with `Ctrl-C` in the owning terminal. Wait for the clean shutdown message before closing the terminal.
+Stop and verify:
 
-Do not create a LaunchAgent yet. The future OpenClaw `start`, `status`, and `stop` helpers must be idempotent, PID-aware, port-aware, and preserve graceful export/journal behavior.
+```bash
+make ctl-stop
+make ctl-status
+```
+
+Add `--json` to the underlying command for automation:
+
+```bash
+python3 -m scripts.caption_bridge_ctl status --json
+```
+
+Exit code 0 means the requested state is satisfied, including repeated start or
+stop. Code 2 identifies environment, configuration, microphone, or loopback
+preflight failure; 3 identifies stale or mismatched runtime identity; 4 means
+the port is occupied; 5 is startup or health failure; and 6 is graceful-stop
+failure.
+
+The controller checks the Mac-local `.env` only for the required key's
+presence. It never prints values. Runtime state is mode 0600 under
+`~/Library/Caches/CaptionBridge/runtime.json`; the mode-0600 log is under
+`~/Library/Logs/CaptionBridge/caption-bridge.log`. A stop signal is sent only
+after PID, process start token, exact argument vector, repository, virtual
+environment, host, and port all match the saved state.
+
+See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 
 ## Failure response
 

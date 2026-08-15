@@ -313,6 +313,13 @@ app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 # WebSocket route MUST be registered before the catch-all static mount
 app.add_api_websocket_route("/ws", ws.websocket_endpoint)
 
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Content-free liveness endpoint for local lifecycle checks."""
+    return {"service": "caption-bridge", "status": "ok"}
+
+
 # Static files — catch-all, must be last
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
 
