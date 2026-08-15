@@ -152,6 +152,12 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
   retained artifacts. The gate requires exact terminal outcomes and retry counts,
   strict once-only delivery, bounded browser pressure, replacement snapshot/audio
   behavior, exact export/journal completion, and zero owned tasks after teardown.
+- Run `make browser-setup` once per GCP environment, then `make browser-e2e`
+  before every PR that changes the frontend or WebSocket contract. The fixture
+  binds only to `127.0.0.1`, serves the production browser assets, and uses fixed
+  synthetic WebSocket events. It exercises a real headless Chromium document but
+  does not start the production pipeline, access devices/providers, or retain
+  traces, screenshots, transcripts, or temporary serving artifacts.
 
 ## Logs, journals, and retention
 

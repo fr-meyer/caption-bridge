@@ -48,6 +48,14 @@ resilience-soak:
 full-pipeline-scenario:
 	$(UV) run python -m scripts.full_pipeline_scenario --json
 
+.PHONY: browser-setup browser-e2e
+
+browser-setup:
+	$(UV) run python -m playwright install chromium
+
+browser-e2e:
+	$(UV) run python -m pytest -q browser_tests --browser chromium
+
 retention-preview:
 	$(UV) run python -m scripts.prune_transcripts
 

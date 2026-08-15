@@ -114,6 +114,14 @@ make full-pipeline-scenario
 node --check app/static/app.js
 ```
 
+Run the real-browser contracts separately after installing the repository-scoped
+Chromium build:
+
+```bash
+make browser-setup
+make browser-e2e
+```
+
 The quality benchmark uses only synthetic captions. It fails when detector recall
 drops below 100%, the false-positive rate exceeds 5%, or expected reason labels
 change. Runtime repair is separately hard-limited to at most one added provider
@@ -129,6 +137,12 @@ reconnection, TTS, WebSocket queue/replacement, journal, and export seams around
 six synthetic segments. It makes no network or device calls, deletes its temporary
 artifacts, and fails on ordering, retry-budget, snapshot, export, or task-leak
 regressions. Its report contains only aggregate counts and booleans.
+
+The browser suite serves the production HTML, CSS, and JavaScript from a
+loopback-only synthetic WebSocket backend and drives it with headless Chromium.
+It covers degraded captions/notices, reconnect snapshot restoration, audio
+relocking, export/new-session controls, and keyboard lifecycle behavior without
+microphones, provider calls, public listeners, or retained browser artifacts.
 
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 
