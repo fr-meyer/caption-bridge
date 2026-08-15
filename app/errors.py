@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+import httpx
+from mistralai.client.errors import NoResponseError
+
 
 @dataclass
 class ProviderErrorInfo:
@@ -172,6 +175,27 @@ def is_transient_provider_error(info: ProviderErrorInfo | None) -> bool:
         info is not None
         and info.status_code in {408, 429, 500, 502, 503, 504}
     )
+
+
+def is_transient_transport_error(exc: Exception) -> bool:
+    """Recognize transport failures without inspecting or retaining their text."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                TimeoutError,
+                ConnectionError,
+                OSError,
+                NoResponseError,
+                httpx.TransportError,
+            ),
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def is_tts_guardrail_violation(info: ProviderErrorInfo | None) -> bool:

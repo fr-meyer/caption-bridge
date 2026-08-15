@@ -28,6 +28,9 @@ The GCP host can run unit, lint, syntax, and server-startup checks. It cannot pe
 5. Run `uv sync --frozen` after every lockfile change.
 6. Run `make smoke` before an important live session.
 
+Use [`mac-acceptance.md`](mac-acceptance.md) for the complete content-free
+candidate-release checklist.
+
 ## Manual lifecycle
 
 Until GitHub issue #14 is implemented, lifecycle control remains explicit and on demand.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from mistralai.client.errors import NoResponseError
+
 import app.tts as tts_module
 from app.tts import TTSDispatcher, TTSJob
 
@@ -95,12 +97,20 @@ def _job() -> TTSJob:
     )
 
 
-def _dispatcher(outcomes: list[object]):
+def _dispatcher(outcomes: list[object], **config_overrides):
     speech = _Speech(outcomes)
     client = SimpleNamespace(audio=SimpleNamespace(speech=speech))
     manager = _SessionManager()
-    dispatcher = TTSDispatcher(client, manager, _config())
+    dispatcher = TTSDispatcher(client, manager, _config(**config_overrides))
     return dispatcher, manager, speech
+
+
+def _segment(seq: int):
+    return SimpleNamespace(
+        seq=seq,
+        target_language="en",
+        translated_text=f"caption {seq}",
+    )
 
 
 def test_transient_failure_retries_then_recovers(monkeypatch) -> None:
@@ -173,3 +183,86 @@ def test_transient_retry_budget_is_bounded(monkeypatch) -> None:
     error = [event for event in manager.events if event["type"] == "tts_error"][-1]
     assert error["reason"] == "provider_transient_exhausted"
     assert error["attempts"] == 3
+
+
+def test_transport_failure_retries_then_recovers(monkeypatch) -> None:
+    monkeypatch.setattr(tts_module.random, "uniform", lambda *_args: 0.0)
+    dispatcher, manager, speech = _dispatcher(
+        [
+            NoResponseError("sensitive transport detail"),
+            _Stream([SimpleNamespace(audio_data="audio")]),
+        ]
+    )
+
+    asyncio.run(dispatcher._synthesise(_job()))
+
+    assert speech.calls == 2
+    assert any(event["type"] == "tts_recovered" for event in manager.events)
+    assert "sensitive transport detail" not in str(manager.events)
+
+
+def test_permanent_client_failure_is_not_retried() -> None:
+    dispatcher, manager, speech = _dispatcher([_ProviderError(400)])
+
+    asyncio.run(dispatcher._synthesise(_job()))
+
+    assert speech.calls == 1
+    error = [event for event in manager.events if event["type"] == "tts_error"][-1]
+    assert error["reason"] == "provider_failure"
+
+
+def test_cancellation_interrupts_transient_retry_backoff(monkeypatch) -> None:
+    monkeypatch.setattr(tts_module.random, "uniform", lambda *_args: 0.0)
+
+    async def scenario() -> tuple[_SessionManager, int]:
+        dispatcher, manager, speech = _dispatcher(
+            [ConnectionError("sensitive transport detail")],
+            tts_retry_base_delay_ms=10_000,
+            tts_retry_max_delay_ms=10_000,
+        )
+        task = asyncio.create_task(dispatcher._synthesise(_job()))
+        for _ in range(100):
+            if any(event["type"] == "tts_retrying" for event in manager.events):
+                break
+            await asyncio.sleep(0)
+        else:
+            raise AssertionError("TTS retry did not enter backoff")
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return manager, speech.calls
+
+    manager, calls = asyncio.run(scenario())
+
+    assert calls == 1
+    assert not any(event["type"] == "tts_error" for event in manager.events)
+
+
+def test_live_queue_pressure_evicts_replay_before_live() -> None:
+    dispatcher, manager, _speech = _dispatcher([], tts_queue_max=2)
+    dispatcher.enqueue_replay(1, "replay", "en")
+    dispatcher.enqueue_live(_segment(2))
+
+    dispatcher.enqueue_live(_segment(3))
+
+    queued = list(dispatcher._queue._queue)
+    assert [(job.seq, job.kind) for job in queued] == [(2, "live"), (3, "live")]
+    skipped = [event for event in manager.events if event["type"] == "tts_skipped"]
+    assert skipped[-1]["seq"] == 1
+    assert skipped[-1]["reason"] == "queue_pressure"
+
+
+def test_replay_does_not_displace_live_jobs_when_queue_is_full() -> None:
+    dispatcher, manager, _speech = _dispatcher([], tts_queue_max=2)
+    dispatcher.enqueue_live(_segment(1))
+    dispatcher.enqueue_live(_segment(2))
+
+    dispatcher.enqueue_replay(9, "replay", "en")
+
+    queued = list(dispatcher._queue._queue)
+    assert [(job.seq, job.kind) for job in queued] == [(1, "live"), (2, "live")]
+    skipped = [event for event in manager.events if event["type"] == "tts_skipped"]
+    assert skipped[-1]["seq"] == 9
+    assert skipped[-1]["reason"] == "queue_full"

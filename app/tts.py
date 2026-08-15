@@ -14,6 +14,7 @@ from app.config import AppConfig
 from app.errors import (
     extract_provider_error_info,
     is_transient_provider_error,
+    is_transient_transport_error,
     is_tts_guardrail_violation,
 )
 
@@ -81,6 +82,18 @@ class TTSDispatcher:
         self._unmute_event.set()
         self._voice_invalid: bool = False
 
+    def _emit_queue_skip(self, job: TTSJob, reason: str) -> None:
+        self._session_manager._emit(
+            "tts_skipped",
+            {
+                "seq": job.seq,
+                "kind": job.kind,
+                "reason": reason,
+                "tts_epoch": job.tts_epoch,
+            },
+        )
+
+
     def enqueue_live(self, seg: Any) -> None:
         lang = seg.target_language or ""
         if lang not in VOICE_MAP:
@@ -99,9 +112,12 @@ class TTSDispatcher:
             while not self._queue.empty():
                 items.append(self._queue.get_nowait())
                 self._queue.task_done()
-            drop_idx = next((i for i, j in enumerate(items) if j.kind == "live"), None)
+            drop_idx = next((i for i, j in enumerate(items) if j.kind == "replay"), None)
+            if drop_idx is None:
+                drop_idx = next((i for i, j in enumerate(items) if j.kind == "live"), None)
             if drop_idx is not None:
-                items.pop(drop_idx)
+                dropped = items.pop(drop_idx)
+                self._emit_queue_skip(dropped, "queue_pressure")
             else:
                 self._session_manager._emit(
                     "tts_skipped",
@@ -144,7 +160,10 @@ class TTSDispatcher:
         while not self._queue.empty():
             items.append(self._queue.get_nowait())
             self._queue.task_done()
+        superseded = [j for j in items if j.kind == "replay"]
         items = [j for j in items if j.kind != "replay"]
+        for skipped in superseded:
+            self._emit_queue_skip(skipped, "replay_superseded")
         job = TTSJob(
             seq=seq,
             text=text,
@@ -155,7 +174,10 @@ class TTSDispatcher:
             tts_epoch=self._tts_epoch,
         )
         if len(items) >= self._config.tts_queue_max:
-            items.pop(0)
+            for queued in items:
+                self._queue.put_nowait(queued)
+            self._emit_queue_skip(job, "queue_full")
+            return
         items.insert(0, job)
         for j in items:
             self._queue.put_nowait(j)
@@ -260,7 +282,9 @@ class TTSDispatcher:
                 invalid_voice = (
                     "invalid_voice" in error_text or "Voice '" in error_text
                 )
-                transient = is_transient_provider_error(info)
+                transient = is_transient_provider_error(
+                    info
+                ) or is_transient_transport_error(failure.cause)
                 can_retry = (
                     transient
                     and failure.chunks_emitted == 0
