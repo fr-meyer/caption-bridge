@@ -43,13 +43,18 @@ segmentation-benchmark:
 resilience-soak:
 	$(UV) run python -m scripts.resilience_soak --segments 1000
 
+.PHONY: full-pipeline-scenario
+
+full-pipeline-scenario:
+	$(UV) run python -m scripts.full_pipeline_scenario --json
+
 retention-preview:
 	$(UV) run python -m scripts.prune_transcripts
 
 lint:
 	$(UV) run ruff check .
 
-check: lint quality-benchmark segmentation-benchmark resilience-soak test
+check: lint quality-benchmark segmentation-benchmark resilience-soak full-pipeline-scenario test
 	node --check app/static/app.js
 
 setup-conda:

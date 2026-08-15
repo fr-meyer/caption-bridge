@@ -110,6 +110,7 @@ uv run python -m pytest -q
 make quality-benchmark
 make segmentation-benchmark
 make resilience-soak
+make full-pipeline-scenario
 node --check app/static/app.js
 ```
 
@@ -122,6 +123,12 @@ The resilience soak injects deterministic timeouts and capacity failures into
 1,000 synthetic segments. It fails on pending work, ordering gaps, duplicates,
 unbounded provider calls, missing capacity notices, or missing source-only
 degraded captions. It makes no network calls and prints aggregate counts only.
+
+The full-pipeline scenario composes the production boundary, translation,
+reconnection, TTS, WebSocket queue/replacement, journal, and export seams around
+six synthetic segments. It makes no network or device calls, deletes its temporary
+artifacts, and fails on ordering, retry-budget, snapshot, export, or task-leak
+regressions. Its report contains only aggregate counts and booleans.
 
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 
