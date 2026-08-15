@@ -227,7 +227,7 @@ class SessionManager:
         if self._journal is not None:
             self._journal.record_segment_created(seg)
         self.session.source_partial = ""
-        logger.info("Finalized segment #%d: %s", seg.seq, text[:60])
+        logger.info("Finalized segment: seq=%d chars=%d", seg.seq, len(text))
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -244,7 +244,9 @@ class SessionManager:
         if self._journal is not None:
             self._journal.record_segment_created(seg)
         self.session.source_partial = ""
-        logger.info("Finalized reconnect fragment #%d: %s", seg.seq, text[:60])
+        logger.info(
+            "Finalized reconnect fragment: seq=%d chars=%d", seg.seq, len(text)
+        )
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -450,6 +452,8 @@ class SessionManager:
 
     def get_snapshot(self) -> dict[str, Any]:
         from app.languages import get_available_target_languages
+        from app.reconnect import get_reconnect_metrics
+        from app.ws import get_ws_metrics
 
         s = self.session
         return {
@@ -473,6 +477,10 @@ class SessionManager:
             "target_language": s.target_language,
             "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
+            "runtime_metrics": {
+                "reconnect": get_reconnect_metrics(),
+                "outbound_websocket": get_ws_metrics(),
+            },
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         }
 

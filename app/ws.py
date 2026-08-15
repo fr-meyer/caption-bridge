@@ -27,6 +27,23 @@ _OUTBOUND_QUEUE_WARN_DEPTH = 50
 _OUTBOUND_QUEUE_CRITICAL_DEPTH = 200
 _OUTBOUND_SEND_LAG_WARN_SECS = 2.0
 _OBS_LOG_REPEAT_INTERVAL_SECS = 30.0
+_COALESCIBLE_EVENT_TYPES = frozenset({"source_partial", "elapsed", "readiness"})
+_CRITICAL_EVENT_TYPES = frozenset(
+    {
+        "caption",
+        "error",
+        "export_result",
+        "provider_temporarily_unavailable",
+        "reconnect_attempt",
+        "reconnect_cancelled",
+        "recovered",
+        "session_snapshot",
+        "status",
+        "tts_error",
+        "tts_skipped",
+    }
+)
+
 
 
 @dataclass
@@ -48,6 +65,9 @@ class _WsMetrics:
     lag_recovery_crossings: int = 0
     current_depth: int = 0
     last_lag_secs: float = 0.0
+    dropped_events: int = 0
+    coalesced_events: int = 0
+    critical_drops: int = 0
 
 
 _ws_metrics = _WsMetrics()
@@ -103,18 +123,82 @@ def _maybe_log_outbound_depth(
                 _ws_metrics.depth_warn_crossings += 1
 
 
+def _is_critical_event(event: dict[str, Any]) -> bool:
+    event_type = event.get("type")
+    return event_type in _CRITICAL_EVENT_TYPES or (
+        event_type == "tts_audio" and event.get("is_last") is True
+    )
+
+
 def _enqueue_outbound(
     queue: asyncio.Queue[tuple[dict[str, Any], float]],
     event: dict[str, Any],
     obs: _OutboundObsState,
-) -> None:
-    """Enqueue for the WS writer; never blocks. Unbounded FIFO; depth warnings only."""
+) -> bool:
+    """Enqueue without blocking while preserving critical state transitions."""
     enqueue_time = time.monotonic()
     event_type = event.get("type")
-    queue.put_nowait((event, enqueue_time))
+
+    if not queue.full():
+        queue.put_nowait((event, enqueue_time))
+        depth = queue.qsize()
+        _ws_metrics.current_depth = depth
+        _maybe_log_outbound_depth(obs, depth, event_type)
+        return True
+
+    items: list[tuple[dict[str, Any], float]] = []
+    while not queue.empty():
+        items.append(queue.get_nowait())
+        queue.task_done()
+
+    accepted = False
+    drop_index: int | None = None
+    if event_type in _COALESCIBLE_EVENT_TYPES:
+        matches = [
+            index
+            for index, (queued, _queued_at) in enumerate(items)
+            if queued.get("type") == event_type
+        ]
+        if matches:
+            drop_index = matches[-1]
+            _ws_metrics.coalesced_events += 1
+    elif _is_critical_event(event):
+        drop_index = next(
+            (
+                index
+                for index, (queued, _queued_at) in enumerate(items)
+                if not _is_critical_event(queued)
+            ),
+            0,
+        )
+        if _is_critical_event(items[drop_index][0]):
+            _ws_metrics.critical_drops += 1
+
+    if drop_index is not None:
+        items.pop(drop_index)
+        items.append((event, enqueue_time))
+        accepted = True
+    else:
+        _ws_metrics.dropped_events += 1
+
+    for queued_item in items:
+        queue.put_nowait(queued_item)
+
+    if accepted:
+        _ws_metrics.dropped_events += 1
+    if _ws_metrics.dropped_events == 1 or _ws_metrics.dropped_events % 100 == 0:
+        logger.warning(
+            "Outbound queue drops: total=%s event_type=%s max_depth=%s",
+            _ws_metrics.dropped_events,
+            event_type,
+            queue.maxsize,
+        )
+
     depth = queue.qsize()
     _ws_metrics.current_depth = depth
     _maybe_log_outbound_depth(obs, depth, event_type)
+    return accepted
+
 
 
 # Module-level references set by main.py at startup
@@ -135,7 +219,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
     obs = _OutboundObsState()
-    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]] = asyncio.Queue()
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]] = asyncio.Queue(
+        maxsize=settings.ws_outbound_queue_max
+    )
 
     async def _writer() -> None:
         try:
@@ -210,7 +296,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             try:
                 msg = orjson.loads(raw)
             except Exception:
-                logger.warning("Invalid JSON from client: %s", raw[:100])
+                logger.warning("Invalid JSON from client: chars=%d", len(raw))
                 continue
 
             msg_type = msg.get("type")
@@ -432,12 +518,12 @@ async def _handle_start(
             if manager._tts_dispatcher is not None:
                 manager._tts_dispatcher.reset_mute()
         except Exception as exc:
-            logger.exception("Pipeline startup failed")
+            logger.error("Pipeline startup failed: error_type=%s", type(exc).__name__)
             _enqueue_outbound(
                 outbound_queue,
                 {
                     "type": "error",
-                    "message": f"Pipeline startup failed: {exc}",
+                    "message": "Pipeline startup failed. Check readiness and logs.",
                 },
                 obs,
             )

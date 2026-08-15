@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from mistralai.client import Mistral
 
 from app.config import AppConfig
-from app.errors import extract_provider_error_info, is_tts_guardrail_violation
+from app.errors import (
+    extract_provider_error_info,
+    is_transient_provider_error,
+    is_tts_guardrail_violation,
+)
 
 if TYPE_CHECKING:
     from app.state import SessionManager
@@ -27,6 +32,14 @@ class TTSJob:
     priority: int
     session_id: str
     tts_epoch: int
+
+
+class _TTSAttemptError(Exception):
+    def __init__(self, cause: Exception, chunks_emitted: int) -> None:
+        super().__init__(type(cause).__name__)
+        self.cause = cause
+        self.info = extract_provider_error_info(cause)
+        self.chunks_emitted = chunks_emitted
 
 
 VOICE_MAP: dict[str, str] = {
@@ -54,7 +67,9 @@ class TTSDispatcher:
         self._client = client
         self._session_manager = session_manager
         self._config = config
-        self._queue: asyncio.Queue[TTSJob] = asyncio.Queue()
+        self._queue: asyncio.Queue[TTSJob] = asyncio.Queue(
+            maxsize=config.tts_queue_max
+        )
         self._muted: bool = False
         self._audio_unlocked: bool = False
         self._tts_epoch: int = 0
@@ -139,6 +154,8 @@ class TTSDispatcher:
             session_id=self._session_manager.session.id,
             tts_epoch=self._tts_epoch,
         )
+        if len(items) >= self._config.tts_queue_max:
+            items.pop(0)
         items.insert(0, job)
         for j in items:
             self._queue.put_nowait(j)
@@ -220,6 +237,104 @@ class TTSDispatcher:
             pass
 
     async def _synthesise(self, job: TTSJob) -> None:
+        max_attempts = self._config.tts_transient_max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                completed = await self._synthesise_once(job)
+                if completed and attempt > 1:
+                    self._session_manager._emit(
+                        "tts_recovered",
+                        {
+                            "seq": job.seq,
+                            "kind": job.kind,
+                            "attempts": attempt,
+                            "tts_epoch": job.tts_epoch,
+                        },
+                    )
+                return
+            except asyncio.CancelledError:
+                raise
+            except _TTSAttemptError as failure:
+                info = failure.info
+                error_text = str(failure.cause)
+                invalid_voice = (
+                    "invalid_voice" in error_text or "Voice '" in error_text
+                )
+                transient = is_transient_provider_error(info)
+                can_retry = (
+                    transient
+                    and failure.chunks_emitted == 0
+                    and attempt < max_attempts
+                )
+
+                if can_retry:
+                    base_delay_ms = min(
+                        self._config.tts_retry_base_delay_ms * (2 ** (attempt - 1)),
+                        self._config.tts_retry_max_delay_ms,
+                    )
+                    jitter = random.uniform(
+                        -self._config.tts_retry_jitter_factor,
+                        self._config.tts_retry_jitter_factor,
+                    )
+                    delay_ms = max(0, int(base_delay_ms * (1 + jitter)))
+                    logger.warning(
+                        "TTS transient failure: seq=%s attempt=%s status_code=%s",
+                        job.seq,
+                        attempt,
+                        info.status_code if info is not None else None,
+                    )
+                    self._session_manager._emit(
+                        "tts_retrying",
+                        {
+                            "seq": job.seq,
+                            "kind": job.kind,
+                            "attempt": attempt,
+                            "next_attempt": attempt + 1,
+                            "delay_ms": delay_ms,
+                            "status_code": (
+                                info.status_code if info is not None else None
+                            ),
+                            "tts_epoch": job.tts_epoch,
+                        },
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+                    continue
+
+                if invalid_voice:
+                    self._voice_invalid = True
+                    reason = "invalid_voice_config"
+                elif transient and failure.chunks_emitted > 0:
+                    reason = "partial_audio_interrupted"
+                elif transient:
+                    reason = "provider_transient_exhausted"
+                else:
+                    reason = "provider_failure"
+
+                logger.warning(
+                    "TTS synthesis failed: seq=%s reason=%s attempts=%s status_code=%s",
+                    job.seq,
+                    reason,
+                    attempt,
+                    info.status_code if info is not None else None,
+                )
+                self._session_manager._emit(
+                    "tts_error",
+                    {
+                        "seq": job.seq,
+                        "kind": job.kind,
+                        "reason": reason,
+                        "attempts": attempt,
+                        "status_code": (
+                            info.status_code if info is not None else None
+                        ),
+                        "chunks_emitted": failure.chunks_emitted,
+                        "tts_epoch": job.tts_epoch,
+                    },
+                )
+                return
+
+    async def _synthesise_once(self, job: TTSJob) -> bool:
+        chunk_index = 0
         try:
             if self._voice_invalid:
                 self._session_manager._emit(
@@ -230,7 +345,7 @@ class TTSDispatcher:
                         "tts_epoch": job.tts_epoch,
                     },
                 )
-                return
+                return False
             voice_id = self._config.tts_voice_id or VOICE_MAP[job.language]
             self._session_manager._emit(
                 "tts_speaking",
@@ -247,7 +362,6 @@ class TTSDispatcher:
                 response_format="pcm",
                 stream=True,
             )
-            chunk_index = 0
             async with stream as events:
                 async for event in events:
                     audio_data = getattr(event, "audio_data", None)
@@ -282,6 +396,7 @@ class TTSDispatcher:
                     "tts_epoch": job.tts_epoch,
                 },
             )
+            return True
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -294,11 +409,6 @@ class TTSDispatcher:
                     _info.code,
                     _info.status_code,
                 )
-                logger.debug(
-                    "TTS guardrail rejection detail seq=%s",
-                    job.seq,
-                    exc_info=True,
-                )
                 self._session_manager._emit(
                     "tts_skipped",
                     {
@@ -310,19 +420,8 @@ class TTSDispatcher:
                         "tts_epoch": job.tts_epoch,
                     },
                 )
-                return
-            error_text = str(exc)
-            if "invalid_voice" in error_text or "Voice '" in error_text:
-                self._voice_invalid = True
-            logger.exception("TTS synthesis failed for seq=%s", job.seq)
-            self._session_manager._emit(
-                "tts_error",
-                {
-                    "seq": job.seq,
-                    "kind": job.kind,
-                    "tts_epoch": job.tts_epoch,
-                },
-            )
+                return False
+            raise _TTSAttemptError(exc, chunk_index) from None
 
     async def drain(self) -> None:
         if self._synth_task is not None and not self._synth_task.done():

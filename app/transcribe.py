@@ -64,18 +64,24 @@ async def transcribe(
                         on_done()
                     break
                 elif isinstance(event, RealtimeTranscriptionError):
-                    logger.error("Transcription error: %s", event)
+                    logger.error(
+                        "Transcription provider error: event_type=%s", type(event).__name__
+                    )
                     if on_error is not None:
-                        on_error(event)
+                        on_error(
+                            RuntimeError("Realtime transcription provider error")
+                        )
                     break
                 elif UnknownRealtimeEvent is not None and isinstance(
                     event, UnknownRealtimeEvent
                 ):
-                    logger.debug("Unknown realtime event: %s", event)
+                    logger.debug("Unknown realtime event: type=%s", type(event).__name__)
                 else:
                     logger.debug("Unhandled event type: %s", type(event).__name__)
 
     except Exception as exc:
-        logger.exception("Transcription failed")
+        logger.error(
+            "Transcription failed: error_type=%s", type(exc).__name__
+        )
         if on_error is not None:
             on_error(exc)
