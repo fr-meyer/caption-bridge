@@ -11,11 +11,10 @@ from mistralai.client import Mistral
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
+from app.languages import get_language_label
 from app.state import SegmentQuality
 
 logger = logging.getLogger(__name__)
-
-from app.languages import get_language_label
 
 _RECONNECT_ADDENDUM = (
     "\n\nNote: The following text may be incomplete or cut off "
@@ -99,8 +98,12 @@ class TranslationDispatcher:
         cause_exc: Exception,
     ) -> str | None:
         """Fixed one-second sleep retry for non-429 errors. Returns text or None if settled."""
+        cause_info = extract_provider_error_info(cause_exc)
         logger.warning(
-            "Translation API error for segment #%d: %s", seq, cause_exc
+            "Translation API error: seq=%d error_type=%s status_code=%s",
+            seq,
+            type(cause_exc).__name__,
+            cause_info.status_code if cause_info is not None else None,
         )
         await asyncio.sleep(1)
         try:
@@ -113,9 +116,10 @@ class TranslationDispatcher:
             if is_capacity_exceeded(retry_info):
                 raise
             logger.error(
-                "Translation retry failed for segment #%d: %s",
+                "Translation retry failed: seq=%d error_type=%s status_code=%s",
                 seq,
-                retry_exc,
+                type(retry_exc).__name__,
+                retry_info.status_code if retry_info is not None else None,
             )
             self._session_manager.mark_translation_failed(seq, session_id)
             return None
@@ -243,7 +247,7 @@ class TranslationDispatcher:
                 translated, segment, target_language
             )
             logger.info(
-                "Translated segment #%d: %s", seq, translated[:80] if translated else ""
+                "Translated segment: seq=%d chars=%d", seq, len(translated or "")
             )
             self._session_manager.mark_translated(
                 seq, translated, target_language, session_id, quality=quality
@@ -256,9 +260,11 @@ class TranslationDispatcher:
             self._session_manager.mark_translation_failed(seq, session_id)
             raise
 
-        except Exception:
-            logger.exception(
-                "Unhandled error in translation task for segment #%d", seq
+        except Exception as exc:
+            logger.error(
+                "Unhandled translation failure: seq=%d error_type=%s",
+                seq,
+                type(exc).__name__,
             )
             self._session_manager.mark_translation_failed(seq, session_id)
 

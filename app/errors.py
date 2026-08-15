@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
+
+import httpx
+from mistralai.client.errors import NoResponseError
 
 
 @dataclass
@@ -110,7 +113,10 @@ def extract_provider_error_info(exc: Exception) -> ProviderErrorInfo | None:
             resolved_message = json_message
             if resolved_message is None and isinstance(exc_message, str):
                 resolved_message = exc_message
-            if _is_recognized_mistral_extraction(error_type, code, parsed):
+            if (
+                resolved_status is not None
+                or _is_recognized_mistral_extraction(error_type, code, parsed)
+            ):
                 return ProviderErrorInfo(
                     provider="mistral",
                     status_code=resolved_status,
@@ -123,7 +129,10 @@ def extract_provider_error_info(exc: Exception) -> ProviderErrorInfo | None:
         embedded = _parse_embedded_json(raw)
         if embedded is not None:
             json_status, error_type, code, message = _mistral_fields_from_dict(embedded)
-            if _is_recognized_mistral_extraction(error_type, code, embedded):
+            if (
+                json_status is not None
+                or _is_recognized_mistral_extraction(error_type, code, embedded)
+            ):
                 return ProviderErrorInfo(
                     provider="mistral",
                     status_code=json_status,
@@ -159,6 +168,34 @@ def is_capacity_exceeded(info: ProviderErrorInfo | None) -> bool:
         and info.status_code == 429
         and info.error_type == "service_tier_capacity_exceeded"
     )
+
+
+def is_transient_provider_error(info: ProviderErrorInfo | None) -> bool:
+    return (
+        info is not None
+        and info.status_code in {408, 429, 500, 502, 503, 504}
+    )
+
+
+def is_transient_transport_error(exc: Exception) -> bool:
+    """Recognize transport failures without inspecting or retaining their text."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                TimeoutError,
+                ConnectionError,
+                OSError,
+                NoResponseError,
+                httpx.TransportError,
+            ),
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def is_tts_guardrail_violation(info: ProviderErrorInfo | None) -> bool:

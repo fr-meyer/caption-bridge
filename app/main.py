@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from mistralai.client import Mistral
 from starlette.staticfiles import StaticFiles
 
+from app import ws
 from app.audio import AudioCapture
 from app.boundary import BoundaryDetector
 from app.config import settings
@@ -19,11 +20,9 @@ from app.journal import SessionJournal, run_recovery
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
 from app.state import SessionManager
-
 from app.transcribe import transcribe
 from app.translate import TranslationDispatcher
 from app.tts import TTSDispatcher
-from app import ws
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +99,11 @@ async def _start_pipeline() -> None:
     _stream_error = None
 
     loop = asyncio.get_running_loop()
-    audio = AudioCapture(sample_rate=settings.audio_sample_rate, loop=loop)
+    audio = AudioCapture(
+        sample_rate=settings.audio_sample_rate,
+        loop=loop,
+        max_queue_chunks=settings.audio_queue_max_chunks,
+    )
     detector = BoundaryDetector(
         pause_timeout_s=settings.pause_timeout_ms / 1000,
         on_partial=manager.update_partial,
@@ -214,7 +217,7 @@ def _on_transcription_done(attempt_id: int) -> None:
 
 def _on_transcription_error(exc: Exception, attempt_id: int) -> None:
     global _stream_error
-    logger.error("Transcription error: %s", exc)
+    logger.error("Transcription error: error_type=%s", type(exc).__name__)
     if not _stream_ready.is_set():
         _stream_error = exc
         _stream_ready.set()

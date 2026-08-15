@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-from app.boundary import BoundaryDetector, MIN_SEGMENT_CHARS, MIN_SEGMENT_TOKENS
+from app.boundary import MIN_SEGMENT_CHARS, MIN_SEGMENT_TOKENS, BoundaryDetector
 
 
 def _make_detector(

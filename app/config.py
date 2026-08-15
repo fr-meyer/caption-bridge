@@ -16,12 +16,18 @@ class AppConfig(BaseSettings):
     )
     target_streaming_delay_ms: int = 1000
     audio_sample_rate: int = 16000
+    audio_queue_max_chunks: int = Field(default=50, ge=5, le=1000)
     pause_timeout_ms: int = 1500
     translation_context_segments: int = 5
     translation_timeout_ms: int = 10000
     readiness_poll_interval_ms: int = 3000
     client_disconnect_grace_ms: int = 45000
-    reconnect_max_backoff_ms: int = 15000
+    ws_outbound_queue_max: int = Field(default=256, ge=32, le=4096)
+    reconnect_base_backoff_ms: int = Field(default=1000, ge=0)
+    reconnect_max_backoff_ms: int = Field(default=15000, ge=1)
+    reconnect_max_attempts: int = Field(default=5, ge=1, le=20)
+    reconnect_max_elapsed_ms: int = Field(default=60000, ge=1000)
+    reconnect_jitter_factor: float = Field(default=0.25, ge=0.0, le=1.0)
     journal_dir: str = "./runs/.journal"
     recovery_export_dir: str = "./runs/recovered"
     host: str = "127.0.0.1"
@@ -46,12 +52,34 @@ class AppConfig(BaseSettings):
         validation_alias="MISTRAL_TTS_SAMPLE_RATE",
     )
     tts_queue_max: int = Field(
-        default=50,
+        default=50, ge=1,
         validation_alias="MISTRAL_TTS_QUEUE_MAX",
     )
     tts_voice_id: str | None = Field(
         default=None,
         validation_alias="MISTRAL_TTS_VOICE_ID",
+    )
+    tts_transient_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        validation_alias="MISTRAL_TTS_TRANSIENT_MAX_RETRIES",
+    )
+    tts_retry_base_delay_ms: int = Field(
+        default=500,
+        ge=0,
+        validation_alias="MISTRAL_TTS_RETRY_BASE_DELAY_MS",
+    )
+    tts_retry_max_delay_ms: int = Field(
+        default=2000,
+        ge=1,
+        validation_alias="MISTRAL_TTS_RETRY_MAX_DELAY_MS",
+    )
+    tts_retry_jitter_factor: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        validation_alias="MISTRAL_TTS_RETRY_JITTER_FACTOR",
     )
     translation_429_max_retries: int = Field(
         default=3,

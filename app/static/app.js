@@ -41,11 +41,13 @@
         drawerOpen: false,
         ttsEnabled: true,
         ttsAudioUnlocked: sessionStorage.getItem("ttsAudioUnlocked") === "true",
+        providerOutage: null,
         ttsSpeakingSeq: null,
         currentTtsEpoch: 0,
         ttsMuted: false,
         providerCapacityWarning: null,
     };
+    let providerNoticeTimer = null;
 
     let ws = null;
     let reconnectAttempt = 0;
@@ -111,6 +113,9 @@
         els.sourceToggle = $("source-toggle");
         els.idleTargetSelect = $("idle-target-select");
         els.headerLang = $("header-lang");
+        els.providerNotice = $("provider-notice");
+        els.providerNoticeTitle = $("provider-notice-title");
+        els.providerNoticeDetail = $("provider-notice-detail");
         els.drawerLangError = $("drawer-lang-error");
         els.audioEnableBanner = $("audio-enable-banner");
         els.enableAudioBtn = $("enable-audio-btn");
@@ -227,6 +232,12 @@
             case "provider_capacity_warning":
                 handleProviderCapacityWarning(msg);
                 break;
+            case "provider_temporarily_unavailable":
+            case "reconnect_attempt":
+            case "recovered":
+            case "reconnect_cancelled":
+                handleProviderRecovery(msg);
+                break;
             default:
                 console.log("Unknown event type:", msg.type);
         }
@@ -234,6 +245,9 @@
 
     function handleSnapshot(msg) {
         appState.status = msg.status;
+        if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
+            appState.providerOutage = null;
+        }
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
         }
@@ -421,6 +435,79 @@
             }
         }
     }
+
+    function handleProviderRecovery(msg) {
+        if (providerNoticeTimer) {
+            clearTimeout(providerNoticeTimer);
+            providerNoticeTimer = null;
+        }
+
+        if (msg.type === "reconnect_cancelled") {
+            appState.providerOutage = null;
+            renderProviderNotice();
+            return;
+        }
+
+        if (msg.type === "recovered") {
+            appState.providerOutage = {
+                outcome: "recovered",
+                attempts: msg.attempts || 0,
+                downtime_ms: msg.downtime_ms || 0,
+            };
+            renderProviderNotice();
+            providerNoticeTimer = setTimeout(function () {
+                appState.providerOutage = null;
+                providerNoticeTimer = null;
+                renderProviderNotice();
+            }, 6000);
+            return;
+        }
+
+        if (msg.type === "reconnect_attempt") {
+            const current = appState.providerOutage || { outcome: "retrying" };
+            current.outcome = "retrying";
+            current.attempt = msg.attempt;
+            current.max_attempts = msg.max_attempts;
+            appState.providerOutage = current;
+        } else {
+            appState.providerOutage = msg;
+        }
+        renderProviderNotice();
+    }
+
+    function renderProviderNotice() {
+        if (!els.providerNotice) return;
+        const notice = appState.providerOutage;
+        if (!notice) {
+            els.providerNotice.classList.add("hidden");
+            els.providerNotice.classList.remove("exhausted");
+            return;
+        }
+
+        els.providerNotice.classList.remove("hidden");
+        const terminal = notice.outcome === "exhausted" || notice.outcome === "permanent";
+        els.providerNotice.classList.toggle("exhausted", terminal);
+
+        if (notice.outcome === "recovered") {
+            els.providerNoticeTitle.textContent = "Transcription recovered";
+            els.providerNoticeDetail.textContent =
+                "Recovered after " + notice.attempts + " attempt(s).";
+        } else if (terminal) {
+            els.providerNoticeTitle.textContent = "Transcription unavailable";
+            els.providerNoticeDetail.textContent =
+                "Stopped safely after " + (notice.attempts || 0) +
+                " attempt(s). Export this session, then start a new one to retry.";
+        } else {
+            els.providerNoticeTitle.textContent = "Transcription temporarily unavailable";
+            if (notice.attempt && notice.max_attempts) {
+                els.providerNoticeDetail.textContent =
+                    "Reconnect attempt " + notice.attempt + " of " + notice.max_attempts + "…";
+            } else {
+                els.providerNoticeDetail.textContent = "Preparing a bounded reconnect…";
+            }
+        }
+    }
+
 
     function handleElapsed(msg) {
         appState.elapsed = msg.seconds || 0;
@@ -737,6 +824,7 @@
         renderIdlePanel();
         renderRecoveryNotice();
         renderRecoveryFailureWarning();
+        renderProviderNotice();
         renderSourcePartial();
         renderSummary();
         renderModal();

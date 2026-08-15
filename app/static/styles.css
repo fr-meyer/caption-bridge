@@ -123,6 +123,29 @@ header .title {
     color: var(--text-muted);
 }
 
+.provider-notice {
+    margin: 12px 24px 0;
+    padding: 10px 16px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid var(--yellow);
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.provider-notice.exhausted {
+    background: rgba(220, 38, 38, 0.12);
+    border-color: var(--red);
+}
+
+.provider-notice-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.provider-notice-content strong { color: #ffffff; }
+.provider-notice-content span { color: var(--text-muted); }
+
 #recovery-path {
     color: var(--accent);
 }

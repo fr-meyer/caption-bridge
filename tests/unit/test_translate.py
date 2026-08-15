@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from app.translate import TranslationDispatcher, _build_system_prompt
 
@@ -74,3 +75,31 @@ def test_system_prompt_forbids_markdown() -> None:
     prompt = _build_system_prompt("en")
 
     assert "no markdown" in prompt
+
+
+def test_retry_logs_exclude_provider_details(monkeypatch, caplog) -> None:
+    dispatcher = _make_dispatcher()
+    dispatcher._await_translation = AsyncMock(
+        side_effect=RuntimeError("sensitive retry provider body")
+    )
+    monkeypatch.setattr("app.translate.asyncio.sleep", AsyncMock())
+    caplog.set_level("WARNING")
+
+    result = asyncio.run(
+        dispatcher._generic_one_second_retry(
+            messages=[],
+            timeout_s=1.0,
+            seq=7,
+            session_id="session-1",
+            target_language="en",
+            cause_exc=RuntimeError("sensitive first provider body"),
+        )
+    )
+
+    assert result is None
+    assert "sensitive first provider body" not in caplog.text
+    assert "sensitive retry provider body" not in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    dispatcher._session_manager.mark_translation_failed.assert_called_once_with(
+        7, "session-1"
+    )
