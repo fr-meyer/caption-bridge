@@ -73,6 +73,11 @@ class _WsMetrics:
 _ws_metrics = _WsMetrics()
 
 
+def _is_expected_websocket_disconnect(exc: RuntimeError) -> bool:
+    """Recognize Starlette's disconnect signal for a superseded socket."""
+    return str(exc).startswith("WebSocket is not connected.")
+
+
 def get_ws_metrics() -> dict[str, Any]:
     return asdict(_ws_metrics)
 
@@ -326,6 +331,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
+    except RuntimeError as exc:
+        if _is_expected_websocket_disconnect(exc):
+            logger.info("WebSocket client disconnected")
+        else:
+            logger.exception("WebSocket handler error")
     except Exception:
         logger.exception("WebSocket handler error")
     finally:
