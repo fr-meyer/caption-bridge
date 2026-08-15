@@ -63,6 +63,11 @@ jobs:
           uv run --python ${{ matrix.python-version }} python -m scripts.resilience_soak
           --segments 1000 --json
 
+      - name: Full pipeline scenario
+        run: >-
+          uv run --python ${{ matrix.python-version }} python -m scripts.full_pipeline_scenario
+          --json
+
       - name: Test
         run: uv run --python ${{ matrix.python-version }} python -m pytest -q
 

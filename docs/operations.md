@@ -146,6 +146,12 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 - `TRANSLATION_PROVIDER=mistral` is the only production value. Other providers,
   including the Gemini Live Translate spike in issue #13, require explicit
   implementation, opt-in configuration, privacy review, and Mac smoke coverage.
+- Run `make full-pipeline-scenario` on GCP before every PR. It deterministically
+  composes the production boundary, translation, reconnect, TTS, WebSocket,
+  journal, and export seams without microphones, browsers, provider calls, or
+  retained artifacts. The gate requires exact terminal outcomes and retry counts,
+  strict once-only delivery, bounded browser pressure, replacement snapshot/audio
+  behavior, exact export/journal completion, and zero owned tasks after teardown.
 
 ## Logs, journals, and retention
 
