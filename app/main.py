@@ -319,6 +319,12 @@ async def healthz() -> dict[str, str]:
     """Content-free liveness endpoint for local lifecycle checks."""
     return {"service": "caption-bridge", "status": "ok"}
 
+@app.get("/favicon.ico", include_in_schema=False, status_code=204)
+async def favicon() -> None:
+    """Suppress harmless browser favicon 404 noise without external assets."""
+    return None
+
+
 
 # Static files — catch-all, must be last
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
