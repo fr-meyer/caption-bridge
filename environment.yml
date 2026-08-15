@@ -1,0 +1,15 @@
+name: caption-bridge
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python >=3.11
+  - mistralai
+  - fastapi
+  - uvicorn-standard
+  - python-sounddevice
+  - pydantic
+  - pydantic-settings
+  - python-dotenv
+  - orjson
+  - pytest

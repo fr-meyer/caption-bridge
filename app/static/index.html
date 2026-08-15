@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CaptionBridge</title>
+    <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-state="idle_blocked">
+
+    <header>
+        <span class="title">CaptionBridge</span>
+        <div class="header-right">
+            <span id="header-lang" class="hidden"></span>
+            <button id="gear-btn" class="btn-icon" title="Settings (G)">⚙</button>
+            <span id="elapsed">00:00</span>
+            <span class="status-indicator">
+                <span id="status-dot" class="status-dot"></span>
+                <span id="status-label">Checking…</span>
+            </span>
+        </div>
+    </header>
+
+    <div id="recovery-notice" class="recovery-notice hidden">
+        <div class="recovery-content">
+            <strong>Recovered previous session</strong>
+            <span>Transcript saved to <span id="recovery-path"></span></span>
+        </div>
+        <button id="dismiss-recovery" class="btn-text">Dismiss</button>
+    </div>
+
+    <div id="recovery-failure-warning" class="recovery-failure-warning hidden">
+        <div class="recovery-failure-content">
+            <strong>Previous session could not be saved</strong>
+            <span><span id="recovery-failure-error"></span></span>
+        </div>
+        <div class="recovery-failure-actions">
+            <button id="retry-recovery-btn" class="btn-primary">Retry Recovery Export</button>
+            <button id="discard-recovery-btn" class="btn-danger">Discard Recovered Session</button>
+        </div>
+    </div>
+
+    <div id="audio-enable-banner" class="audio-enable-banner hidden">
+        <span>Enable audio to hear translated captions aloud.</span>
+        <button id="enable-audio-btn" class="btn-primary" style="font-size:13px;padding:6px 12px">Enable audio</button>
+    </div>
+
+    <div id="provider-notice" class="provider-notice hidden" role="status">
+        <div class="provider-notice-content">
+            <strong id="provider-notice-title"></strong>
+            <span id="provider-notice-detail"></span>
+        </div>
+    </div>
+    <div id="idle-panel" class="idle-panel">
+        <div id="checklist" class="checklist"></div>
+        <div class="idle-lang-row">
+            <span class="idle-lang-label">Source language</span>
+            <span class="idle-lang-source">Auto-detect</span>
+        </div>
+        <div class="idle-lang-row">
+            <span class="idle-lang-label">Target language</span>
+            <select id="idle-target-select" class="drawer-select"></select>
+        </div>
+        <button id="start-btn" class="start-btn" disabled>Start</button>
+        <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
+    </div>
+
+    <div id="source-partial" class="source-partial"></div>
+
+    <div id="caption-log" class="caption-log"></div>
+
+    <button id="jump-latest" class="jump-latest hidden">↑ Jump to latest</button>
+
+    <div id="summary-bar" class="summary-bar">
+        <div class="summary-left">
+            <span id="caption-count"></span>
+            <span id="export-warning" class="export-warning">Transcript not yet exported</span>
+            <span id="export-confirm" class="export-confirm hidden"></span>
+        </div>
+        <div class="summary-right">
+            <button id="export-btn" class="btn-primary">Export</button>
+            <button id="new-session-btn" class="btn-secondary">New Session</button>
+        </div>
+    </div>
+
+    <footer id="controls-footer" class="controls-footer">
+        <div class="footer-left">
+            <button id="stop-btn" class="btn-danger footer-control">Stop</button>
+        </div>
+        <div class="footer-hints" id="footer-hints"></div>
+        <div class="footer-right">
+            <button id="tts-toggle-btn" class="btn-icon footer-control active" title="Mute TTS">🔊</button>
+            <button id="font-dec" class="btn-icon footer-control">A−</button>
+            <button id="font-inc" class="btn-icon footer-control">A+</button>
+            <button id="fullscreen-btn" class="btn-icon footer-control">⛶</button>
+        </div>
+    </footer>
+
+    <div id="settings-drawer">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;font-size:15px">Settings</span>
+            <button id="drawer-close" class="btn-icon">✕</button>
+        </div>
+        <div class="drawer-section">
+            <span class="drawer-label">Target Language</span>
+            <select id="drawer-target-select" class="drawer-select"></select>
+            <span id="drawer-lang-error" class="export-error hidden"></span>
+        </div>
+        <div class="drawer-section">
+            <span class="drawer-label">Source Text</span>
+            <button id="source-toggle" class="btn-icon active" title="Toggle source text">Src</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:0">
+        <div class="drawer-section">
+            <span class="drawer-label">Audio Readback</span>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-size:14px;color:var(--text-primary)">Read captions aloud</span>
+                <button id="tts-drawer-toggle" class="btn-icon active" title="Mute TTS">🔊</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="export-failure-modal" class="export-failure-modal">
+        <div class="modal-dialog">
+            <h2>Transcript not saved</h2>
+            <p><span id="export-failure-error"></span></p>
+            <div class="modal-actions">
+                <button id="retry-export-btn" class="btn-primary">Retry Export</button>
+                <button id="discard-export-btn" class="btn-danger">Discard</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="discard-modal" class="discard-modal">
+        <div class="modal-dialog">
+            <h2>Discard session?</h2>
+            <p>The current transcript has not been exported and will be lost.</p>
+            <div class="modal-actions">
+                <button id="cancel-discard" class="btn-secondary">Cancel</button>
+                <button id="confirm-discard" class="btn-danger">Discard &amp; start new</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js" defer></script>
+</body>
+</html>
