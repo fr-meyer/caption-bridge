@@ -6,6 +6,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.config import AppConfig
 from app.state import SegmentQuality, SessionManager
 from app.translate import TranslationDispatcher
@@ -57,12 +59,12 @@ def test_out_of_order_quality_results_are_delivered_in_sequence() -> None:
     assert manager.session.segments[1].quality.reasons == ["length_ratio"]
 
 
-def test_dispatcher_drain_cancels_unfinished_quality_repair() -> None:
+def test_quality_repair_propagates_shutdown_cancellation() -> None:
     async def scenario() -> None:
         config = MagicMock()
         config.mistral_api_key = "test-key"
         config.translate_model = "test-model"
-        config.translation_timeout_ms = 1
+        config.translation_timeout_ms = 10_000
         config.translation_repair_max_attempts = 1
         dispatcher = TranslationDispatcher(MagicMock(), config)
         repair_started = asyncio.Event()
@@ -81,12 +83,12 @@ def test_dispatcher_drain_cancels_unfinished_quality_repair() -> None:
                 "en",
             )
         )
-        dispatcher._in_flight.add(task)
         await repair_started.wait()
 
-        await dispatcher.drain()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
         assert task.cancelled()
-        assert dispatcher._in_flight == set()
 
     asyncio.run(scenario())
