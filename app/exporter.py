@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -68,6 +69,21 @@ def _write_transcript_txt(export_dir: Path, session: Session) -> None:
 
 
 def _compute_quality_summary(session: Session) -> dict:
+    qualities = [seg.quality for seg in session.segments if seg.quality is not None]
+    initial_reason_counts = Counter(
+        reason for quality in qualities for reason in quality.reasons
+    )
+    final_reason_counts = Counter(
+        reason for quality in qualities for reason in quality.final_reasons
+    )
+    repair_latencies = [
+        quality.repair_latency_ms
+        for quality in qualities
+        if quality.repair_latency_ms is not None
+    ]
+    repair_attempts = sum(quality.repair_attempts for quality in qualities)
+    repair_latency_total = sum(repair_latencies)
+
     return {
         "total_segments": len(session.segments),
         "done": sum(1 for seg in session.segments if seg.translation_status == "done"),
@@ -75,12 +91,26 @@ def _compute_quality_summary(session: Session) -> dict:
         "timed_out": sum(
             1 for seg in session.segments if seg.translation_status == "timed_out"
         ),
-        "retried": sum(
-            1 for seg in session.segments if seg.quality is not None and seg.quality.retried
+        "quality_checked": len(qualities),
+        "retried": sum(1 for quality in qualities if quality.retried),
+        "quality_flagged": sum(1 for quality in qualities if quality.flagged),
+        "repair_attempts": repair_attempts,
+        "repair_succeeded": sum(
+            1 for quality in qualities if quality.repair_succeeded is True
         ),
-        "quality_flagged": sum(
-            1 for seg in session.segments if seg.quality is not None and seg.quality.flagged
+        "quality_still_flagged": sum(
+            1 for quality in qualities if quality.final_flagged
         ),
+        "initial_reason_counts": dict(sorted(initial_reason_counts.items())),
+        "final_reason_counts": dict(sorted(final_reason_counts.items())),
+        "repair_latency_samples": len(repair_latencies),
+        "repair_latency_ms_total": repair_latency_total,
+        "repair_latency_ms_average": (
+            round(repair_latency_total / len(repair_latencies), 1)
+            if repair_latencies
+            else None
+        ),
+        "repair_latency_ms_max": max(repair_latencies, default=None),
     }
 
 

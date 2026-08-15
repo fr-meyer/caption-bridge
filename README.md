@@ -96,8 +96,14 @@ Run all repeatable development checks from the GCP checkout:
 uv sync --frozen
 uv run ruff check .
 uv run python -m pytest -q
+make quality-benchmark
 node --check app/static/app.js
 ```
+
+The quality benchmark uses only synthetic captions. It fails when detector recall
+drops below 100%, the false-positive rate exceeds 5%, or expected reason labels
+change. Runtime repair is separately hard-limited to at most one added provider
+call per segment with `TRANSLATION_REPAIR_MAX_ATTEMPTS` (set it to `0` to disable).
 
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 

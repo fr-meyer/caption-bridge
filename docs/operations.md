@@ -10,7 +10,7 @@
 ## GCP development bootstrap
 
 ```bash
-sudo apt-get install -y python3.11-venv libportaudio2
+sudo apt-get install -y make python3.11-venv libportaudio2
 git clone git@github.com:fr-meyer/caption-bridge.git
 cd caption-bridge
 uv sync --frozen
@@ -62,6 +62,21 @@ Do not create a LaunchAgent yet. The future OpenClaw `start`, `status`, and `sto
 | TTS failure after audio has started | No retry, preventing duplicate speech | Replay the caption manually if needed |
 | TTS guardrail rejection | Caption remains visible; audio is skipped | Continue the session |
 | Browser becomes slow | Partial/noncritical events may be coalesced or dropped; final state is prioritized | Refresh the browser if lag persists |
+
+## Translation quality monitoring
+
+- Run `make quality-benchmark` on GCP before every PR. The fixture is synthetic
+  and the report contains only counts, rates, reason labels, and mismatched case IDs.
+- Each segment records its initial and final quality flags, repair-call count,
+  repair outcome, and repair latency. Repair is hard-limited to zero or one attempt
+  through `TRANSLATION_REPAIR_MAX_ATTEMPTS`.
+- Session snapshots and JSON exports include aggregate checked, initially flagged,
+  repaired, repair-success, still-flagged, per-reason, and latency metrics.
+- Run `uv run python -m scripts.analyze_exports` from the repository root to
+  compare exported runs without printing source or translated caption text.
+- Treat an increasing still-flagged rate, repair latency, or a new dominant reason
+  as a release investigation signal. Do not weaken a detector without adding a
+  representative synthetic regression case.
 
 ## Logs, journals, and retention
 

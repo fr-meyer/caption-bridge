@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
 from app.languages import is_valid_target_language
@@ -52,6 +52,30 @@ class SegmentQuality(BaseModel):
     reasons: list[str]
     retried: bool
     repair_succeeded: bool | None
+    final_flagged: bool = False
+    final_reasons: list[str] = Field(default_factory=list)
+    repair_attempts: int = 0
+    repair_latency_ms: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def backfill_final_state(cls, data: Any) -> Any:
+        """Infer new fields when loading quality metadata from older journals."""
+        if not isinstance(data, dict):
+            return data
+        values = dict(data)
+        if "final_flagged" not in values:
+            values["final_flagged"] = bool(
+                values.get("flagged")
+                and values.get("repair_succeeded") is not True
+            )
+        if "final_reasons" not in values:
+            values["final_reasons"] = (
+                list(values.get("reasons") or []) if values["final_flagged"] else []
+            )
+        if "repair_attempts" not in values:
+            values["repair_attempts"] = int(bool(values.get("retried")))
+        return values
 
 
 class Segment(BaseModel):
@@ -451,6 +475,7 @@ class SessionManager:
     # -- snapshot -----------------------------------------------------------
 
     def get_snapshot(self) -> dict[str, Any]:
+        from app.exporter import _compute_quality_summary
         from app.languages import get_available_target_languages
         from app.reconnect import get_reconnect_metrics
         from app.ws import get_ws_metrics
@@ -480,6 +505,7 @@ class SessionManager:
             "runtime_metrics": {
                 "reconnect": get_reconnect_metrics(),
                 "outbound_websocket": get_ws_metrics(),
+                "translation_quality": _compute_quality_summary(s),
             },
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         }
