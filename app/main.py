@@ -314,6 +314,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 
+BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/styles.css"})
+
+
+@app.middleware("http")
+async def disable_browser_asset_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path in BROWSER_ASSET_PATHS:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # WebSocket route MUST be registered before the catch-all static mount
 app.add_api_websocket_route("/ws", ws.websocket_endpoint)
 

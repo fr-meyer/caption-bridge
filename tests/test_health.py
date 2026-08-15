@@ -23,3 +23,17 @@ def test_favicon_request_is_handled_without_external_asset() -> None:
     response = asyncio.run(request())
     assert response.status_code == 204
     assert response.content == b""
+
+
+def test_browser_assets_are_not_cached() -> None:
+    async def request(path: str) -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://loopback.test"
+        ) as client:
+            return await client.get(path)
+
+    for path in ("/", "/app.js", "/styles.css"):
+        response = asyncio.run(request(path))
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
