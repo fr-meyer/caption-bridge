@@ -7,12 +7,11 @@ import logging
 import random
 import time
 
-from mistralai.client import Mistral
-
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
 from app.languages import get_language_label
+from app.providers import MistralTranslationProvider, TranslationProvider
 from app.state import SegmentQuality
 
 logger = logging.getLogger(__name__)
@@ -39,14 +38,28 @@ def _build_system_prompt(target_language: str) -> str:
 
 
 class TranslationDispatcher:
-    """Fires one asyncio task per segment to translate via Mistral chat."""
+    """Fires one bounded-provider translation task per finalized segment."""
 
-    def __init__(self, session_manager, config: AppConfig) -> None:
+    def __init__(
+        self,
+        session_manager,
+        config: AppConfig,
+        provider: TranslationProvider | None = None,
+    ) -> None:
         from app.state import SessionManager
 
+        provider_name = getattr(config, "translation_provider", "mistral")
+        if isinstance(provider_name, str) and provider_name != "mistral":
+            raise ValueError("unsupported translation provider")
         self._session_manager: SessionManager = session_manager
         self._config = config
-        self._client = Mistral(api_key=config.mistral_api_key)
+        self._provider = provider or MistralTranslationProvider(
+            api_key=config.mistral_api_key
+        )
+        max_concurrency = getattr(config, "translation_max_concurrency", 8)
+        if not isinstance(max_concurrency, int):
+            max_concurrency = 8
+        self._provider_slots = asyncio.Semaphore(max_concurrency)
         self._in_flight: set[asyncio.Task] = set()
 
     # -- public API ---------------------------------------------------------
@@ -63,7 +76,7 @@ class TranslationDispatcher:
         if not self._in_flight:
             return
         tasks = list(self._in_flight)
-        timeout_s = self._config.translation_timeout_ms / 1000
+        timeout_s = self._config.translation_drain_timeout_ms / 1000
         _done, pending = await asyncio.wait(tasks, timeout=timeout_s)
         for t in pending:
             t.cancel()
@@ -82,12 +95,13 @@ class TranslationDispatcher:
             self._config.translation_timeout_ms,
             target_language,
             self._config.translate_model,
-            "mistral",
+            self._provider.name,
         )
         self._session_manager.mark_translation_timed_out(seq, session_id)
 
     async def _await_translation(self, messages: list[dict], timeout_s: float) -> str:
-        return await asyncio.wait_for(self._call_api(messages), timeout=timeout_s)
+        async with self._provider_slots:
+            return await asyncio.wait_for(self._call_api(messages), timeout=timeout_s)
 
     async def _generic_one_second_retry(
         self,
@@ -189,7 +203,7 @@ class TranslationDispatcher:
             self._session_manager._emit(
                 "provider_capacity_warning",
                 {
-                    "provider": "mistral",
+                    "provider": self._provider.name,
                     "model": self._config.translate_model,
                     "reason": "service_tier_capacity_exceeded",
                     "status_code": 429,
@@ -270,22 +284,20 @@ class TranslationDispatcher:
             self._session_manager.mark_translation_failed(seq, session_id)
 
     async def _call_api(self, messages: list[dict]) -> str:
-        response = await self._client.chat.complete_async(
+        return await self._provider.translate(
             model=self._config.translate_model,
             messages=messages,
             temperature=0.2,
             max_tokens=200,
         )
-        return response.choices[0].message.content.strip()
 
     async def _call_repair_api(self, messages: list[dict]) -> str:
-        response = await self._client.chat.complete_async(
+        return await self._provider.translate(
             model=self._config.translate_model,
             messages=messages,
             temperature=0.0,
             max_tokens=200,
         )
-        return response.choices[0].message.content.strip()
 
     async def _check_and_repair(
         self, raw_text: str, segment, target_language: str
@@ -328,10 +340,11 @@ class TranslationDispatcher:
 
         repair_started = time.monotonic()
         try:
-            repair_text = await asyncio.wait_for(
-                self._call_repair_api(repair_messages),
-                timeout=repair_timeout_s,
-            )
+            async with self._provider_slots:
+                repair_text = await asyncio.wait_for(
+                    self._call_repair_api(repair_messages),
+                    timeout=repair_timeout_s,
+                )
         except Exception:
             return raw_text, SegmentQuality(
                 flagged=True,

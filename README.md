@@ -108,6 +108,7 @@ uv sync --frozen
 uv run ruff check .
 uv run python -m pytest -q
 make quality-benchmark
+make resilience-soak
 node --check app/static/app.js
 ```
 
@@ -115,6 +116,11 @@ The quality benchmark uses only synthetic captions. It fails when detector recal
 drops below 100%, the false-positive rate exceeds 5%, or expected reason labels
 change. Runtime repair is separately hard-limited to at most one added provider
 call per segment with `TRANSLATION_REPAIR_MAX_ATTEMPTS` (set it to `0` to disable).
+
+The resilience soak injects deterministic timeouts and capacity failures into
+1,000 synthetic segments. It fails on pending work, ordering gaps, duplicates,
+unbounded provider calls, missing capacity notices, or missing source-only
+degraded captions. It makes no network calls and prints aggregate counts only.
 
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 
@@ -126,6 +132,7 @@ uv run python -m scripts.smoke_test
 
 - Realtime transcription retries provider restarts and transient transport failures with bounded exponential backoff and jitter.
 - Retry exhaustion ends capture safely without discarding the session. Export it, start a new session, and retry.
+- A translation timeout or exhausted capacity budget still delivers the source caption in sequence with a clear "translation unavailable" state; later captions continue.
 - TTS retries transient provider failures only before any audio chunk has played, avoiding duplicated speech.
 - Microphone, TTS, and browser outbound queues are hard-bounded. Disposable partial events may be coalesced or dropped before final captions and lifecycle events.
 

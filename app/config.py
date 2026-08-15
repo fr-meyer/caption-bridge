@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,7 +21,23 @@ class AppConfig(BaseSettings):
     audio_queue_max_chunks: int = Field(default=50, ge=5, le=1000)
     pause_timeout_ms: int = 1500
     translation_context_segments: int = 5
-    translation_timeout_ms: int = 10000
+    translation_timeout_ms: int = Field(default=10000, ge=100, le=120000)
+    translation_drain_timeout_ms: int = Field(
+        default=30000,
+        ge=1000,
+        le=300000,
+        validation_alias="TRANSLATION_DRAIN_TIMEOUT_MS",
+    )
+    translation_provider: Literal["mistral"] = Field(
+        default="mistral",
+        validation_alias="TRANSLATION_PROVIDER",
+    )
+    translation_max_concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        validation_alias="TRANSLATION_MAX_CONCURRENCY",
+    )
     translation_repair_max_attempts: int = Field(
         default=1, ge=0, le=1,
         validation_alias="TRANSLATION_REPAIR_MAX_ATTEMPTS",
@@ -91,18 +109,26 @@ class AppConfig(BaseSettings):
     )
     translation_429_max_retries: int = Field(
         default=3,
+        ge=0,
+        le=10,
         validation_alias="TRANSLATION_429_MAX_RETRIES",
     )
     translation_429_base_delay_ms: int = Field(
         default=1000,
+        ge=0,
+        le=60000,
         validation_alias="TRANSLATION_429_BASE_DELAY_MS",
     )
     translation_429_max_delay_ms: int = Field(
         default=16000,
+        ge=1,
+        le=120000,
         validation_alias="TRANSLATION_429_MAX_DELAY_MS",
     )
     translation_429_jitter_factor: float = Field(
         default=0.25,
+        ge=0.0,
+        le=1.0,
         validation_alias="TRANSLATION_429_JITTER_FACTOR",
     )
 

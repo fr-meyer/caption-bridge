@@ -104,6 +104,24 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
   as a release investigation signal. Do not weaken a detector without adding a
   representative synthetic regression case.
 
+## Resilience fault injection
+
+- Run `make resilience-soak` on GCP before every PR. It uses the injected
+  translation-provider seam and never calls a real provider.
+- The default 1,000-segment schedule includes successes, per-segment timeouts,
+  429s that recover within budget, and 429s that exhaust the exact budget.
+- The gate requires every segment to reach a terminal state, strict once-only
+  delivery order, source-only degraded captions for failures, exact bounded
+  provider-call counts, capacity warning counts, and zero remaining tasks.
+- `TRANSLATION_DRAIN_TIMEOUT_MS` defaults to 30000 and bounds graceful
+  settlement independently from the per-attempt `TRANSLATION_TIMEOUT_MS`.
+- `TRANSLATION_MAX_CONCURRENCY` defaults to 8 and hard-bounds simultaneous
+  translation and repair calls. The soak records the observed provider peak
+  and fails if it exceeds the configured ceiling.
+- `TRANSLATION_PROVIDER=mistral` is the only production value. Other providers,
+  including the Gemini Live Translate spike in issue #13, require explicit
+  implementation, opt-in configuration, privacy review, and Mac smoke coverage.
+
 ## Logs, journals, and retention
 
 - Default logs must not include source captions, translations, credentials, provider bodies, or request payloads.
