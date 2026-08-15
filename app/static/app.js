@@ -40,7 +40,9 @@
         availableTargetLanguages: [],
         drawerOpen: false,
         ttsEnabled: true,
-        ttsAudioUnlocked: sessionStorage.getItem("ttsAudioUnlocked") === "true",
+        // Audio permission is document-scoped: a browser replacement must
+        // require a fresh user gesture before translated speech can play.
+        ttsAudioUnlocked: false,
         providerOutage: null,
         ttsSpeakingSeq: null,
         currentTtsEpoch: 0,
@@ -1269,7 +1271,6 @@
             }
             audioContext.resume().then(function () {
                 appState.ttsAudioUnlocked = true;
-                sessionStorage.setItem("ttsAudioUnlocked", "true");
                 send({ type: "tts_audio_enabled" });
                 renderTtsControls();
             });
@@ -1402,10 +1403,6 @@
     // ===== Init =====
 
     document.addEventListener("DOMContentLoaded", function () {
-        appState.ttsAudioUnlocked = sessionStorage.getItem("ttsAudioUnlocked") === "true";
-        if (appState.ttsAudioUnlocked) {
-            audioContext = new AudioContext();
-        }
         cacheDom();
         setupAutoScroll();
         setupControls();
