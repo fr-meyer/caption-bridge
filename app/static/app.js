@@ -50,6 +50,7 @@
         providerCapacityWarning: null,
     };
     let providerNoticeTimer = null;
+    let providerCapacityTimer = null;
 
     let ws = null;
     let reconnectAttempt = 0;
@@ -118,6 +119,8 @@
         els.providerNotice = $("provider-notice");
         els.providerNoticeTitle = $("provider-notice-title");
         els.providerNoticeDetail = $("provider-notice-detail");
+        els.capacityNotice = $("capacity-notice");
+        els.capacityNoticeDetail = $("capacity-notice-detail");
         els.drawerLangError = $("drawer-lang-error");
         els.audioEnableBanner = $("audio-enable-banner");
         els.enableAudioBtn = $("enable-audio-btn");
@@ -562,10 +565,22 @@
     function handleProviderCapacityWarning(msg) {
         console.warn("Provider capacity warning:", msg);
         appState.providerCapacityWarning = msg;
+        const detail =
+            "Translation provider capacity is temporarily limited. " +
+            "Some captions may be skipped; processing will continue.";
+        if (providerCapacityTimer) {
+            clearTimeout(providerCapacityTimer);
+        }
+        if (els.capacityNotice && els.capacityNoticeDetail) {
+            els.capacityNoticeDetail.textContent = detail;
+            els.capacityNotice.classList.remove("hidden");
+            providerCapacityTimer = setTimeout(function () {
+                els.capacityNotice.classList.add("hidden");
+                providerCapacityTimer = null;
+            }, 5000);
+        }
         if (els.drawerLangError) {
-            els.drawerLangError.textContent =
-                "Translation provider capacity is temporarily limited. " +
-                "Some captions may be skipped; processing will continue.";
+            els.drawerLangError.textContent = detail;
             els.drawerLangError.classList.remove("hidden");
             setTimeout(function () {
                 els.drawerLangError.classList.add("hidden");
