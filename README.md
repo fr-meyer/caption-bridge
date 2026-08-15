@@ -7,7 +7,7 @@ Mac-local live transcription, translation, captions, and optional spoken readbac
 - The application runtime is Mac-local because microphone capture and macOS permission prompts must remain on the Mac.
 - GCP OpenClaw is the canonical development and orchestration environment.
 - The browser connects only to `http://127.0.0.1:8765` on the Mac.
-- The service is started on demand. Persistent LaunchAgent startup is intentionally deferred until the OpenClaw lifecycle controls are complete.
+- The service is started on demand. No LaunchAgent, login item, or automatic startup is installed.
 
 
 ## Prerequisites
@@ -75,12 +75,23 @@ conda activate caption-bridge
 ## Run
 Run the live service on the Mac that owns the microphone:
 
-
 ```bash
-make run
+make ctl-start
+make ctl-status
 ```
 
 Then open [http://localhost:8765](http://localhost:8765) in your browser.
+
+Stop it gracefully and confirm the final state:
+
+```bash
+make ctl-stop
+make ctl-status
+```
+
+The controller uses only the repository-local `.venv`, refuses non-loopback
+binding, verifies process identity before signalling, and emits content-free
+human or JSON diagnostics. See [the Mac lifecycle runbook](docs/mac-lifecycle.md).
 
 ## Development
 

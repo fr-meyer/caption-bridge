@@ -30,7 +30,7 @@ content into the acceptance record.
 
 ## 2. Loopback and startup
 
-1. Run `make run`.
+1. Run `make ctl-start`, then `make ctl-status`.
 2. Confirm the service reports `http://127.0.0.1:8765`.
 3. Confirm it does not bind to a public interface.
 4. Open the loopback URL in the browser.
@@ -76,8 +76,10 @@ Perform only when interrupting the Mac network is safe.
 3. Export the session locally.
 4. Confirm the export succeeds and its quality summary is present.
 5. Start a new session and repeat a short start/stop cycle.
-6. Stop the owning process with `Ctrl-C` and confirm clean shutdown.
-7. Confirm no Caption Bridge server remains listening on port 8765.
+6. Run `make ctl-stop`, then `make ctl-status` twice.
+7. Confirm both status calls say stopped and no server remains on port 8765.
+8. Repeat start and stop once; confirm both commands are idempotent and emit no
+   credentials, transcript content, or provider response bodies.
 
 ## Pass criteria
 
