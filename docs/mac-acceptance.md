@@ -40,13 +40,28 @@ content into the acceptance record.
 ## 3. Live captions and speech
 
 1. Start a short session and speak several complete and fragmentary sentences.
-2. Confirm partial source text remains responsive.
-3. Confirm finalized captions remain ordered and are not duplicated.
-4. Confirm translated captions appear and TTS plays in the selected language.
-5. Mute and unmute TTS; captions must continue while muted.
-6. Replay one completed caption; live captions must remain responsive.
-7. Confirm the browser console and server log contain no caption excerpts,
-   translations, credentials, or provider response bodies.
+2. For the semantic-boundary check, say the public fixture
+   `이 결과는 통계적으로 유의미하지만`, pause briefly, then continue with
+   `추가 검증이 필요합니다.` An equivalent non-sensitive Korean connective
+   fixture is acceptable when recorded only by case/result, not transcript text.
+3. During the brief pause, confirm the complete fragment remains visible as a
+   responsive source partial and does not create standalone translation or TTS.
+4. After the continuation, confirm exactly one merged finalized caption,
+   translation, export segment, and live TTS item are produced.
+5. Say a clear formal/polite ending such as `맞아요` or
+   `이 결과는 유의미합니다`; confirm it finalizes at the ordinary pause
+   without the additional hold.
+6. Confirm other partial source text remains responsive.
+7. Confirm finalized captions remain ordered and are not duplicated.
+8. Confirm translated captions appear and TTS plays in the selected language.
+9. Mute and unmute TTS; captions must continue while muted.
+10. Replay one completed caption; live captions must remain responsive.
+11. Confirm the browser console and server log contain no caption excerpts,
+    translations, credentials, or provider response bodies.
+12. Record only pass/fail and timing bands. With defaults, a clear boundary is
+    expected after the 1500 ms pause. An incomplete fragment has a 4500 ms total
+    policy target when no continuation arrives; allow modest event-loop and
+    provider scheduling jitter, but treat materially longer stalls as a failure.
 
 ## 4. Browser replacement
 

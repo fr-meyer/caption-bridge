@@ -19,7 +19,29 @@ class AppConfig(BaseSettings):
     target_streaming_delay_ms: int = 1000
     audio_sample_rate: int = 16000
     audio_queue_max_chunks: int = Field(default=50, ge=5, le=1000)
-    pause_timeout_ms: int = 1500
+    pause_timeout_ms: int = Field(default=1500, ge=100, le=10000)
+    fragment_merge_enabled: bool = Field(
+        default=True,
+        validation_alias="FRAGMENT_MERGE_ENABLED",
+    )
+    fragment_max_hold_ms: int = Field(
+        default=3000,
+        ge=0,
+        le=15000,
+        validation_alias="FRAGMENT_MAX_HOLD_MS",
+    )
+    fragment_min_chars: int = Field(
+        default=15,
+        ge=1,
+        le=500,
+        validation_alias="FRAGMENT_MIN_CHARS",
+    )
+    fragment_min_tokens: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        validation_alias="FRAGMENT_MIN_TOKENS",
+    )
     translation_context_segments: int = 5
     translation_timeout_ms: int = Field(default=10000, ge=100, le=120000)
     translation_drain_timeout_ms: int = Field(

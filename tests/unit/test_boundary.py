@@ -5,11 +5,18 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.boundary import MIN_SEGMENT_CHARS, MIN_SEGMENT_TOKENS, BoundaryDetector
 
 
 def _make_detector(
     pause_timeout_s: float = 1.5,
+    *,
+    fragment_merge_enabled: bool = True,
+    fragment_max_hold_s: float = 3.0,
+    min_segment_chars: int = MIN_SEGMENT_CHARS,
+    min_segment_tokens: int = MIN_SEGMENT_TOKENS,
 ) -> tuple[BoundaryDetector, MagicMock, MagicMock]:
     on_partial = MagicMock()
     on_finalize = MagicMock()
@@ -17,6 +24,10 @@ def _make_detector(
         pause_timeout_s=pause_timeout_s,
         on_partial=on_partial,
         on_finalize=on_finalize,
+        fragment_merge_enabled=fragment_merge_enabled,
+        fragment_max_hold_s=fragment_max_hold_s,
+        min_segment_chars=min_segment_chars,
+        min_segment_tokens=min_segment_tokens,
     )
     return detector, on_partial, on_finalize
 
@@ -112,4 +123,112 @@ def test_long_buffer_finalizes_immediately(mock_loop: MagicMock) -> None:
     detector._on_pause_timeout()
 
     on_finalize.assert_called_once_with(long_buffer)
+    assert detector._held is False
+
+
+@patch("asyncio.get_running_loop")
+def test_long_korean_nonfinal_clause_is_held(mock_loop: MagicMock) -> None:
+    detector, on_partial, on_finalize = _make_detector()
+    fragment = "이 결과는 통계적으로 유의미하지만"
+    assert len(fragment.strip()) >= MIN_SEGMENT_CHARS
+    assert len(fragment.split()) >= MIN_SEGMENT_TOKENS
+
+    detector.push(fragment)
+    detector._on_pause_timeout()
+
+    on_finalize.assert_not_called()
+    assert detector._held is True
+    assert detector._pause_defer_reason() == "korean_nonfinal_ending"
+    on_partial.assert_any_call(fragment)
+
+
+@patch("asyncio.get_running_loop")
+def test_korean_fragment_merges_until_clear_sentence_end(
+    mock_loop: MagicMock,
+) -> None:
+    detector, on_partial, on_finalize = _make_detector()
+    fragment = "이 결과는 통계적으로 유의미하지만"
+
+    detector.push(fragment)
+    detector._on_pause_timeout()
+    detector.push(" 추가 검증이 필요합니다.")
+
+    merged = fragment + " 추가 검증이 필요합니다."
+    on_finalize.assert_called_once_with(merged)
+    on_partial.assert_any_call(merged)
+    assert detector._held is False
+
+
+@patch("asyncio.get_running_loop")
+@pytest.mark.parametrize(
+    "complete_text",
+    [
+        "이 결과는 통계적으로 유의미합니다",
+        "맞아요",
+        "이 결과는 통계적으로 유의미합니다”",
+    ],
+)
+def test_clear_korean_final_endings_finalize_at_first_pause(
+    mock_loop: MagicMock,
+    complete_text: str,
+) -> None:
+    detector, _on_partial, on_finalize = _make_detector()
+
+    detector.push(complete_text)
+    detector._on_pause_timeout()
+
+    on_finalize.assert_called_once_with(complete_text)
+    assert detector._held is False
+
+
+@patch("asyncio.get_running_loop")
+def test_mixed_caption_with_latin_tail_uses_ordinary_threshold(
+    mock_loop: MagicMock,
+) -> None:
+    detector, _on_partial, on_finalize = _make_detector()
+    text = "이 모델 is statistically significant"
+
+    detector.push(text)
+    detector._on_pause_timeout()
+
+    on_finalize.assert_called_once_with(text)
+
+
+@patch("asyncio.get_running_loop")
+def test_korean_noun_phrase_waits_for_longer_silence(mock_loop: MagicMock) -> None:
+    detector, _on_partial, on_finalize = _make_detector()
+    detector.push("인공지능의 발전과 조직의 변화")
+
+    detector._on_pause_timeout()
+
+    on_finalize.assert_not_called()
+    assert detector._held is True
+
+
+@patch("asyncio.get_running_loop")
+def test_fragment_merge_can_be_disabled(mock_loop: MagicMock) -> None:
+    detector, _on_partial, on_finalize = _make_detector(
+        fragment_merge_enabled=False
+    )
+    fragment = "이 결과는 통계적으로 유의미하지만"
+
+    detector.push(fragment)
+    detector._on_pause_timeout()
+
+    on_finalize.assert_called_once_with(fragment)
+    assert detector._held is False
+
+
+@patch("asyncio.get_running_loop")
+def test_zero_fragment_hold_finalizes_without_rescheduling(
+    mock_loop: MagicMock,
+) -> None:
+    detector, _on_partial, on_finalize = _make_detector(
+        fragment_max_hold_s=0
+    )
+    detector.push("짧은 구절")
+
+    detector._on_pause_timeout()
+
+    on_finalize.assert_called_once_with("짧은 구절")
     assert detector._held is False

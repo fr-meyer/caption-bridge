@@ -89,6 +89,31 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 | TTS guardrail rejection | Caption remains visible; audio is skipped | Continue the session |
 | Browser becomes slow | Partial/noncritical events may be coalesced or dropped; final state is prioritized | Refresh the browser if lag persists |
 
+## Semantic fragment boundaries
+
+- Run `make segmentation-benchmark` on GCP before every PR. Its ten synthetic
+  cases require immediate partial callbacks, zero premature standalone fragments,
+  zero delayed clear boundaries, exact merge/forced-release behavior, and a
+  default maximum policy boundary of 4500 ms. Output is aggregate and content-free.
+- Browser `source_partial` events are emitted on every transcription delta and
+  remain independent from translation-ready finalization.
+- Punctuation finalizes immediately. At a punctuation-free pause, clear Korean
+  formal/polite sentence endings finalize normally; other Hangul endings wait
+  for more speech or the bounded longer-silence ceiling.
+- Short non-Korean fragments also wait for more speech. Long non-Korean clauses
+  preserve the ordinary pause-timeout behavior.
+- `FRAGMENT_MERGE_ENABLED` defaults to `true`.
+- `FRAGMENT_MAX_HOLD_MS` defaults to 3000 and is bounded to 0–15000. This is
+  an additional budget after the first `PAUSE_TIMEOUT_MS` expiry; reaching it
+  always finalizes, preventing an indefinite caption stall.
+- `FRAGMENT_MIN_CHARS` defaults to 15 (bounded 1–500) and
+  `FRAGMENT_MIN_TOKENS` defaults to 3 (bounded 1–50).
+- Deferral logs contain only a reason label and character count, never caption
+  text. Reconnect and normal-stop draining still flush held text explicitly.
+- Treat these expressions as conservative streaming heuristics, not full Korean
+  morphological analysis. Add synthetic Korean regressions before changing the
+  recognized sentence-ending set.
+
 ## Translation quality monitoring
 
 - Run `make quality-benchmark` on GCP before every PR. The fixture is synthetic

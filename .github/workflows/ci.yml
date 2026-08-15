@@ -52,6 +52,12 @@ jobs:
           uv run --python ${{ matrix.python-version }} python -m scripts.benchmark_translation_quality
           --max-false-positive-rate 0.05 --min-recall 1.0 --require-exact-reasons
 
+      - name: Benchmark semantic segmentation
+        run: >-
+          uv run --python ${{ matrix.python-version }} python -m scripts.benchmark_segmentation
+          --max-unexpected-standalone 0 --max-delayed-clear 0
+          --max-policy-delay-ms 4500 --json
+
       - name: Translation resilience soak
         run: >-
           uv run --python ${{ matrix.python-version }} python -m scripts.resilience_soak
