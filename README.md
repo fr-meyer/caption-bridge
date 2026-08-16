@@ -144,6 +144,26 @@ It covers degraded captions/notices, reconnect snapshot restoration, audio
 relocking, export/new-session controls, and keyboard lifecycle behavior without
 microphones, provider calls, public listeners, or retained browser artifacts.
 
+Each completed, failed-export, or explicitly discarded session also produces a
+separate content-free reliability record under `runs/reliability/`. These records
+contain only versioned aggregate counters, timestamps, durations, outcomes, and
+queue peaks; transcript text, provider bodies, exception messages, prompts,
+credentials, environment values, and export paths are excluded by an exact schema.
+Review recent sessions, aggregate rates, and equal-window trends with:
+
+```bash
+make reliability-report
+```
+
+Deterministic history is opt-in so CI and normal checks retain no artifacts:
+
+```bash
+uv run python -m scripts.resilience_soak --segments 1000 \
+  --record-history runs/reliability
+uv run python -m scripts.full_pipeline_scenario \
+  --record-history runs/reliability
+```
+
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 
 ```bash
@@ -179,7 +199,10 @@ The default additional hold budget is 3000 ms after the first
 
 ## Privacy and diagnostics
 
-Default logs contain sequence numbers, lengths, timings, status codes, and failure classes—not caption text or provider response bodies. Session journals and exports still contain transcript content and should follow the retention policy in `docs/operations.md`.
+Default logs and reliability records contain sequence numbers or session IDs,
+aggregate counts, lengths, timings, status codes, outcomes, and failure classes—not
+caption text or provider response bodies. Session journals and transcript exports
+still contain content and should follow the retention policy in `docs/operations.md`.
 
 Preview aged transcript exports and archived journals without reading or deleting them:
 

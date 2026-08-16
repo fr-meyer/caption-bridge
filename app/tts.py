@@ -82,6 +82,11 @@ class TTSDispatcher:
         self._unmute_event.set()
         self._voice_invalid: bool = False
 
+    def _record_queue_depth(self) -> None:
+        callback = getattr(self._session_manager, "record_tts_queue", None)
+        if callable(callback):
+            callback(self._queue.qsize())
+
     def _emit_queue_skip(self, job: TTSJob, reason: str) -> None:
         self._session_manager._emit(
             "tts_skipped",
@@ -129,6 +134,7 @@ class TTSDispatcher:
                 )
                 for j in items:
                     self._queue.put_nowait(j)
+                self._record_queue_depth()
                 return
             for j in items:
                 self._queue.put_nowait(j)
@@ -143,6 +149,7 @@ class TTSDispatcher:
             tts_epoch=self._tts_epoch,
         )
         self._queue.put_nowait(job)
+        self._record_queue_depth()
 
     def enqueue_replay(self, seq: int, text: str, language: str) -> None:
         if language not in VOICE_MAP:
@@ -177,10 +184,12 @@ class TTSDispatcher:
             for queued in items:
                 self._queue.put_nowait(queued)
             self._emit_queue_skip(job, "queue_full")
+            self._record_queue_depth()
             return
         items.insert(0, job)
         for j in items:
             self._queue.put_nowait(j)
+        self._record_queue_depth()
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted

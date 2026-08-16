@@ -10,9 +10,11 @@ import re
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Literal
 
 from app.config import AppConfig
+from app.reliability import write_soak_record
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
 
@@ -245,6 +247,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--segments", type=int, default=1000)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--record-history",
+        type=Path,
+        metavar="DIRECTORY",
+        help="explicitly persist an aggregate-only soak record",
+    )
     args = parser.parse_args()
 
     previous_logging_ceiling = logging.root.manager.disable
@@ -255,6 +263,14 @@ def main() -> int:
         parser.error(str(exc))
     finally:
         logging.disable(previous_logging_ceiling)
+    if args.record_history is not None:
+        write_soak_record(
+            args.record_history,
+            run_type="translation_resilience",
+            passed=report.passed,
+            duration_ms=report.duration_ms,
+            case_count=report.segments,
+        )
     if args.json:
         print(json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")))
     else:

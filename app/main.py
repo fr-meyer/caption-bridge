@@ -103,6 +103,7 @@ async def _start_pipeline() -> None:
         sample_rate=settings.audio_sample_rate,
         loop=loop,
         max_queue_chunks=settings.audio_queue_max_chunks,
+        metrics_callback=manager.record_audio_queue,
     )
     detector = BoundaryDetector(
         pause_timeout_s=settings.pause_timeout_ms / 1000,

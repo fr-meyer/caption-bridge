@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
 from app.languages import is_valid_target_language
+from app.reliability import ReliabilityTracker, write_session_record
 
 if TYPE_CHECKING:
     from app.journal import SessionJournal
@@ -187,6 +189,7 @@ class SessionManager:
         self._dispatcher: TranslationDispatcher | None = None
         self._tts_dispatcher: TTSDispatcher | None = None
         self._journal: SessionJournal | None = None
+        self._reliability = ReliabilityTracker()
 
     def set_dispatcher(self, dispatcher: TranslationDispatcher) -> None:
         self._dispatcher = dispatcher
@@ -217,6 +220,7 @@ class SessionManager:
         payload: dict[str, Any] = {"type": event_type}
         if data:
             payload.update(data)
+        self._reliability.observe_event(payload)
         for listener in list(self._listeners):
             try:
                 listener(payload)
@@ -232,6 +236,36 @@ class SessionManager:
             self._listeners.remove(callback)
         except ValueError:
             pass
+
+    def record_audio_queue(self, depth: int, dropped: int) -> None:
+        self._reliability.record_audio_queue(depth, dropped)
+
+    def record_websocket_queue(
+        self,
+        depth: int,
+        *,
+        dropped: int = 0,
+        coalesced: int = 0,
+        critical_drops: int = 0,
+    ) -> None:
+        self._reliability.record_websocket_queue(
+            depth,
+            dropped=dropped,
+            coalesced=coalesced,
+            critical_drops=critical_drops,
+        )
+
+    def record_tts_queue(self, depth: int) -> None:
+        self._reliability.record_tts_queue(depth)
+
+    def _write_reliability_record(self) -> None:
+        try:
+            record = self._reliability.build_session_record(self.session)
+            write_session_record(Path(self.config.reliability_dir), record)
+        except Exception as exc:
+            logger.error(
+                "Reliability record write failed: error_type=%s", type(exc).__name__
+            )
 
     # -- partial / segment --------------------------------------------------
 
@@ -449,26 +483,35 @@ class SessionManager:
         try:
             path = export_session(self.session, self.config, recovery=False)
         except Exception as exc:
+            self._reliability.set_export_outcome("failed")
             self.session.export_failure = ExportFailure(error=str(exc))
+            self._write_reliability_record()
             return {"success": False, "path": None, "error": str(exc)}
         self.session.exported = True
         self.session.export_path = path
         self.session.export_failure = None
+        self._reliability.set_export_outcome("succeeded")
         if self._journal is not None:
             self._journal.record_session_exported(path)
+        self._write_reliability_record()
         return {"success": True, "path": path, "error": None}
 
     # -- reset --------------------------------------------------------------
 
     async def reset(self, *, emit_snapshot: bool = True) -> None:
-        if not self.session.exported and self._journal is not None:
+        should_record_discard = not self.session.exported
+        if should_record_discard and self._journal is not None:
             self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
         if self._tts_dispatcher is not None:
             await self._tts_dispatcher.drain()
+        if should_record_discard:
+            self._reliability.set_export_outcome("discarded")
+            self._write_reliability_record()
         self.session = self._new_session()
         self._journal = None
+        self._reliability = ReliabilityTracker()
         if emit_snapshot:
             self._emit("session_snapshot", self.get_snapshot())
 
@@ -506,6 +549,7 @@ class SessionManager:
                 "reconnect": get_reconnect_metrics(),
                 "outbound_websocket": get_ws_metrics(),
                 "translation_quality": _compute_quality_summary(s),
+                "session_reliability": self._reliability.snapshot(),
             },
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         }
