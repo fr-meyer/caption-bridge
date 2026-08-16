@@ -31,6 +31,10 @@ The GCP host can run unit, lint, syntax, and server-startup checks. It cannot pe
 Use [`mac-acceptance.md`](mac-acceptance.md) for the complete content-free
 candidate-release checklist.
 
+Use [`mac-soak.md`](mac-soak.md) for the exact-candidate continuous two-hour
+gate, including the checkpoint schedule, aggregate-only evidence form, and hard
+abort/rerun rules.
+
 ## Safe on-demand lifecycle
 
 The repository-owned controller is the supported OpenClaw control surface. It
@@ -213,4 +217,7 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 4. After acceptance, merge into `dev`.
 5. Open a release PR from `dev` to `main`.
 6. Reconcile issues whose fixes were previously merged only into `dev`.
-7. Tag the first stable mainline release only after a successful long-session Mac soak test.
+7. Promote or tag a candidate only after its required Mac acceptance gate passes
+   at the exact commit.
+8. For the post-v1 P1 gate, complete [`mac-soak.md`](mac-soak.md) and record the
+   content-free result in issue #35 before checking roadmap item P1.4.
