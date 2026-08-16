@@ -23,6 +23,7 @@ from app.boundary import BoundaryDetector
 from app.config import AppConfig
 from app.journal import SessionJournal
 from app.reconnect import ReconnectionManager, ReconnectMetrics
+from app.reliability import write_soak_record
 from app.state import ReadinessCheck, SessionManager
 from app.translate import TranslationDispatcher
 from app.tts import TTSDispatcher
@@ -345,6 +346,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 journal_dir=str(root / "journal"),
                 export_dir=str(root / "exports"),
                 recovery_export_dir=str(root / "recovered"),
+                reliability_dir=str(root / "reliability"),
             )
             manager = SessionManager(config)
             journal = SessionJournal(manager.session.id, config)
@@ -595,9 +597,23 @@ def _render_human(report: FullPipelineReport) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit JSON")
+    parser.add_argument(
+        "--record-history",
+        type=Path,
+        metavar="DIRECTORY",
+        help="explicitly persist an aggregate-only scenario record",
+    )
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     report = asyncio.run(run_full_pipeline_scenario())
+    if args.record_history is not None:
+        write_soak_record(
+            args.record_history,
+            run_type="full_pipeline",
+            passed=report.passed,
+            duration_ms=report.duration_ms,
+            case_count=report.segments,
+        )
     if args.json:
         print(json.dumps(report.to_dict(), sort_keys=True))
     else:

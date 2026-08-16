@@ -56,6 +56,11 @@ browser-setup:
 browser-e2e:
 	$(UV) run python -m pytest -q browser_tests --browser chromium
 
+.PHONY: reliability-report
+
+reliability-report:
+	$(UV) run python -m scripts.reliability_report
+
 retention-preview:
 	$(UV) run python -m scripts.prune_transcripts
 
