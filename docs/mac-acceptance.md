@@ -7,6 +7,10 @@ automated validation on GCP.
 Do not paste captions, provider responses, API keys, or exported transcript
 content into the acceptance record.
 
+For the final post-v1 P1 gate, use this checklist together with
+[`mac-soak.md`](mac-soak.md). The soak runbook adds the mandatory continuous
+120-minute window, checkpoint schedule, abort and rerun rules, and evidence form.
+
 ## Record
 
 - Commit:
@@ -101,3 +105,6 @@ Perform only when interrupting the Mac network is safe.
 All mandatory steps pass at the candidate commit. The controlled network
 interruption may be deferred only if the reason is recorded; reconnect unit
 coverage and GCP CI do not replace the remaining Mac hardware checks.
+
+A short acceptance run does not satisfy the two-hour gate. A failed or
+interrupted soak cannot be completed by adding time from a later session.

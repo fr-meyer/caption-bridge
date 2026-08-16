@@ -93,6 +93,11 @@ The controller uses only the repository-local `.venv`, refuses non-loopback
 binding, verifies process identity before signalling, and emits content-free
 human or JSON diagnostics. See [the Mac lifecycle runbook](docs/mac-lifecycle.md).
 
+The final post-v1 P1 gate is a continuous two-hour run on one exact reviewed
+candidate. Use [the Mac soak runbook](docs/mac-soak.md) for its checkpoint
+schedule, abort and rerun rules, aggregate-only evidence, and cleanup. The
+physical run is tracked in [issue #35](https://github.com/fr-meyer/caption-bridge/issues/35).
+
 ## Development
 
 For auto-reload during development:
