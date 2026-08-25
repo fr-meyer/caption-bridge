@@ -6,6 +6,7 @@ import struct
 import time
 
 from app.latency import (
+    _MAX_SEQUENCES,
     LatencyTracker,
     SpeechOnsetDetector,
     empty_latency_snapshot,
@@ -90,6 +91,55 @@ def test_reconnect_and_replacement_classes() -> None:
     tracker.observe_render_ack(1)
     snap = tracker.snapshot()
     assert snap["dimensions"]["translation_completion_to_render_ack"]["browser_replacement"]["count"] == 1
+
+
+def test_render_ack_uses_translation_complete_not_dispatch() -> None:
+    tracker = LatencyTracker()
+    tracker.observe_final_source(7)
+    tracker.observe_translation_dispatch(7)
+    tracker.observe_translation_complete(7)
+    time.sleep(0.03)
+    tracker.observe_render_dispatch(7)
+    tracker.observe_render_ack(7)
+    render = tracker.snapshot()["dimensions"]["translation_completion_to_render_ack"]["ordinary"]
+    assert render["count"] == 1
+    assert render["max_ms"] >= 25
+
+
+def test_render_ack_without_translation_complete_is_ignored() -> None:
+    tracker = LatencyTracker()
+    tracker.observe_final_source(8)
+    tracker.observe_render_dispatch(8)
+    tracker.observe_render_ack(8)
+    render = tracker.snapshot()["dimensions"]["translation_completion_to_render_ack"]["ordinary"]
+    assert render["count"] == 0
+
+
+def test_duplicate_browser_acks_are_consumed_once() -> None:
+    tracker = LatencyTracker()
+    tracker.observe_final_source(9)
+    tracker.observe_translation_dispatch(9)
+    tracker.observe_translation_complete(9)
+    tracker.observe_render_ack(9)
+    tracker.observe_render_ack(9)
+    tracker.observe_tts_request(9)
+    tracker.observe_tts_playback_start(9)
+    tracker.observe_tts_playback_start(9)
+    tracker.observe_tts_playback_complete(9)
+    tracker.observe_tts_playback_complete(9)
+    snap = tracker.snapshot()
+    assert snap["dimensions"]["translation_completion_to_render_ack"]["ordinary"]["count"] == 1
+    assert snap["dimensions"]["tts_request_to_playback_start"]["ordinary"]["count"] == 1
+    assert snap["dimensions"]["tts_playback_start_to_completion"]["ordinary"]["count"] == 1
+
+
+def test_sequence_state_is_bounded() -> None:
+    tracker = LatencyTracker()
+    for seq in range(1, _MAX_SEQUENCES + 80):
+        tracker.observe_final_source(seq)
+        tracker.observe_translation_complete(seq)
+    assert len(tracker._stamps) <= _MAX_SEQUENCES
+    assert len(tracker._classes) <= _MAX_SEQUENCES
 
 
 def test_schema_v2_record_keeps_loading_v1(tmp_path) -> None:

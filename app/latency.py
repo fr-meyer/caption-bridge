@@ -1,9 +1,10 @@
 """Content-free end-to-end latency aggregates.
 
-Durations use one server-side monotonic clock. Browser acknowledgements are
-measured as dispatch → inbound ack on that same clock. JavaScript clocks are
-never compared with Python clocks. Caption text, audio, prompts, and provider
-bodies are never stored here.
+Durations use one server-side monotonic clock. Render acknowledgements are
+measured from translation completion to inbound ack on that same clock.
+Playback acknowledgements consume their start stamp once. JavaScript clocks
+are never compared with Python clocks. Caption text, audio, prompts, and
+provider bodies are never stored here.
 """
 
 from __future__ import annotations
@@ -41,8 +42,15 @@ DISTRIBUTION_KEYS: Final[tuple[str, ...]] = (
     "outlier_count",
 )
 _MAX_SAMPLES = 2048
+_MAX_SEQUENCES = 256
 _OUTLIER_MS = 30_000
 _SAFE_SEQ_MAX = 1_000_000_000
+_CAPTION_STAMPS: Final[tuple[str, ...]] = (
+    "finalized",
+    "translate_dispatch",
+    "translate_complete",
+    "render_dispatch",
+)
 
 
 def empty_distribution() -> dict[str, int]:
@@ -225,13 +233,44 @@ class LatencyTracker:
             del bucket[: len(bucket) - _MAX_SAMPLES]
 
     def _stamp(self, seq: int, key: str) -> None:
-        self._stamps.setdefault(seq, {})[key] = time.monotonic()
+        stamps = self._stamps.setdefault(seq, {})
+        if key not in stamps:
+            stamps[key] = time.monotonic()
+        self._evict_overflow()
 
     def _duration_since(self, seq: int, key: str) -> float | None:
         started = self._stamps.get(seq, {}).get(key)
         if started is None:
             return None
         return time.monotonic() - started
+
+    def _consume(self, seq: int, key: str) -> float | None:
+        stamps = self._stamps.get(seq)
+        if not stamps or key not in stamps:
+            return None
+        started = stamps.pop(key)
+        if not stamps:
+            self._stamps.pop(seq, None)
+        return time.monotonic() - started
+
+    def _discard_stamps(self, seq: int, *keys: str) -> None:
+        stamps = self._stamps.get(seq)
+        if not stamps:
+            return
+        for key in keys:
+            stamps.pop(key, None)
+        if not stamps:
+            self._stamps.pop(seq, None)
+
+    def _drop_seq(self, seq: int) -> None:
+        self._stamps.pop(seq, None)
+        self._classes.pop(seq, None)
+
+    def _evict_overflow(self) -> None:
+        while len(self._stamps) > _MAX_SEQUENCES:
+            self._drop_seq(next(iter(self._stamps)))
+        while len(self._classes) > _MAX_SEQUENCES:
+            self._drop_seq(next(iter(self._classes)))
 
     def observe_pcm16(self, chunk: bytes) -> bool:
         if not self._onset.observe_pcm16(chunk):
@@ -267,6 +306,7 @@ class LatencyTracker:
         self._onset_mono = None
         self._first_partial_seen = False
         self._stamp(seq, "finalized")
+        self._evict_overflow()
 
     def observe_translation_dispatch(self, seq: int) -> None:
         if not _valid_seq(seq):
@@ -302,7 +342,7 @@ class LatencyTracker:
     def observe_render_ack(self, seq: int) -> None:
         if not _valid_seq(seq):
             return
-        elapsed = self._duration_since(seq, "render_dispatch")
+        elapsed = self._consume(seq, "translate_complete")
         if elapsed is None:
             return
         self._record(
@@ -310,6 +350,7 @@ class LatencyTracker:
             elapsed,
             self._active_class(seq),
         )
+        self._discard_stamps(seq, *_CAPTION_STAMPS)
 
     def observe_tts_request(self, seq: int) -> None:
         if not _valid_seq(seq):
@@ -354,6 +395,8 @@ class LatencyTracker:
     def observe_tts_playback_start(self, seq: int) -> None:
         if not _valid_seq(seq):
             return
+        if "tts_playback_start" in self._stamps.get(seq, {}):
+            return
         elapsed = self._duration_since(seq, "tts_request")
         if elapsed is not None:
             self._record(
@@ -366,13 +409,20 @@ class LatencyTracker:
     def observe_tts_playback_complete(self, seq: int) -> None:
         if not _valid_seq(seq):
             return
-        elapsed = self._duration_since(seq, "tts_playback_start")
+        elapsed = self._consume(seq, "tts_playback_start")
         if elapsed is None:
             return
         self._record(
             "tts_playback_start_to_completion",
             elapsed,
             self._active_class(seq),
+        )
+        self._discard_stamps(
+            seq,
+            "tts_request",
+            "tts_synth_start",
+            "tts_first_audio",
+            "tts_playback_start",
         )
 
     def snapshot(self) -> dict[str, object]:
