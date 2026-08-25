@@ -395,6 +395,9 @@
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);
+        if (typeof entry.seq === "number") {
+            send({ type: "render_ack", seq: entry.seq });
+        }
 
         if (appState.autoScroll && els.captionLog) {
             scrollToTop(els.captionLog);
@@ -728,10 +731,12 @@
                     appState.ttsSpeakingSeq = null;
                     renderSpeakingHighlight();
                 }
+                send({ type: "tts_playback_complete", seq: seq });
                 tryStartTtsPlayback();
             };
             try {
                 srcNode.start();
+                send({ type: "tts_playback_start", seq: seq });
             } catch (_) {
                 ttsActiveSourceNode = null;
                 tryStartTtsPlayback();

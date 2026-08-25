@@ -20,6 +20,7 @@ class AudioCapture:
         loop: asyncio.AbstractEventLoop,
         max_queue_chunks: int = 50,
         metrics_callback: Callable[[int, int], None] | None = None,
+        onset_callback: Callable[[bytes], None] | None = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._loop = loop
@@ -30,6 +31,7 @@ class AudioCapture:
         self._stopped = False
         self._dropped_chunks = 0
         self._metrics_callback = metrics_callback
+        self._onset_callback = onset_callback
 
     def _report_metrics(self, dropped: int) -> None:
         if self._metrics_callback is None:
@@ -60,6 +62,14 @@ class AudioCapture:
                     self._queue.maxsize,
                 )
         self._queue.put_nowait(chunk)
+        if self._onset_callback is not None:
+            try:
+                self._onset_callback(chunk)
+            except Exception as exc:
+                logger.warning(
+                    "Audio onset callback failed: error_type=%s",
+                    type(exc).__name__,
+                )
         self._report_metrics(dropped)
 
     def _audio_callback(

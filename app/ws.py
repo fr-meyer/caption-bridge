@@ -290,6 +290,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # If there's already a connection, replace it silently
     if _active_ws is not None:
+        manager.note_browser_replacement()
         if manager._tts_dispatcher is not None:
             manager._tts_dispatcher.set_audio_unlocked(False)
         try:
@@ -340,6 +341,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_tts_mute(msg, outbound_queue, obs)
             elif msg_type == "tts_replay":
                 await _handle_tts_replay(msg, outbound_queue, obs)
+            elif msg_type == "render_ack":
+                _handle_latency_ack(msg, "render")
+            elif msg_type == "tts_playback_start":
+                _handle_latency_ack(msg, "tts_start")
+            elif msg_type == "tts_playback_complete":
+                _handle_latency_ack(msg, "tts_complete")
             else:
                 logger.debug("Unknown WS message type: %s", msg_type)
 
@@ -635,3 +642,16 @@ async def _handle_discard_recovery() -> None:
     if poller is not None:
         await poller.evaluate_now()
     manager._emit("session_snapshot", manager.get_snapshot())
+
+
+def _handle_latency_ack(msg: dict, kind: str) -> None:
+    assert manager is not None
+    seq = msg.get("seq")
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        return
+    if kind == "render":
+        manager.observe_render_ack(seq)
+    elif kind == "tts_start":
+        manager.observe_tts_playback_start(seq)
+    elif kind == "tts_complete":
+        manager.observe_tts_playback_complete(seq)
