@@ -258,6 +258,30 @@ class SessionManager:
     def record_tts_queue(self, depth: int) -> None:
         self._reliability.record_tts_queue(depth)
 
+    def observe_speech_pcm(self, chunk: bytes) -> None:
+        self._reliability.latency.observe_pcm16(chunk)
+
+    def observe_render_ack(self, seq: int) -> None:
+        self._reliability.latency.observe_render_ack(seq)
+
+    def observe_tts_playback_start(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_playback_start(seq)
+
+    def observe_tts_playback_complete(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_playback_complete(seq)
+
+    def observe_tts_queue_wait(self, seq: int, duration_s: float) -> None:
+        self._reliability.latency.observe_tts_queue_wait(seq, duration_s)
+
+    def observe_tts_synth_start(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_synth_start(seq)
+
+    def observe_tts_first_audio(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_first_audio(seq)
+
+    def note_browser_replacement(self) -> None:
+        self._reliability.latency.mark_browser_replacement()
+
     def _write_reliability_record(self) -> None:
         try:
             record = self._reliability.build_session_record(self.session)
@@ -270,6 +294,8 @@ class SessionManager:
     # -- partial / segment --------------------------------------------------
 
     def update_partial(self, text: str) -> None:
+        if text:
+            self._reliability.latency.observe_first_partial()
         self.session.source_partial = text
         self._emit("source_partial", {"text": text})
 
@@ -286,6 +312,7 @@ class SessionManager:
             self._journal.record_segment_created(seg)
         self.session.source_partial = ""
         logger.info("Finalized segment: seq=%d chars=%d", seg.seq, len(text))
+        self._reliability.latency.observe_final_source(seg.seq)
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -305,6 +332,7 @@ class SessionManager:
         logger.info(
             "Finalized reconnect fragment: seq=%d chars=%d", seg.seq, len(text)
         )
+        self._reliability.latency.observe_final_source(seg.seq, reconnect=True)
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -314,6 +342,7 @@ class SessionManager:
             return
         n = self.config.translation_context_segments
         context = self.session.segments[-(n + 1):-1]
+        self._reliability.latency.observe_translation_dispatch(seg.seq)
         self._dispatcher.dispatch(seg, context, self.session.id, seg.target_language)
 
     # -- translation marks (dormant in this ticket) -------------------------
@@ -348,6 +377,13 @@ class SessionManager:
         seg.translation_status = "done"
         seg.translated_at = _utcnow()
         seg.quality = quality
+        repaired = bool(
+            quality is not None
+            and (quality.repair_attempts or quality.repair_succeeded)
+        )
+        self._reliability.latency.observe_translation_complete(
+            seq, repaired=repaired
+        )
         if self._journal is not None:
             self._journal.record_translation_updated(seg)
         self._try_deliver()
@@ -417,11 +453,13 @@ class SessionManager:
                     "segment_kind": seg.segment_kind,
                 },
             )
+            self._reliability.latency.observe_render_dispatch(seg.seq)
             if (
                 self._tts_dispatcher is not None
                 and self.config.tts_enabled
                 and seg.translation_status == "done"
             ):
+                self._reliability.latency.observe_tts_request(seg.seq)
                 self._tts_dispatcher.enqueue_live(seg)
 
     # -- status transitions -------------------------------------------------
@@ -435,6 +473,10 @@ class SessionManager:
             return
 
         self.session.status = status
+        if status == "reconnecting":
+            self._reliability.latency.mark_reconnect_period(True)
+        elif status == "listening":
+            self._reliability.latency.mark_reconnect_period(False)
 
         if status == "listening" and self.session.started_at is None:
             self.session.started_at = _utcnow()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -11,10 +11,13 @@ from uuid import uuid4
 
 import orjson
 
+from app.latency import LatencyTracker, validate_latency_snapshot
+
 if TYPE_CHECKING:
     from app.state import Session
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SCHEMA_VERSION_V1 = 1
 ExportOutcome = Literal["not_requested", "succeeded", "failed", "discarded"]
 ReconnectOutcome = Literal["none", "recovered", "exhausted", "permanent", "cancelled"]
 RunType = Literal["translation_resilience", "full_pipeline"]
@@ -34,8 +37,11 @@ _SESSION_KEYS = frozenset(
         "reconnect",
         "queues",
         "export",
+        "latency",
     }
 )
+_SESSION_KEYS_V1 = _SESSION_KEYS - {"latency"}
+
 _TRANSLATION_KEYS = frozenset(
     {
         "total",
@@ -138,6 +144,7 @@ class ReliabilityTracker:
     tts_retries: int = 0
     tts_skipped: int = 0
     tts_failures: int = 0
+    latency: LatencyTracker = field(default_factory=LatencyTracker)
 
     def observe_event(self, event: dict[str, Any]) -> None:
         """Reduce an application event to allow-listed counters only."""
@@ -233,6 +240,7 @@ class ReliabilityTracker:
                 },
             },
             "export": {"outcome": self.export_outcome},
+            "latency": self.latency.snapshot(),
         }
 
     def build_session_record(self, session: Session) -> dict[str, Any]:
@@ -275,16 +283,28 @@ class ReliabilityTracker:
             "translation": translation,
             **self.snapshot(),
         }
+        # snapshot() already includes latency for runtime metrics;
+        # persisted records keep the same object.
         if not validate_session_record(record):
             raise ValueError("invalid reliability session record")
         return record
 
 
 def validate_session_record(record: object) -> bool:
-    if not _exact_keys(record, _SESSION_KEYS):
+    if not isinstance(record, dict):
         return False
-    assert isinstance(record, dict)
-    if record["schema_version"] != SCHEMA_VERSION or record["record_type"] != "session":
+    version = record.get("schema_version")
+    if version == SCHEMA_VERSION_V1:
+        if not _exact_keys(record, _SESSION_KEYS_V1):
+            return False
+    elif version == SCHEMA_VERSION:
+        if not _exact_keys(record, _SESSION_KEYS):
+            return False
+        if not validate_latency_snapshot(record.get("latency")):
+            return False
+    else:
+        return False
+    if record["record_type"] != "session":
         return False
     if not isinstance(record["session_id"], str) or not _SAFE_ID.fullmatch(
         record["session_id"]
@@ -342,7 +362,7 @@ def validate_soak_record(record: object) -> bool:
     assert isinstance(record, dict)
     return all(
         (
-            record["schema_version"] == SCHEMA_VERSION,
+            record["schema_version"] in {SCHEMA_VERSION, SCHEMA_VERSION_V1},
             record["record_type"] == "soak",
             isinstance(record["run_id"], str),
             bool(_SAFE_ID.fullmatch(record["run_id"])),

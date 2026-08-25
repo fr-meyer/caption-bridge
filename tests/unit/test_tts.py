@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 from mistralai.client.errors import NoResponseError
@@ -266,3 +267,43 @@ def test_replay_does_not_displace_live_jobs_when_queue_is_full() -> None:
     skipped = [event for event in manager.events if event["type"] == "tts_skipped"]
     assert skipped[-1]["seq"] == 9
     assert skipped[-1]["reason"] == "queue_full"
+
+
+def test_stale_job_does_not_record_synth_start() -> None:
+    dispatcher, manager, speech = _dispatcher(
+        [_Stream([SimpleNamespace(audio_data="audio")])]
+    )
+    starts: list[int] = []
+    manager.observe_tts_synth_start = starts.append
+    dispatcher.set_audio_unlocked(True)
+    waits: list[tuple[int, float]] = []
+    manager.observe_tts_queue_wait = lambda seq, duration: waits.append((seq, duration))
+    job = _job()
+    job.enqueued_mono = time.monotonic() - 0.05
+    dispatcher._queue.put_nowait(job)
+    dispatcher._tts_epoch += 1
+
+    async def run() -> None:
+        task = asyncio.create_task(dispatcher._consumer())
+        await dispatcher._queue.join()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert starts == []
+    assert waits == []
+    assert speech.calls == 0
+
+
+def test_synth_start_is_recorded_only_when_provider_is_called() -> None:
+    dispatcher, manager, speech = _dispatcher(
+        [_Stream([SimpleNamespace(audio_data="audio")])]
+    )
+    starts: list[int] = []
+    manager.observe_tts_synth_start = starts.append
+    asyncio.run(dispatcher._synthesise(_job()))
+    assert starts == [7]
+    assert speech.calls == 1
