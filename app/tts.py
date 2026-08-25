@@ -232,9 +232,6 @@ class TTSDispatcher:
                     wait_cb = getattr(self._session_manager, "observe_tts_queue_wait", None)
                     if job.enqueued_mono and callable(wait_cb):
                         wait_cb(job.seq, now - job.enqueued_mono)
-                    start_cb = getattr(self._session_manager, "observe_tts_synth_start", None)
-                    if callable(start_cb):
-                        start_cb(job.seq)
                     if self._job_stale(job):
                         logger.debug(
                             "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
@@ -398,6 +395,9 @@ class TTSDispatcher:
                     "tts_epoch": job.tts_epoch,
                 },
             )
+            start_cb = getattr(self._session_manager, "observe_tts_synth_start", None)
+            if callable(start_cb):
+                start_cb(job.seq)
             stream = await self._client.audio.speech.complete_async(
                 model=self._config.tts_model,
                 input=job.text,
