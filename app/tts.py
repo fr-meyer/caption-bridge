@@ -230,6 +230,14 @@ class TTSDispatcher:
                 try:
                     now = time.monotonic()
                     wait_cb = getattr(self._session_manager, "observe_tts_queue_wait", None)
+                    if self._job_stale(job):
+                        logger.debug(
+                            "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
+                            job.seq,
+                            job.tts_epoch,
+                            self._tts_epoch,
+                        )
+                        continue
                     if job.enqueued_mono and callable(wait_cb):
                         wait_cb(job.seq, now - job.enqueued_mono)
                     if self._job_stale(job):

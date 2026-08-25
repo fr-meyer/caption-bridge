@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 from mistralai.client.errors import NoResponseError
@@ -275,8 +276,10 @@ def test_stale_job_does_not_record_synth_start() -> None:
     starts: list[int] = []
     manager.observe_tts_synth_start = starts.append
     dispatcher.set_audio_unlocked(True)
+    waits: list[tuple[int, float]] = []
+    manager.observe_tts_queue_wait = lambda seq, duration: waits.append((seq, duration))
     job = _job()
-    job.enqueued_mono = 0.0
+    job.enqueued_mono = time.monotonic() - 0.05
     dispatcher._queue.put_nowait(job)
     dispatcher._tts_epoch += 1
 
@@ -291,6 +294,7 @@ def test_stale_job_does_not_record_synth_start() -> None:
 
     asyncio.run(run())
     assert starts == []
+    assert waits == []
     assert speech.calls == 0
 
 

@@ -614,6 +614,7 @@
         ttsPlaybackStarting = false;
         if (ttsActiveSourceNode) {
             try {
+                ttsActiveSourceNode._cbCancelled = true;
                 ttsActiveSourceNode.onended = null;
                 ttsActiveSourceNode.stop(0);
             } catch (_) { /* node may already be stopped */ }
@@ -725,13 +726,18 @@
             ttsActiveSourceNode = srcNode;
             srcNode.buffer = ab;
             srcNode.connect(audioContext.destination);
+            srcNode._cbCancelled = false;
             srcNode.onended = function () {
-                ttsActiveSourceNode = null;
+                if (ttsActiveSourceNode === srcNode) {
+                    ttsActiveSourceNode = null;
+                }
                 if (appState.ttsSpeakingSeq === seq && appState.currentTtsEpoch === epoch) {
                     appState.ttsSpeakingSeq = null;
                     renderSpeakingHighlight();
                 }
-                send({ type: "tts_playback_complete", seq: seq });
+                if (!srcNode._cbCancelled && appState.currentTtsEpoch === epoch) {
+                    send({ type: "tts_playback_complete", seq: seq });
+                }
                 tryStartTtsPlayback();
             };
             try {
