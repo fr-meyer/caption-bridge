@@ -16,6 +16,7 @@ from app import ws
 from app.audio import AudioCapture
 from app.boundary import BoundaryDetector
 from app.config import settings
+from app.identity import runtime_identity
 from app.journal import SessionJournal, run_recovery
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
@@ -335,6 +336,12 @@ app.add_api_websocket_route("/ws", ws.websocket_endpoint)
 async def healthz() -> dict[str, str]:
     """Content-free liveness endpoint for local lifecycle checks."""
     return {"service": "caption-bridge", "status": "ok"}
+
+
+@app.get("/version")
+async def version() -> dict[str, object]:
+    """Content-free package and checkout identity."""
+    return runtime_identity()
 
 @app.get("/favicon.ico", include_in_schema=False, status_code=204)
 async def favicon() -> None:

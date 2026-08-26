@@ -2,7 +2,8 @@ import asyncio
 
 import httpx
 
-from app.main import app, healthz
+from app.identity import PACKAGE_VERSION
+from app.main import app, healthz, version
 
 
 def test_healthz_is_content_free() -> None:
@@ -10,6 +11,14 @@ def test_healthz_is_content_free() -> None:
         "service": "caption-bridge",
         "status": "ok",
     }
+
+
+def test_version_is_content_free() -> None:
+    payload = asyncio.run(version())
+    assert payload["service"] == "caption-bridge"
+    assert payload["package_version"] == PACKAGE_VERSION
+    assert "MISTRAL" not in str(payload)
+    assert "/Users/" not in str(payload)
 
 
 def test_favicon_request_is_handled_without_external_asset() -> None:

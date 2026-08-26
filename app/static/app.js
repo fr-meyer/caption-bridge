@@ -126,6 +126,7 @@
         els.enableAudioBtn = $("enable-audio-btn");
         els.ttsToggleBtn = $("tts-toggle-btn");
         els.ttsDrawerToggle = $("tts-drawer-toggle");
+        els.buildIdentity = $("build-identity");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -1428,8 +1429,25 @@
 
     // ===== Init =====
 
+    function loadBuildIdentity() {
+        if (!els.buildIdentity) {
+            return;
+        }
+        fetch("/version", { cache: "no-store" })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !els.buildIdentity) {
+                    return;
+                }
+                var sha = data.git_sha ? String(data.git_sha).slice(0, 12) : "unknown";
+                els.buildIdentity.textContent = data.package_version + " (" + sha + ")";
+            })
+            .catch(function () {});
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
+        loadBuildIdentity();
         setupAutoScroll();
         setupControls();
         setupKeyboard();

@@ -5,7 +5,7 @@ PORT ?= 8765
 UV ?= uv
 PYTHON ?= python3
 
-.PHONY: run dev ctl-start ctl-status ctl-stop smoke setup test quality-benchmark segmentation-benchmark resilience-soak retention-preview lint check setup-conda
+.PHONY: run dev ctl-start ctl-status ctl-stop identity preflight support-bundle smoke setup test quality-benchmark segmentation-benchmark resilience-soak retention-preview lint check setup-conda
 
 run:
 	$(UV) run uvicorn app.main:app --host $(HOST) --port $(PORT)
@@ -21,6 +21,15 @@ ctl-status:
 
 ctl-stop:
 	$(PYTHON) -m scripts.caption_bridge_ctl stop
+
+identity:
+	$(UV) run python -m app.identity --json
+
+preflight:
+	$(UV) run python -m scripts.runtime_preflight --software --json
+
+support-bundle:
+	$(UV) run python -m scripts.support_bundle --json
 
 smoke:
 	$(UV) run python -m scripts.smoke_test
