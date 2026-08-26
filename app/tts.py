@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -33,6 +34,7 @@ class TTSJob:
     priority: int
     session_id: str
     tts_epoch: int
+    enqueued_mono: float = 0.0
 
 
 class _TTSAttemptError(Exception):
@@ -82,6 +84,11 @@ class TTSDispatcher:
         self._unmute_event.set()
         self._voice_invalid: bool = False
 
+    def _record_queue_depth(self) -> None:
+        callback = getattr(self._session_manager, "record_tts_queue", None)
+        if callable(callback):
+            callback(self._queue.qsize())
+
     def _emit_queue_skip(self, job: TTSJob, reason: str) -> None:
         self._session_manager._emit(
             "tts_skipped",
@@ -129,6 +136,7 @@ class TTSDispatcher:
                 )
                 for j in items:
                     self._queue.put_nowait(j)
+                self._record_queue_depth()
                 return
             for j in items:
                 self._queue.put_nowait(j)
@@ -142,7 +150,9 @@ class TTSDispatcher:
             session_id=self._session_manager.session.id,
             tts_epoch=self._tts_epoch,
         )
+        job.enqueued_mono = time.monotonic()
         self._queue.put_nowait(job)
+        self._record_queue_depth()
 
     def enqueue_replay(self, seq: int, text: str, language: str) -> None:
         if language not in VOICE_MAP:
@@ -177,10 +187,12 @@ class TTSDispatcher:
             for queued in items:
                 self._queue.put_nowait(queued)
             self._emit_queue_skip(job, "queue_full")
+            self._record_queue_depth()
             return
         items.insert(0, job)
         for j in items:
             self._queue.put_nowait(j)
+        self._record_queue_depth()
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
@@ -216,6 +228,18 @@ class TTSDispatcher:
                 await self._unlock_event.wait()
                 job = await self._queue.get()
                 try:
+                    now = time.monotonic()
+                    wait_cb = getattr(self._session_manager, "observe_tts_queue_wait", None)
+                    if self._job_stale(job):
+                        logger.debug(
+                            "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
+                            job.seq,
+                            job.tts_epoch,
+                            self._tts_epoch,
+                        )
+                        continue
+                    if job.enqueued_mono and callable(wait_cb):
+                        wait_cb(job.seq, now - job.enqueued_mono)
                     if self._job_stale(job):
                         logger.debug(
                             "Skipping stale TTS job seq=%s epoch=%s (current=%s)",
@@ -379,6 +403,9 @@ class TTSDispatcher:
                     "tts_epoch": job.tts_epoch,
                 },
             )
+            start_cb = getattr(self._session_manager, "observe_tts_synth_start", None)
+            if callable(start_cb):
+                start_cb(job.seq)
             stream = await self._client.audio.speech.complete_async(
                 model=self._config.tts_model,
                 input=job.text,
@@ -408,6 +435,10 @@ class TTSDispatcher:
                             "tts_epoch": job.tts_epoch,
                         },
                     )
+                    if chunk_index == 0:
+                        first_cb = getattr(self._session_manager, "observe_tts_first_audio", None)
+                        if callable(first_cb):
+                            first_cb(job.seq)
                     chunk_index += 1
             self._session_manager._emit(
                 "tts_audio",

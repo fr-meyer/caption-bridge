@@ -74,6 +74,10 @@ class AppConfig(BaseSettings):
     reconnect_jitter_factor: float = Field(default=0.25, ge=0.0, le=1.0)
     journal_dir: str = "./runs/.journal"
     recovery_export_dir: str = "./runs/recovered"
+    reliability_dir: str = Field(
+        default="./runs/reliability",
+        validation_alias="RELIABILITY_DIR",
+    )
     transcript_retention_days: int = Field(
         default=30, ge=1, le=3650,
         validation_alias="TRANSCRIPT_RETENTION_DAYS",

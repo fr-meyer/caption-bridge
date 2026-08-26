@@ -2,7 +2,8 @@ import asyncio
 
 import httpx
 
-from app.main import app, healthz
+from app.identity import PACKAGE_VERSION
+from app.main import app, healthz, version
 
 
 def test_healthz_is_content_free() -> None:
@@ -10,6 +11,14 @@ def test_healthz_is_content_free() -> None:
         "service": "caption-bridge",
         "status": "ok",
     }
+
+
+def test_version_is_content_free() -> None:
+    payload = asyncio.run(version())
+    assert payload["service"] == "caption-bridge"
+    assert payload["package_version"] == PACKAGE_VERSION
+    assert "MISTRAL" not in str(payload)
+    assert "/Users/" not in str(payload)
 
 
 def test_favicon_request_is_handled_without_external_asset() -> None:
@@ -37,3 +46,11 @@ def test_browser_assets_are_not_cached() -> None:
         response = asyncio.run(request(path))
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+
+def test_version_route_offloads_blocking_identity() -> None:
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(encoding="utf-8")
+    assert "await asyncio.to_thread(runtime_identity)" in source

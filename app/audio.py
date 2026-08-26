@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import sounddevice as sd
 
@@ -19,6 +19,8 @@ class AudioCapture:
         sample_rate: int,
         loop: asyncio.AbstractEventLoop,
         max_queue_chunks: int = 50,
+        metrics_callback: Callable[[int, int], None] | None = None,
+        onset_callback: Callable[[bytes], None] | None = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._loop = loop
@@ -28,10 +30,23 @@ class AudioCapture:
         self._stream: sd.RawInputStream | None = None
         self._stopped = False
         self._dropped_chunks = 0
+        self._metrics_callback = metrics_callback
+        self._onset_callback = onset_callback
+
+    def _report_metrics(self, dropped: int) -> None:
+        if self._metrics_callback is None:
+            return
+        try:
+            self._metrics_callback(self._queue.qsize(), dropped)
+        except Exception as exc:
+            logger.warning(
+                "Audio metrics callback failed: error_type=%s", type(exc).__name__
+            )
 
     def _enqueue_chunk(self, chunk: bytes) -> None:
         if self._stopped:
             return
+        dropped = 0
         if self._queue.full():
             try:
                 self._queue.get_nowait()
@@ -39,6 +54,7 @@ class AudioCapture:
             except asyncio.QueueEmpty:
                 pass
             self._dropped_chunks += 1
+            dropped = 1
             if self._dropped_chunks == 1 or self._dropped_chunks % 100 == 0:
                 logger.warning(
                     "Audio queue pressure: dropped_chunks=%d max_chunks=%d",
@@ -46,6 +62,15 @@ class AudioCapture:
                     self._queue.maxsize,
                 )
         self._queue.put_nowait(chunk)
+        if self._onset_callback is not None:
+            try:
+                self._onset_callback(chunk)
+            except Exception as exc:
+                logger.warning(
+                    "Audio onset callback failed: error_type=%s",
+                    type(exc).__name__,
+                )
+        self._report_metrics(dropped)
 
     def _audio_callback(
         self,

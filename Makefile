@@ -5,7 +5,7 @@ PORT ?= 8765
 UV ?= uv
 PYTHON ?= python3
 
-.PHONY: run dev ctl-start ctl-status ctl-stop smoke setup test quality-benchmark segmentation-benchmark resilience-soak retention-preview lint check setup-conda
+.PHONY: run dev ctl-start ctl-status ctl-stop identity preflight support-bundle smoke setup test quality-benchmark segmentation-benchmark resilience-soak retention-preview lint check setup-conda
 
 run:
 	$(UV) run uvicorn app.main:app --host $(HOST) --port $(PORT)
@@ -21,6 +21,15 @@ ctl-status:
 
 ctl-stop:
 	$(PYTHON) -m scripts.caption_bridge_ctl stop
+
+identity:
+	$(UV) run python -m app.identity --json
+
+preflight:
+	$(UV) run python -m scripts.runtime_preflight --software --json
+
+support-bundle:
+	$(UV) run python -m scripts.support_bundle --json
 
 smoke:
 	$(UV) run python -m scripts.smoke_test
@@ -43,13 +52,31 @@ segmentation-benchmark:
 resilience-soak:
 	$(UV) run python -m scripts.resilience_soak --segments 1000
 
+.PHONY: full-pipeline-scenario
+
+full-pipeline-scenario:
+	$(UV) run python -m scripts.full_pipeline_scenario --json
+
+.PHONY: browser-setup browser-e2e
+
+browser-setup:
+	$(UV) run python -m playwright install chromium
+
+browser-e2e:
+	$(UV) run python -m pytest -q browser_tests --browser chromium
+
+.PHONY: reliability-report
+
+reliability-report:
+	$(UV) run python -m scripts.reliability_report
+
 retention-preview:
 	$(UV) run python -m scripts.prune_transcripts
 
 lint:
 	$(UV) run ruff check .
 
-check: lint quality-benchmark segmentation-benchmark resilience-soak test
+check: lint quality-benchmark segmentation-benchmark resilience-soak full-pipeline-scenario test
 	node --check app/static/app.js
 
 setup-conda:

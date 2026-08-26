@@ -64,6 +64,7 @@ class _WsMetrics:
     lag_warn_crossings: int = 0
     lag_recovery_crossings: int = 0
     current_depth: int = 0
+    peak_depth: int = 0
     last_lag_secs: float = 0.0
     dropped_events: int = 0
     coalesced_events: int = 0
@@ -87,6 +88,7 @@ def _maybe_log_outbound_depth(
 ) -> None:
     """Log on band transitions, periodically while degraded, or on recovery to ok."""
     _ws_metrics.current_depth = depth
+    _ws_metrics.peak_depth = max(_ws_metrics.peak_depth, depth)
 
     if depth >= _OUTBOUND_QUEUE_CRITICAL_DEPTH:
         band = "critical"
@@ -143,12 +145,17 @@ def _enqueue_outbound(
     """Enqueue without blocking while preserving critical state transitions."""
     enqueue_time = time.monotonic()
     event_type = event.get("type")
+    dropped_before = _ws_metrics.dropped_events
+    coalesced_before = _ws_metrics.coalesced_events
+    critical_before = _ws_metrics.critical_drops
 
     if not queue.full():
         queue.put_nowait((event, enqueue_time))
         depth = queue.qsize()
         _ws_metrics.current_depth = depth
         _maybe_log_outbound_depth(obs, depth, event_type)
+        if manager is not None:
+            manager.record_websocket_queue(depth)
         return True
 
     items: list[tuple[dict[str, Any], float]] = []
@@ -202,6 +209,13 @@ def _enqueue_outbound(
     depth = queue.qsize()
     _ws_metrics.current_depth = depth
     _maybe_log_outbound_depth(obs, depth, event_type)
+    if manager is not None:
+        manager.record_websocket_queue(
+            depth,
+            dropped=_ws_metrics.dropped_events - dropped_before,
+            coalesced=_ws_metrics.coalesced_events - coalesced_before,
+            critical_drops=_ws_metrics.critical_drops - critical_before,
+        )
     return accepted
 
 
@@ -276,6 +290,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # If there's already a connection, replace it silently
     if _active_ws is not None:
+        manager.note_browser_replacement()
         if manager._tts_dispatcher is not None:
             manager._tts_dispatcher.set_audio_unlocked(False)
         try:
@@ -326,6 +341,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_tts_mute(msg, outbound_queue, obs)
             elif msg_type == "tts_replay":
                 await _handle_tts_replay(msg, outbound_queue, obs)
+            elif msg_type == "render_ack":
+                _handle_latency_ack(msg, "render")
+            elif msg_type == "tts_playback_start":
+                _handle_latency_ack(msg, "tts_start")
+            elif msg_type == "tts_playback_complete":
+                _handle_latency_ack(msg, "tts_complete")
             else:
                 logger.debug("Unknown WS message type: %s", msg_type)
 
@@ -621,3 +642,16 @@ async def _handle_discard_recovery() -> None:
     if poller is not None:
         await poller.evaluate_now()
     manager._emit("session_snapshot", manager.get_snapshot())
+
+
+def _handle_latency_ack(msg: dict, kind: str) -> None:
+    assert manager is not None
+    seq = msg.get("seq")
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        return
+    if kind == "render":
+        manager.observe_render_ack(seq)
+    elif kind == "tts_start":
+        manager.observe_tts_playback_start(seq)
+    elif kind == "tts_complete":
+        manager.observe_tts_playback_complete(seq)

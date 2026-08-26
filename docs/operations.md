@@ -31,6 +31,10 @@ The GCP host can run unit, lint, syntax, and server-startup checks. It cannot pe
 Use [`mac-acceptance.md`](mac-acceptance.md) for the complete content-free
 candidate-release checklist.
 
+Use [`mac-cli.md`](mac-cli.md) for supported install, upgrade, rollback,
+uninstall, and the content-free support bundle. Use [`mac-soak.md`](mac-soak.md)
+only for optional two-hour endurance evidence.
+
 ## Safe on-demand lifecycle
 
 The repository-owned controller is the supported OpenClaw control surface. It
@@ -146,6 +150,40 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 - `TRANSLATION_PROVIDER=mistral` is the only production value. Other providers,
   including the Gemini Live Translate spike in issue #13, require explicit
   implementation, opt-in configuration, privacy review, and Mac smoke coverage.
+- Run `make full-pipeline-scenario` on GCP before every PR. It deterministically
+  composes the production boundary, translation, reconnect, TTS, WebSocket,
+  journal, and export seams without microphones, browsers, provider calls, or
+  retained artifacts. The gate requires exact terminal outcomes and retry counts,
+  strict once-only delivery, bounded browser pressure, replacement snapshot/audio
+  behavior, exact export/journal completion, and zero owned tasks after teardown.
+- Run `make browser-setup` once per GCP environment, then `make browser-e2e`
+  before every PR that changes the frontend or WebSocket contract. The fixture
+  binds only to `127.0.0.1`, serves the production browser assets, and uses fixed
+  synthetic WebSocket events. It exercises a real headless Chromium document but
+  does not start the production pipeline, access devices/providers, or retain
+  traces, screenshots, transcripts, or temporary serving artifacts.
+
+## Content-free reliability history
+
+- Session reliability records live separately under `runs/reliability/` by
+  default. Set `RELIABILITY_DIR` only to another local, operator-controlled path.
+- Each exact-schema record contains timestamps, duration, terminal/export state,
+  translation and repair counts, reconnect counts/downtime/outcome, and aggregate
+  audio, TTS, and browser queue peaks/drops/skips. It excludes text, provider
+  bodies, prompts, exception messages, credentials, environment values, and paths.
+- Run `make reliability-report` for recent sessions, whole-history aggregates,
+  and equal-window recent-versus-previous trends. The command scans only
+  `session-*.json` and `soak-*.json` inside the reliability directory; it never
+  opens transcript exports or journals.
+- Malformed files and unknown schema versions are skipped with a count-only
+  warning. Reliability recording failure is diagnostic-only and cannot turn a
+  successful transcript export into a failed export.
+- Deterministic gate history is never retained by `make check` or CI. Record it
+  explicitly when establishing a local baseline with
+  `--record-history runs/reliability` on `scripts.resilience_soak` or
+  `scripts.full_pipeline_scenario`.
+- The report shows observed rates and deltas, not pass/fail thresholds. Establish
+  a stable baseline before proposing any alert or release gate.
 
 ## Logs, journals, and retention
 
@@ -154,6 +192,9 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 - `runs/.journal` and exported JSON contain transcript content.
 - Keep transcript-bearing artifacts only as long as needed for the seminar or an explicitly consented, redacted quality corpus.
 - Before sharing diagnostics, use aggregate metrics and remove transcript-bearing files.
+- Content-free reliability history may be shared independently after confirming
+  the exact schema. It is not covered by transcript retention and is never uploaded
+  automatically; deletion remains a manual operator choice.
 - `TRANSCRIPT_RETENTION_DAYS` defaults to 30 days and controls only the manual
   retention tool; it does not install or enable automatic cleanup.
 - Preview eligible timestamped exports and archived journals with
@@ -176,4 +217,7 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 4. After acceptance, merge into `dev`.
 5. Open a release PR from `dev` to `main`.
 6. Reconcile issues whose fixes were previously merged only into `dev`.
-7. Tag the first stable mainline release only after a successful long-session Mac soak test.
+7. Promote or tag a candidate only after its required Mac acceptance gate passes
+   at the exact commit.
+8. For the post-v1 P1 gate, complete [`mac-soak.md`](mac-soak.md) and record the
+   content-free result in issue #35 before checking roadmap item P1.4.

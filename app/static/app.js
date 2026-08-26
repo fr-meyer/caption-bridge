@@ -50,6 +50,7 @@
         providerCapacityWarning: null,
     };
     let providerNoticeTimer = null;
+    let providerCapacityTimer = null;
 
     let ws = null;
     let reconnectAttempt = 0;
@@ -118,11 +119,14 @@
         els.providerNotice = $("provider-notice");
         els.providerNoticeTitle = $("provider-notice-title");
         els.providerNoticeDetail = $("provider-notice-detail");
+        els.capacityNotice = $("capacity-notice");
+        els.capacityNoticeDetail = $("capacity-notice-detail");
         els.drawerLangError = $("drawer-lang-error");
         els.audioEnableBanner = $("audio-enable-banner");
         els.enableAudioBtn = $("enable-audio-btn");
         els.ttsToggleBtn = $("tts-toggle-btn");
         els.ttsDrawerToggle = $("tts-drawer-toggle");
+        els.buildIdentity = $("build-identity");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -392,6 +396,9 @@
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);
+        if (typeof entry.seq === "number") {
+            send({ type: "render_ack", seq: entry.seq });
+        }
 
         if (appState.autoScroll && els.captionLog) {
             scrollToTop(els.captionLog);
@@ -562,10 +569,22 @@
     function handleProviderCapacityWarning(msg) {
         console.warn("Provider capacity warning:", msg);
         appState.providerCapacityWarning = msg;
+        const detail =
+            "Translation provider capacity is temporarily limited. " +
+            "Some captions may be skipped; processing will continue.";
+        if (providerCapacityTimer) {
+            clearTimeout(providerCapacityTimer);
+        }
+        if (els.capacityNotice && els.capacityNoticeDetail) {
+            els.capacityNoticeDetail.textContent = detail;
+            els.capacityNotice.classList.remove("hidden");
+            providerCapacityTimer = setTimeout(function () {
+                els.capacityNotice.classList.add("hidden");
+                providerCapacityTimer = null;
+            }, 5000);
+        }
         if (els.drawerLangError) {
-            els.drawerLangError.textContent =
-                "Translation provider capacity is temporarily limited. " +
-                "Some captions may be skipped; processing will continue.";
+            els.drawerLangError.textContent = detail;
             els.drawerLangError.classList.remove("hidden");
             setTimeout(function () {
                 els.drawerLangError.classList.add("hidden");
@@ -596,6 +615,7 @@
         ttsPlaybackStarting = false;
         if (ttsActiveSourceNode) {
             try {
+                ttsActiveSourceNode._cbCancelled = true;
                 ttsActiveSourceNode.onended = null;
                 ttsActiveSourceNode.stop(0);
             } catch (_) { /* node may already be stopped */ }
@@ -707,16 +727,23 @@
             ttsActiveSourceNode = srcNode;
             srcNode.buffer = ab;
             srcNode.connect(audioContext.destination);
+            srcNode._cbCancelled = false;
             srcNode.onended = function () {
-                ttsActiveSourceNode = null;
+                if (ttsActiveSourceNode === srcNode) {
+                    ttsActiveSourceNode = null;
+                }
                 if (appState.ttsSpeakingSeq === seq && appState.currentTtsEpoch === epoch) {
                     appState.ttsSpeakingSeq = null;
                     renderSpeakingHighlight();
+                }
+                if (!srcNode._cbCancelled && appState.currentTtsEpoch === epoch) {
+                    send({ type: "tts_playback_complete", seq: seq });
                 }
                 tryStartTtsPlayback();
             };
             try {
                 srcNode.start();
+                send({ type: "tts_playback_start", seq: seq });
             } catch (_) {
                 ttsActiveSourceNode = null;
                 tryStartTtsPlayback();
@@ -1402,8 +1429,25 @@
 
     // ===== Init =====
 
+    function loadBuildIdentity() {
+        if (!els.buildIdentity) {
+            return;
+        }
+        fetch("/version", { cache: "no-store" })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !els.buildIdentity) {
+                    return;
+                }
+                var sha = data.git_sha ? String(data.git_sha).slice(0, 12) : "unknown";
+                els.buildIdentity.textContent = data.package_version + " (" + sha + ")";
+            })
+            .catch(function () {});
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
+        loadBuildIdentity();
         setupAutoScroll();
         setupControls();
         setupKeyboard();

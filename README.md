@@ -93,6 +93,12 @@ The controller uses only the repository-local `.venv`, refuses non-loopback
 binding, verifies process identity before signalling, and emits content-free
 human or JSON diagnostics. See [the Mac lifecycle runbook](docs/mac-lifecycle.md).
 
+Install, upgrade, rollback, uninstall, and the content-free support bundle
+are documented in [the Mac CLI runbook](docs/mac-cli.md). P1.4 is the
+five-minute exact-candidate product path closed in
+[issue #35](https://github.com/fr-meyer/caption-bridge/issues/35). A two-hour
+run remains optional endurance evidence in [the Mac soak runbook](docs/mac-soak.md).
+
 ## Development
 
 For auto-reload during development:
@@ -110,7 +116,16 @@ uv run python -m pytest -q
 make quality-benchmark
 make segmentation-benchmark
 make resilience-soak
+make full-pipeline-scenario
 node --check app/static/app.js
+```
+
+Run the real-browser contracts separately after installing the repository-scoped
+Chromium build:
+
+```bash
+make browser-setup
+make browser-e2e
 ```
 
 The quality benchmark uses only synthetic captions. It fails when detector recall
@@ -122,6 +137,38 @@ The resilience soak injects deterministic timeouts and capacity failures into
 1,000 synthetic segments. It fails on pending work, ordering gaps, duplicates,
 unbounded provider calls, missing capacity notices, or missing source-only
 degraded captions. It makes no network calls and prints aggregate counts only.
+
+The full-pipeline scenario composes the production boundary, translation,
+reconnection, TTS, WebSocket queue/replacement, journal, and export seams around
+six synthetic segments. It makes no network or device calls, deletes its temporary
+artifacts, and fails on ordering, retry-budget, snapshot, export, or task-leak
+regressions. Its report contains only aggregate counts and booleans.
+
+The browser suite serves the production HTML, CSS, and JavaScript from a
+loopback-only synthetic WebSocket backend and drives it with headless Chromium.
+It covers degraded captions/notices, reconnect snapshot restoration, audio
+relocking, export/new-session controls, and keyboard lifecycle behavior without
+microphones, provider calls, public listeners, or retained browser artifacts.
+
+Each completed, failed-export, or explicitly discarded session also produces a
+separate content-free reliability record under `runs/reliability/`. These records
+contain only versioned aggregate counters, timestamps, durations, outcomes, and
+queue peaks; transcript text, provider bodies, exception messages, prompts,
+credentials, environment values, and export paths are excluded by an exact schema.
+Review recent sessions, aggregate rates, and equal-window trends with:
+
+```bash
+make reliability-report
+```
+
+Deterministic history is opt-in so CI and normal checks retain no artifacts:
+
+```bash
+uv run python -m scripts.resilience_soak --segments 1000 \
+  --record-history runs/reliability
+uv run python -m scripts.full_pipeline_scenario \
+  --record-history runs/reliability
+```
 
 The microphone smoke test must run on the Mac because the GCP server has no audio device:
 
@@ -158,7 +205,10 @@ The default additional hold budget is 3000 ms after the first
 
 ## Privacy and diagnostics
 
-Default logs contain sequence numbers, lengths, timings, status codes, and failure classes—not caption text or provider response bodies. Session journals and exports still contain transcript content and should follow the retention policy in `docs/operations.md`.
+Default logs and reliability records contain sequence numbers or session IDs,
+aggregate counts, lengths, timings, status codes, outcomes, and failure classes—not
+caption text or provider response bodies. Session journals and transcript exports
+still contain content and should follow the retention policy in `docs/operations.md`.
 
 Preview aged transcript exports and archived journals without reading or deleting them:
 

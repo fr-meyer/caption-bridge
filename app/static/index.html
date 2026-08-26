@@ -11,13 +11,14 @@
 
     <header>
         <span class="title">CaptionBridge</span>
+            <span id="build-identity" class="build-identity" aria-label="Build identity"></span>
         <div class="header-right">
             <span id="header-lang" class="hidden"></span>
-            <button id="gear-btn" class="btn-icon" title="Settings (G)">⚙</button>
+            <button id="gear-btn" class="btn-icon" title="Settings (G)" aria-label="Settings">⚙</button>
             <span id="elapsed">00:00</span>
             <span class="status-indicator">
                 <span id="status-dot" class="status-dot"></span>
-                <span id="status-label">Checking…</span>
+                <span id="status-label" role="status">Checking…</span>
             </span>
         </div>
     </header>
@@ -52,6 +53,12 @@
             <span id="provider-notice-detail"></span>
         </div>
     </div>
+    <div id="capacity-notice" class="provider-notice hidden" role="status">
+        <div class="provider-notice-content">
+            <strong>Translation temporarily limited</strong>
+            <span id="capacity-notice-detail"></span>
+        </div>
+    </div>
     <div id="idle-panel" class="idle-panel">
         <div id="checklist" class="checklist"></div>
         <div class="idle-lang-row">
@@ -60,7 +67,7 @@
         </div>
         <div class="idle-lang-row">
             <span class="idle-lang-label">Target language</span>
-            <select id="idle-target-select" class="drawer-select"></select>
+            <select id="idle-target-select" class="drawer-select" aria-label="Target language"></select>
         </div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
@@ -90,33 +97,33 @@
         </div>
         <div class="footer-hints" id="footer-hints"></div>
         <div class="footer-right">
-            <button id="tts-toggle-btn" class="btn-icon footer-control active" title="Mute TTS">🔊</button>
-            <button id="font-dec" class="btn-icon footer-control">A−</button>
-            <button id="font-inc" class="btn-icon footer-control">A+</button>
-            <button id="fullscreen-btn" class="btn-icon footer-control">⛶</button>
+            <button id="tts-toggle-btn" class="btn-icon footer-control active" title="Mute TTS" aria-label="Mute translated speech">🔊</button>
+            <button id="font-dec" class="btn-icon footer-control" aria-label="Decrease caption size">A−</button>
+            <button id="font-inc" class="btn-icon footer-control" aria-label="Increase caption size">A+</button>
+            <button id="fullscreen-btn" class="btn-icon footer-control" aria-label="Toggle fullscreen">⛶</button>
         </div>
     </footer>
 
     <div id="settings-drawer">
         <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-weight:600;font-size:15px">Settings</span>
-            <button id="drawer-close" class="btn-icon">✕</button>
+            <button id="drawer-close" class="btn-icon" aria-label="Close settings">✕</button>
         </div>
         <div class="drawer-section">
             <span class="drawer-label">Target Language</span>
-            <select id="drawer-target-select" class="drawer-select"></select>
+            <select id="drawer-target-select" class="drawer-select" aria-label="Target language"></select>
             <span id="drawer-lang-error" class="export-error hidden"></span>
         </div>
         <div class="drawer-section">
             <span class="drawer-label">Source Text</span>
-            <button id="source-toggle" class="btn-icon active" title="Toggle source text">Src</button>
+            <button id="source-toggle" class="btn-icon active" title="Toggle source text" aria-label="Toggle source text">Src</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:0">
         <div class="drawer-section">
             <span class="drawer-label">Audio Readback</span>
             <div style="display:flex;align-items:center;justify-content:space-between">
                 <span style="font-size:14px;color:var(--text-primary)">Read captions aloud</span>
-                <button id="tts-drawer-toggle" class="btn-icon active" title="Mute TTS">🔊</button>
+                <button id="tts-drawer-toggle" class="btn-icon active" title="Mute TTS" aria-label="Mute translated speech">🔊</button>
             </div>
         </div>
     </div>

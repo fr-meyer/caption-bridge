@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
 from app.languages import is_valid_target_language
+from app.reliability import ReliabilityTracker, write_session_record
 
 if TYPE_CHECKING:
     from app.journal import SessionJournal
@@ -187,6 +189,7 @@ class SessionManager:
         self._dispatcher: TranslationDispatcher | None = None
         self._tts_dispatcher: TTSDispatcher | None = None
         self._journal: SessionJournal | None = None
+        self._reliability = ReliabilityTracker()
 
     def set_dispatcher(self, dispatcher: TranslationDispatcher) -> None:
         self._dispatcher = dispatcher
@@ -217,6 +220,7 @@ class SessionManager:
         payload: dict[str, Any] = {"type": event_type}
         if data:
             payload.update(data)
+        self._reliability.observe_event(payload)
         for listener in list(self._listeners):
             try:
                 listener(payload)
@@ -233,9 +237,65 @@ class SessionManager:
         except ValueError:
             pass
 
+    def record_audio_queue(self, depth: int, dropped: int) -> None:
+        self._reliability.record_audio_queue(depth, dropped)
+
+    def record_websocket_queue(
+        self,
+        depth: int,
+        *,
+        dropped: int = 0,
+        coalesced: int = 0,
+        critical_drops: int = 0,
+    ) -> None:
+        self._reliability.record_websocket_queue(
+            depth,
+            dropped=dropped,
+            coalesced=coalesced,
+            critical_drops=critical_drops,
+        )
+
+    def record_tts_queue(self, depth: int) -> None:
+        self._reliability.record_tts_queue(depth)
+
+    def observe_speech_pcm(self, chunk: bytes) -> None:
+        self._reliability.latency.observe_pcm16(chunk)
+
+    def observe_render_ack(self, seq: int) -> None:
+        self._reliability.latency.observe_render_ack(seq)
+
+    def observe_tts_playback_start(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_playback_start(seq)
+
+    def observe_tts_playback_complete(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_playback_complete(seq)
+
+    def observe_tts_queue_wait(self, seq: int, duration_s: float) -> None:
+        self._reliability.latency.observe_tts_queue_wait(seq, duration_s)
+
+    def observe_tts_synth_start(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_synth_start(seq)
+
+    def observe_tts_first_audio(self, seq: int) -> None:
+        self._reliability.latency.observe_tts_first_audio(seq)
+
+    def note_browser_replacement(self) -> None:
+        self._reliability.latency.mark_browser_replacement()
+
+    def _write_reliability_record(self) -> None:
+        try:
+            record = self._reliability.build_session_record(self.session)
+            write_session_record(Path(self.config.reliability_dir), record)
+        except Exception as exc:
+            logger.error(
+                "Reliability record write failed: error_type=%s", type(exc).__name__
+            )
+
     # -- partial / segment --------------------------------------------------
 
     def update_partial(self, text: str) -> None:
+        if text:
+            self._reliability.latency.observe_first_partial()
         self.session.source_partial = text
         self._emit("source_partial", {"text": text})
 
@@ -252,6 +312,7 @@ class SessionManager:
             self._journal.record_segment_created(seg)
         self.session.source_partial = ""
         logger.info("Finalized segment: seq=%d chars=%d", seg.seq, len(text))
+        self._reliability.latency.observe_final_source(seg.seq)
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -271,6 +332,7 @@ class SessionManager:
         logger.info(
             "Finalized reconnect fragment: seq=%d chars=%d", seg.seq, len(text)
         )
+        self._reliability.latency.observe_final_source(seg.seq, reconnect=True)
         self._emit("source_partial", {"text": ""})
         self._dispatch_translation(seg)
         self._try_deliver()
@@ -280,6 +342,7 @@ class SessionManager:
             return
         n = self.config.translation_context_segments
         context = self.session.segments[-(n + 1):-1]
+        self._reliability.latency.observe_translation_dispatch(seg.seq)
         self._dispatcher.dispatch(seg, context, self.session.id, seg.target_language)
 
     # -- translation marks (dormant in this ticket) -------------------------
@@ -314,6 +377,13 @@ class SessionManager:
         seg.translation_status = "done"
         seg.translated_at = _utcnow()
         seg.quality = quality
+        repaired = bool(
+            quality is not None
+            and (quality.repair_attempts or quality.repair_succeeded)
+        )
+        self._reliability.latency.observe_translation_complete(
+            seq, repaired=repaired
+        )
         if self._journal is not None:
             self._journal.record_translation_updated(seg)
         self._try_deliver()
@@ -383,11 +453,13 @@ class SessionManager:
                     "segment_kind": seg.segment_kind,
                 },
             )
+            self._reliability.latency.observe_render_dispatch(seg.seq)
             if (
                 self._tts_dispatcher is not None
                 and self.config.tts_enabled
                 and seg.translation_status == "done"
             ):
+                self._reliability.latency.observe_tts_request(seg.seq)
                 self._tts_dispatcher.enqueue_live(seg)
 
     # -- status transitions -------------------------------------------------
@@ -401,6 +473,10 @@ class SessionManager:
             return
 
         self.session.status = status
+        if status == "reconnecting":
+            self._reliability.latency.mark_reconnect_period(True)
+        elif status == "listening":
+            self._reliability.latency.mark_reconnect_period(False)
 
         if status == "listening" and self.session.started_at is None:
             self.session.started_at = _utcnow()
@@ -449,26 +525,35 @@ class SessionManager:
         try:
             path = export_session(self.session, self.config, recovery=False)
         except Exception as exc:
+            self._reliability.set_export_outcome("failed")
             self.session.export_failure = ExportFailure(error=str(exc))
+            self._write_reliability_record()
             return {"success": False, "path": None, "error": str(exc)}
         self.session.exported = True
         self.session.export_path = path
         self.session.export_failure = None
+        self._reliability.set_export_outcome("succeeded")
         if self._journal is not None:
             self._journal.record_session_exported(path)
+        self._write_reliability_record()
         return {"success": True, "path": path, "error": None}
 
     # -- reset --------------------------------------------------------------
 
     async def reset(self, *, emit_snapshot: bool = True) -> None:
-        if not self.session.exported and self._journal is not None:
+        should_record_discard = not self.session.exported
+        if should_record_discard and self._journal is not None:
             self._journal.record_session_discarded()
         self._cancel_elapsed_ticker()
         self._cancel_grace_task()
         if self._tts_dispatcher is not None:
             await self._tts_dispatcher.drain()
+        if should_record_discard:
+            self._reliability.set_export_outcome("discarded")
+            self._write_reliability_record()
         self.session = self._new_session()
         self._journal = None
+        self._reliability = ReliabilityTracker()
         if emit_snapshot:
             self._emit("session_snapshot", self.get_snapshot())
 
@@ -506,6 +591,7 @@ class SessionManager:
                 "reconnect": get_reconnect_metrics(),
                 "outbound_websocket": get_ws_metrics(),
                 "translation_quality": _compute_quality_summary(s),
+                "session_reliability": self._reliability.snapshot(),
             },
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         }

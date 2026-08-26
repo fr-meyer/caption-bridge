@@ -789,3 +789,25 @@ body[data-state="reconnecting"] #audio-enable-banner,
 body[data-state="session_ended"] #audio-enable-banner {
     display: flex;
 }
+
+.build-identity {
+    margin-left: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+button:focus-visible,
+select:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+}
