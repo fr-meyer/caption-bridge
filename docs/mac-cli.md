@@ -15,7 +15,7 @@ optional endurance only.
 3. Install PortAudio (`brew install portaudio`) and `uv` 0.12.x.
 4. Run `uv sync --frozen` so the repository-local `.venv` exists.
 5. Confirm identity: `make identity`.
-6. Run software preflight: `python3 -m scripts.runtime_preflight --software`.
+6. Run software preflight: `make preflight`.
 7. Start on demand with `make ctl-start`, then open `http://127.0.0.1:8765`.
 
 Microphone and TCC ownership stay on the Mac process that opens the input.
