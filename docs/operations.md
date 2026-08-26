@@ -31,9 +31,9 @@ The GCP host can run unit, lint, syntax, and server-startup checks. It cannot pe
 Use [`mac-acceptance.md`](mac-acceptance.md) for the complete content-free
 candidate-release checklist.
 
-Use [`mac-soak.md`](mac-soak.md) for the exact-candidate continuous two-hour
-gate, including the checkpoint schedule, aggregate-only evidence form, and hard
-abort/rerun rules.
+Use [`mac-cli.md`](mac-cli.md) for supported install, upgrade, rollback,
+uninstall, and the content-free support bundle. Use [`mac-soak.md`](mac-soak.md)
+only for optional two-hour endurance evidence.
 
 ## Safe on-demand lifecycle
 
