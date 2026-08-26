@@ -38,6 +38,8 @@ def evaluate(*, mode: str = "full") -> tuple[dict[str, Any], int]:
         from app.readiness import _check_mic_available, _check_mic_permission
     except ModuleNotFoundError:
         return {**base, "ok": False, "reason": "venv_incomplete"}, 2
+    except Exception:
+        return {**base, "ok": False, "reason": "invalid_configuration"}, 2
 
     if not _check_mic_available().ready:
         return {**base, "ok": False, "reason": "microphone_unavailable"}, 2

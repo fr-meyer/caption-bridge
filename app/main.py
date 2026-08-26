@@ -341,7 +341,7 @@ async def healthz() -> dict[str, str]:
 @app.get("/version")
 async def version() -> dict[str, object]:
     """Content-free package and checkout identity."""
-    return runtime_identity()
+    return await asyncio.to_thread(runtime_identity)
 
 @app.get("/favicon.ico", include_in_schema=False, status_code=204)
 async def favicon() -> None:

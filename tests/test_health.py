@@ -46,3 +46,11 @@ def test_browser_assets_are_not_cached() -> None:
         response = asyncio.run(request(path))
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+
+def test_version_route_offloads_blocking_identity() -> None:
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(encoding="utf-8")
+    assert "await asyncio.to_thread(runtime_identity)" in source
