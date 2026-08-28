@@ -157,6 +157,17 @@ def test_execute_uses_private_command_lock(harness: Harness) -> None:
     assert os.stat(lock_path).st_mode & 0o777 == 0o600
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows lock-byte initialization only")
+def test_windows_command_lock_initializes_empty_file(harness: Harness) -> None:
+    lock_path = harness.paths.state.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch()
+
+    assert lock_path.stat().st_size == 0
+    assert harness.execute("status").status == "stopped"
+    assert lock_path.read_bytes() == b"\0"
+
+
 def test_command_lock_blocks_competing_process(harness: Harness) -> None:
     script = "\n".join(
         (
