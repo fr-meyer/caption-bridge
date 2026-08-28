@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -147,10 +150,42 @@ def test_repeated_stop_is_idempotent(harness: Harness) -> None:
     assert harness.signals == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are unavailable")
 def test_execute_uses_private_command_lock(harness: Harness) -> None:
     assert harness.execute("status").status == "stopped"
     lock_path = harness.paths.state.with_suffix(".lock")
     assert os.stat(lock_path).st_mode & 0o777 == 0o600
+
+
+def test_command_lock_blocks_competing_process(harness: Harness) -> None:
+    script = "\n".join(
+        (
+            "from pathlib import Path",
+            "from app.lifecycle import LifecycleController, RuntimePaths",
+            f"controller = LifecycleController(Path({str(harness.repo_root)!r}), "
+            f"paths=RuntimePaths(state=Path({str(harness.paths.state)!r}), "
+            f"log=Path({str(harness.paths.log)!r})))",
+            "print(\"ready\", flush=True)",
+            "with controller._command_lock():",
+            "    print(\"locked\", flush=True)",
+        )
+    )
+    with harness._command_lock():
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "ready"
+        time.sleep(0.2)
+        assert process.poll() is None
+
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "locked"
 
 
 def test_stale_pid_never_signals_process(harness: Harness) -> None:
@@ -260,6 +295,7 @@ def test_occupied_port_is_distinct(harness: Harness) -> None:
     assert harness.spawn_count == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are unavailable")
 def test_runtime_state_and_log_are_private(harness: Harness) -> None:
     result = harness.start()
 

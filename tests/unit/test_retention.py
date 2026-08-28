@@ -106,6 +106,7 @@ def test_recent_artifacts_are_preserved(tmp_path: Path) -> None:
     assert archived_journal.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation needs an optional Windows capability")
 def test_partial_unknown_and_symlinked_exports_fail_closed(tmp_path: Path) -> None:
     export_root = tmp_path / "runs"
     journal_root = export_root / ".journal"
