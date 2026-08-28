@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
@@ -29,6 +30,18 @@ DEFAULT_PORT = 8765
 _REQUIRED_ENV_KEY = re.compile(
     r"^\s*(?:export\s+)?MISTRAL_API_KEY\s*=\s*(.*?)\s*$"
 )
+_WINDOWS_LOCK_RETRY_INTERVAL_SECONDS = 0.1
+
+
+def _acquire_windows_lock(fd: int) -> None:
+    while True:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EACCES:
+                raise
+            time.sleep(_WINDOWS_LOCK_RETRY_INTERVAL_SECONDS)
 
 
 class ExitCode(IntEnum):
@@ -200,7 +213,7 @@ class LifecycleController:
                     handle.write("\0")
                     handle.flush()
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                _acquire_windows_lock(handle.fileno())
             else:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:

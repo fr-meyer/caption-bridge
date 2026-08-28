@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
@@ -7,10 +8,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import app.lifecycle as lifecycle
 from app.lifecycle import (
     LOOPBACK_HOST,
     ExitCode,
@@ -166,6 +169,44 @@ def test_windows_command_lock_initializes_empty_file(harness: Harness) -> None:
     assert lock_path.stat().st_size == 0
     assert harness.execute("status").status == "stopped"
     assert lock_path.read_bytes() == b"\0"
+
+
+def test_windows_command_lock_retries_contention_until_acquired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def locking(fd: int, mode: int, nbytes: int) -> None:
+        nonlocal attempts
+        attempts += 1
+        assert (fd, mode, nbytes) == (123, 1, 1)
+        if attempts <= 11:
+            raise OSError(errno.EACCES, "lock contention")
+
+    fake_msvcrt = SimpleNamespace(LK_NBLCK=1, locking=locking)
+    monkeypatch.setattr(lifecycle, "msvcrt", fake_msvcrt, raising=False)
+    monkeypatch.setattr(lifecycle.time, "sleep", sleeps.append)
+
+    lifecycle._acquire_windows_lock(123)
+
+    assert attempts == 12
+    assert sleeps == [0.1] * 11
+
+
+def test_windows_command_lock_propagates_non_contention_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def locking(fd: int, mode: int, nbytes: int) -> None:
+        raise OSError(errno.EBADF, "invalid descriptor")
+
+    fake_msvcrt = SimpleNamespace(LK_NBLCK=1, locking=locking)
+    monkeypatch.setattr(lifecycle, "msvcrt", fake_msvcrt, raising=False)
+
+    with pytest.raises(OSError) as exc_info:
+        lifecycle._acquire_windows_lock(123)
+
+    assert exc_info.value.errno == errno.EBADF
 
 
 def test_command_lock_blocks_competing_process(harness: Harness) -> None:
