@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-import fcntl
+import errno
 import json
 import os
 import platform
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 import re
 import shlex
 import signal
@@ -25,6 +30,18 @@ DEFAULT_PORT = 8765
 _REQUIRED_ENV_KEY = re.compile(
     r"^\s*(?:export\s+)?MISTRAL_API_KEY\s*=\s*(.*?)\s*$"
 )
+_WINDOWS_LOCK_RETRY_INTERVAL_SECONDS = 0.1
+
+
+def _acquire_windows_lock(fd: int) -> None:
+    while True:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EACCES:
+                raise
+            time.sleep(_WINDOWS_LOCK_RETRY_INTERVAL_SECONDS)
 
 
 class ExitCode(IntEnum):
@@ -191,11 +208,22 @@ class LifecycleController:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         with os.fdopen(fd, "r+", encoding="utf-8") as handle:
             os.chmod(lock_path, 0o600)
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            if os.name == "nt":
+                if os.fstat(handle.fileno()).st_size == 0:
+                    handle.write("\0")
+                    handle.flush()
+                handle.seek(0)
+                _acquire_windows_lock(handle.fileno())
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield
             finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                if os.name == "nt":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def execute(self, command: str) -> ControlResult:
         if command not in {"start", "status", "stop"}:
