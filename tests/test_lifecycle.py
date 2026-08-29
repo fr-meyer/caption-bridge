@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import app.lifecycle as lifecycle
 from app.lifecycle import (
     LOOPBACK_HOST,
     ExitCode,
@@ -147,10 +153,91 @@ def test_repeated_stop_is_idempotent(harness: Harness) -> None:
     assert harness.signals == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are unavailable")
 def test_execute_uses_private_command_lock(harness: Harness) -> None:
     assert harness.execute("status").status == "stopped"
     lock_path = harness.paths.state.with_suffix(".lock")
     assert os.stat(lock_path).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows lock-byte initialization only")
+def test_windows_command_lock_initializes_empty_file(harness: Harness) -> None:
+    lock_path = harness.paths.state.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch()
+
+    assert lock_path.stat().st_size == 0
+    assert harness.execute("status").status == "stopped"
+    assert lock_path.read_bytes() == b"\0"
+
+
+def test_windows_command_lock_retries_contention_until_acquired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def locking(fd: int, mode: int, nbytes: int) -> None:
+        nonlocal attempts
+        attempts += 1
+        assert (fd, mode, nbytes) == (123, 1, 1)
+        if attempts <= 11:
+            raise OSError(errno.EACCES, "lock contention")
+
+    fake_msvcrt = SimpleNamespace(LK_NBLCK=1, locking=locking)
+    monkeypatch.setattr(lifecycle, "msvcrt", fake_msvcrt, raising=False)
+    monkeypatch.setattr(lifecycle.time, "sleep", sleeps.append)
+
+    lifecycle._acquire_windows_lock(123)
+
+    assert attempts == 12
+    assert sleeps == [0.1] * 11
+
+
+def test_windows_command_lock_propagates_non_contention_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def locking(fd: int, mode: int, nbytes: int) -> None:
+        raise OSError(errno.EBADF, "invalid descriptor")
+
+    fake_msvcrt = SimpleNamespace(LK_NBLCK=1, locking=locking)
+    monkeypatch.setattr(lifecycle, "msvcrt", fake_msvcrt, raising=False)
+
+    with pytest.raises(OSError) as exc_info:
+        lifecycle._acquire_windows_lock(123)
+
+    assert exc_info.value.errno == errno.EBADF
+
+
+def test_command_lock_blocks_competing_process(harness: Harness) -> None:
+    script = "\n".join(
+        (
+            "from pathlib import Path",
+            "from app.lifecycle import LifecycleController, RuntimePaths",
+            f"controller = LifecycleController(Path({str(harness.repo_root)!r}), "
+            f"paths=RuntimePaths(state=Path({str(harness.paths.state)!r}), "
+            f"log=Path({str(harness.paths.log)!r})))",
+            "print(\"ready\", flush=True)",
+            "with controller._command_lock():",
+            "    print(\"locked\", flush=True)",
+        )
+    )
+    with harness._command_lock():
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "ready"
+        time.sleep(0.2)
+        assert process.poll() is None
+
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "locked"
 
 
 def test_stale_pid_never_signals_process(harness: Harness) -> None:
@@ -260,6 +347,7 @@ def test_occupied_port_is_distinct(harness: Harness) -> None:
     assert harness.spawn_count == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are unavailable")
 def test_runtime_state_and_log_are_private(harness: Harness) -> None:
     result = harness.start()
 
