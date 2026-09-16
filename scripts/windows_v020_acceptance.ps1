@@ -148,6 +148,8 @@ try {
         $env:RECOVERY_EXPORT_DIR = Join-Path $runtimeRoot 'recovered'
         $env:RELIABILITY_DIR = Join-Path $runtimeRoot 'reliability'
         $env:EXPORT_DIR = Join-Path $runtimeRoot 'exports'
+        $env:NO_PROXY = '127.0.0.1,localhost,::1'
+        $env:no_proxy = $env:NO_PROXY
 
         $currentStage = 'loopback-server-health'
         $server = Start-Process -FilePath $python -ArgumentList @(
@@ -190,6 +192,7 @@ try {
             "--remote-debugging-port=$CdpPort",
             "--user-data-dir=$profileRoot",
             '--no-first-run',
+            '--no-proxy-server',
             '--disable-background-networking',
             '--disable-default-apps',
             '--disable-sync',

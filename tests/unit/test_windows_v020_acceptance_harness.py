@@ -25,6 +25,14 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
         self.assertIn("failed at stage '$failureStage'", source)
         self.assertIn("content-bearing diagnostics are intentionally suppressed", source)
 
+    def test_loopback_browser_gate_bypasses_hosted_runner_proxies(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("$env:NO_PROXY = '127.0.0.1,localhost,::1'", source)
+        self.assertIn("$env:no_proxy = $env:NO_PROXY", source)
+        self.assertIn("'--no-proxy-server'", source)
+        self.assertLess(source.index("$env:NO_PROXY"), source.index("$currentStage = 'public-dom-gate'"))
+
     def test_listener_cleanup_handles_zero_results_under_strict_mode(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
 
