@@ -200,6 +200,7 @@ try {
         ) -RedirectStandardOutput $browserOut -RedirectStandardError $browserErr -WindowStyle Hidden -PassThru
 
         $cdpReady = $false
+        $cdpWebSocketUrl = $null
         $cdpDeadline = [DateTime]::UtcNow.AddSeconds(30)
         while ([DateTime]::UtcNow -lt $cdpDeadline) {
             if ($browser.HasExited) {
@@ -208,15 +209,27 @@ try {
             try {
                 $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$CdpPort/json/version" -TimeoutSec 1
                 if ($response.StatusCode -eq 200) {
-                    $cdpReady = $true
-                    break
+                    $cdpMetadata = $response.Content | ConvertFrom-Json
+                    $candidateWebSocketUrl = [string]$cdpMetadata.webSocketDebuggerUrl
+                    if (-not [string]::IsNullOrWhiteSpace($candidateWebSocketUrl)) {
+                        $candidateWebSocketUri = [Uri]$candidateWebSocketUrl
+                        if (
+                            $candidateWebSocketUri.Scheme -eq 'ws' -and
+                            $candidateWebSocketUri.Host -in @('127.0.0.1', 'localhost', '::1') -and
+                            $candidateWebSocketUri.Port -eq $CdpPort
+                        ) {
+                            $cdpWebSocketUrl = $candidateWebSocketUrl
+                            $cdpReady = $true
+                            break
+                        }
+                    }
                 }
             }
             catch {
                 Start-Sleep -Milliseconds 200
             }
         }
-        if (-not $cdpReady) {
+        if (-not $cdpReady -or [string]::IsNullOrWhiteSpace($cdpWebSocketUrl)) {
             throw 'The loopback-only Chromium CDP gate did not become ready.'
         }
 
@@ -269,7 +282,7 @@ with sync_playwright() as playwright:
             [Environment]::SetEnvironmentVariable($proxyName, $null, 'Process')
         }
         try {
-            Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" "http://127.0.0.1:$CdpPort"
+            Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" $cdpWebSocketUrl
         }
         finally {
             foreach ($proxyName in $proxyVariables) {

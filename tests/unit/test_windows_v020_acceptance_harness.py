@@ -34,6 +34,10 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
         self.assertIn("$proxyVariables = @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')", source)
         self.assertIn("SetEnvironmentVariable($proxyName, $null, 'Process')", source)
         self.assertIn("SetEnvironmentVariable($proxyName, $proxyValues[$proxyName], 'Process')", source)
+        self.assertIn("$cdpMetadata.webSocketDebuggerUrl", source)
+        self.assertIn("$candidateWebSocketUri.Host -in @('127.0.0.1', 'localhost', '::1')", source)
+        self.assertIn("$candidateWebSocketUri.Port -eq $CdpPort", source)
+        self.assertIn("$python $gateScript \"http://127.0.0.1:$AppPort/\" $cdpWebSocketUrl", source)
         self.assertLess(source.index("$env:NO_PROXY"), source.index("$currentStage = 'public-dom-gate'"))
 
     def test_listener_cleanup_handles_zero_results_under_strict_mode(self) -> None:
