@@ -83,6 +83,8 @@ $server = $null
 $browser = $null
 $gateFailed = $false
 $cleanupFailed = $false
+$currentStage = 'preflight'
+$failureStage = 'unknown'
 
 try {
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
@@ -96,9 +98,26 @@ try {
             throw 'The exact-release checkout is not clean.'
         }
 
+        $currentStage = 'install-python'
         Invoke-NativeGate uv python install 3.13
+        $currentStage = 'sync-locked-dependencies'
         Invoke-NativeGate uv sync --frozen --python 3.13
-        Invoke-NativeGate uv run --python 3.13 python -m scripts.runtime_preflight --software --json
+
+        $currentStage = 'provider-free-software-identity'
+        $identity = Invoke-NativeGate uv run --python 3.13 python -m app.identity --json |
+            Select-Object -Last 1 |
+            ConvertFrom-Json
+        if (
+            $identity.service -ne 'caption-bridge' -or
+            $identity.package_version -ne '0.2.0' -or
+            $identity.git_sha.ToLowerInvariant() -ne $ExpectedSha.ToLowerInvariant() -or
+            $identity.git_dirty -ne $false
+        ) {
+            throw 'Runtime identity does not match the immutable release.'
+        }
+        Write-Output '{"exact_release":true,"provider_configuration":false,"software_identity":true}'
+
+        $currentStage = 'deterministic-validation'
         Invoke-NativeGate uv run --python 3.13 ruff check .
         Invoke-NativeGate uv run --python 3.13 python -m scripts.benchmark_translation_quality --max-false-positive-rate 0.05 --min-recall 1.0 --require-exact-reasons
         Invoke-NativeGate uv run --python 3.13 python -m scripts.benchmark_segmentation --max-unexpected-standalone 0 --max-delayed-clear 0 --max-policy-delay-ms 4500 --json
@@ -106,9 +125,12 @@ try {
         Invoke-NativeGate uv run --python 3.13 python -m scripts.full_pipeline_scenario --json
         Invoke-NativeGate uv run --python 3.13 python -m pytest -q
         Invoke-NativeGate node --check app/static/app.js
+        $currentStage = 'install-managed-chromium'
         Invoke-NativeGate uv run --python 3.13 python -m playwright install chromium
+        $currentStage = 'browser-tests'
         Invoke-NativeGate uv run --python 3.13 python -m pytest -q browser_tests --browser chromium
 
+        $currentStage = 'controller-idle-preflight'
         $controllerStatus = Invoke-NativeGate uv run --python 3.13 python -m scripts.caption_bridge_ctl status --json | ConvertFrom-Json
         if ($controllerStatus.status -ne 'stopped' -or $controllerStatus.running -ne $false) {
             throw 'The clean Windows controller state is not stopped.'
@@ -127,6 +149,7 @@ try {
         $env:RELIABILITY_DIR = Join-Path $runtimeRoot 'reliability'
         $env:EXPORT_DIR = Join-Path $runtimeRoot 'exports'
 
+        $currentStage = 'loopback-server-health'
         $server = Start-Process -FilePath $python -ArgumentList @(
             '-m', 'uvicorn', 'app.main:app',
             '--host', '127.0.0.1',
@@ -160,6 +183,7 @@ try {
             throw 'The managed Chromium executable is unavailable.'
         }
 
+        $currentStage = 'loopback-browser-cdp'
         $browser = Start-Process -FilePath $browserPath -ArgumentList @(
             '--headless=new',
             '--remote-debugging-address=127.0.0.1',
@@ -234,6 +258,7 @@ with sync_playwright() as playwright:
     }, sort_keys=True))
 '@ | Set-Content -LiteralPath $gateScript -Encoding utf8
 
+        $currentStage = 'public-dom-gate'
         Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" "http://127.0.0.1:$CdpPort"
         Write-Output '{"exact_release":true,"windows_runtime":true,"loopback_only":true,"provider_calls":false,"public_dom_gate":true}'
     }
@@ -243,13 +268,14 @@ with sync_playwright() as playwright:
 }
 catch {
     $gateFailed = $true
+    $failureStage = $currentStage
 }
 finally {
     Stop-OwnedProcessTree -Process $browser
     Stop-OwnedProcessTree -Process $server
     Start-Sleep -Milliseconds 750
 
-    if ((Get-BoundListeners -Ports @($AppPort, $CdpPort)).Count -ne 0) {
+    if (@(Get-BoundListeners -Ports @($AppPort, $CdpPort)).Count -ne 0) {
         $cleanupFailed = $true
     }
 
@@ -270,6 +296,6 @@ if ($cleanupFailed) {
     throw 'Hosted Windows acceptance cleanup failed.'
 }
 if ($gateFailed) {
-    throw 'Hosted Windows acceptance failed; content-bearing diagnostics are intentionally suppressed.'
+    throw "Hosted Windows acceptance failed at stage '$failureStage'; content-bearing diagnostics are intentionally suppressed."
 }
 Write-Output '{"cleanup":true,"listeners_remaining":0,"temporary_profile_remaining":false}'
