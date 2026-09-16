@@ -251,27 +251,104 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
-from playwright.sync_api import sync_playwright
+from websockets.sync.client import connect
 
 app_url = sys.argv[1]
 cdp_url = sys.argv[2]
-with sync_playwright() as playwright:
-    browser = playwright.chromium.connect_over_cdp(cdp_url)
-    pages = [page for context in browser.contexts for page in context.pages]
-    page = next((candidate for candidate in pages if candidate.url.startswith(app_url)), None)
-    if page is None:
-        raise SystemExit('application page missing')
-    page.locator('#status-label').wait_for(state='visible', timeout=10_000)
-    page.locator('#start-btn').wait_for(state='visible', timeout=10_000)
-    page.locator('#gear-btn').wait_for(state='visible', timeout=10_000)
-    if not page.locator('#status-label').inner_text().strip():
-        raise SystemExit('public status is empty')
-    print(json.dumps({
-        'cdp_loopback': True,
-        'page_present': True,
-        'public_controls_present': True,
-    }, sort_keys=True))
+
+next_id = 0
+
+
+def call(socket, method, params=None, session_id=None):
+    global next_id
+    next_id += 1
+    payload = {'id': next_id, 'method': method}
+    if params is not None:
+        payload['params'] = params
+    if session_id is not None:
+        payload['sessionId'] = session_id
+    socket.send(json.dumps(payload, separators=(',', ':')))
+    while True:
+        response = json.loads(socket.recv(timeout=10))
+        if response.get('id') != next_id:
+            continue
+        if 'error' in response:
+            raise RuntimeError('CDP command failed')
+        return response.get('result', {})
+
+
+expression = r'''(() => {
+  const controls = ['status-label', 'start-btn', 'gear-btn'];
+  const visible = controls.every((id) => {
+    const element = document.getElementById(id);
+    if (!element) return false;
+    const style = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' &&
+      bounds.width > 0 && bounds.height > 0;
+  });
+  const status = document.getElementById('status-label');
+  return {visible, statusNonempty: Boolean(status && status.textContent.trim())};
+})()'''
+
+try:
+    with connect(
+        cdp_url,
+        proxy=None,
+        open_timeout=10,
+        close_timeout=2,
+        ping_interval=None,
+    ) as socket:
+        deadline = time.monotonic() + 10
+        target_id = None
+        while time.monotonic() < deadline:
+            targets = call(socket, 'Target.getTargets').get('targetInfos', [])
+            target_id = next((
+                target.get('targetId')
+                for target in targets
+                if target.get('type') == 'page' and
+                str(target.get('url', '')).startswith(app_url)
+            ), None)
+            if target_id is not None:
+                break
+            time.sleep(0.1)
+        if target_id is None:
+            raise RuntimeError('application page missing')
+
+        session_id = call(
+            socket,
+            'Target.attachToTarget',
+            {'targetId': target_id, 'flatten': True},
+        ).get('sessionId')
+        if not session_id:
+            raise RuntimeError('CDP target attach failed')
+
+        deadline = time.monotonic() + 10
+        gate_passed = False
+        while time.monotonic() < deadline:
+            evaluation = call(
+                socket,
+                'Runtime.evaluate',
+                {'expression': expression, 'returnByValue': True},
+                session_id,
+            )
+            value = evaluation.get('result', {}).get('value', {})
+            gate_passed = bool(value.get('visible') and value.get('statusNonempty'))
+            if gate_passed:
+                break
+            time.sleep(0.1)
+        if not gate_passed:
+            raise RuntimeError('public controls not ready')
+except Exception:
+    raise SystemExit('public DOM gate failed') from None
+
+print(json.dumps({
+    'cdp_loopback': True,
+    'page_present': True,
+    'public_controls_present': True,
+}, sort_keys=True))
 '@ | Set-Content -LiteralPath $gateScript -Encoding utf8
 
         $currentStage = 'public-dom-gate'
