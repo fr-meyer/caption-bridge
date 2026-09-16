@@ -31,6 +31,9 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
         self.assertIn("$env:NO_PROXY = '127.0.0.1,localhost,::1'", source)
         self.assertIn("$env:no_proxy = $env:NO_PROXY", source)
         self.assertIn("'--no-proxy-server'", source)
+        self.assertIn("$proxyVariables = @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')", source)
+        self.assertIn("SetEnvironmentVariable($proxyName, $null, 'Process')", source)
+        self.assertIn("SetEnvironmentVariable($proxyName, $proxyValues[$proxyName], 'Process')", source)
         self.assertLess(source.index("$env:NO_PROXY"), source.index("$currentStage = 'public-dom-gate'"))
 
     def test_listener_cleanup_handles_zero_results_under_strict_mode(self) -> None:

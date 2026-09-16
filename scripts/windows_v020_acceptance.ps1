@@ -262,7 +262,20 @@ with sync_playwright() as playwright:
 '@ | Set-Content -LiteralPath $gateScript -Encoding utf8
 
         $currentStage = 'public-dom-gate'
-        Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" "http://127.0.0.1:$CdpPort"
+        $proxyVariables = @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')
+        $proxyValues = @{}
+        foreach ($proxyName in $proxyVariables) {
+            $proxyValues[$proxyName] = [Environment]::GetEnvironmentVariable($proxyName, 'Process')
+            [Environment]::SetEnvironmentVariable($proxyName, $null, 'Process')
+        }
+        try {
+            Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" "http://127.0.0.1:$CdpPort"
+        }
+        finally {
+            foreach ($proxyName in $proxyVariables) {
+                [Environment]::SetEnvironmentVariable($proxyName, $proxyValues[$proxyName], 'Process')
+            }
+        }
         Write-Output '{"exact_release":true,"windows_runtime":true,"loopback_only":true,"provider_calls":false,"public_dom_gate":true}'
     }
     finally {
