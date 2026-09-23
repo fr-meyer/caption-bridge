@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import types
 import unittest
@@ -62,6 +63,50 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
         self.assertNotIn("connect_over_cdp", source)
         self.assertLess(source.index("$env:NO_PROXY"), source.index("$currentStage = 'public-dom-gate'"))
 
+    def test_public_dom_gate_checks_idle_controls(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        styles = (SCRIPT.parents[1] / "app/static/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("['status-label', 'start-btn', 'idle-target-select']", source)
+        self.assertIn("body.dataset.state", source)
+        self.assertIn("value.get('idleState')", source)
+        self.assertIn('body:not([data-state="listening"]):not([data-state="reconnecting"]) #gear-btn', styles)
+        self.assertNotIn("['status-label', 'start-btn', 'gear-btn']", source)
+
+        gate = embedded_dom_gate_source()
+        marker = "expression = r" + chr(39) * 3
+        expression_start = gate.index(marker) + len(marker)
+        expression_end = gate.index(chr(39) * 3, expression_start)
+        expression = gate[expression_start:expression_end]
+        fixture = """
+const ids = new Set(['status-label', 'start-btn', 'idle-target-select', 'gear-btn']);
+globalThis.document = {
+  body: {dataset: {state: 'idle_blocked'}},
+  getElementById(id) {
+    if (!ids.has(id)) return null;
+    return {
+      id,
+      textContent: id === 'status-label' ? 'Checking' : '',
+      getBoundingClientRect() { return {width: 100, height: 20}; },
+    };
+  },
+};
+globalThis.getComputedStyle = (element) => ({
+  display: element.id === 'gear-btn' ? 'none' : 'block',
+  visibility: 'visible',
+});
+"""
+        result = subprocess.run(
+            ["node", "-e", fixture + "console.log(JSON.stringify(eval(" + json.dumps(expression) + ")));"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"visible": True, "statusNonempty": True, "idleState": True},
+        )
+
     def test_listener_cleanup_handles_zero_results_under_strict_mode(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
 
@@ -99,7 +144,7 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
                 else:
                     result = {
                         "result": {
-                            "value": {"visible": True, "statusNonempty": True}
+                            "value": {"visible": True, "statusNonempty": True, "idleState": True}
                         }
                     }
                 self.responses.append(json.dumps({"id": request["id"], "result": result}))

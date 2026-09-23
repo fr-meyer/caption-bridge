@@ -280,7 +280,7 @@ def call(socket, method, params=None, session_id=None):
 
 
 expression = r'''(() => {
-  const controls = ['status-label', 'start-btn', 'gear-btn'];
+  const controls = ['status-label', 'start-btn', 'idle-target-select'];
   const visible = controls.every((id) => {
     const element = document.getElementById(id);
     if (!element) return false;
@@ -290,7 +290,8 @@ expression = r'''(() => {
       bounds.width > 0 && bounds.height > 0;
   });
   const status = document.getElementById('status-label');
-  return {visible, statusNonempty: Boolean(status && status.textContent.trim())};
+  const idleState = ['idle_blocked', 'idle_ready'].includes(document.body.dataset.state);
+  return {visible, statusNonempty: Boolean(status && status.textContent.trim()), idleState};
 })()'''
 
 try:
@@ -335,7 +336,7 @@ try:
                 session_id,
             )
             value = evaluation.get('result', {}).get('value', {})
-            gate_passed = bool(value.get('visible') and value.get('statusNonempty'))
+            gate_passed = bool(value.get('visible') and value.get('statusNonempty') and value.get('idleState'))
             if gate_passed:
                 break
             time.sleep(0.1)
