@@ -294,6 +294,12 @@ expression = r'''(() => {
   return {visible, statusNonempty: Boolean(status && status.textContent.trim()), idleState};
 })()'''
 
+phase = 'connect'
+target_id = None
+session_id = None
+evaluation_seen = False
+last_value = {}
+
 try:
     with connect(
         cdp_url,
@@ -302,8 +308,8 @@ try:
         close_timeout=2,
         ping_interval=None,
     ) as socket:
+        phase = 'target_lookup'
         deadline = time.monotonic() + 10
-        target_id = None
         while time.monotonic() < deadline:
             targets = call(socket, 'Target.getTargets').get('targetInfos', [])
             target_id = next((
@@ -318,6 +324,7 @@ try:
         if target_id is None:
             raise RuntimeError('application page missing')
 
+        phase = 'target_attach'
         session_id = call(
             socket,
             'Target.attachToTarget',
@@ -326,6 +333,7 @@ try:
         if not session_id:
             raise RuntimeError('CDP target attach failed')
 
+        phase = 'evaluate'
         deadline = time.monotonic() + 10
         gate_passed = False
         while time.monotonic() < deadline:
@@ -336,13 +344,26 @@ try:
                 session_id,
             )
             value = evaluation.get('result', {}).get('value', {})
-            gate_passed = bool(value.get('visible') and value.get('statusNonempty') and value.get('idleState'))
+            evaluation_seen = True
+            last_value = value if isinstance(value, dict) else {}
+            gate_passed = bool(last_value.get('visible') and last_value.get('statusNonempty') and last_value.get('idleState'))
             if gate_passed:
                 break
             time.sleep(0.1)
         if not gate_passed:
+            phase = 'controls_timeout'
             raise RuntimeError('public controls not ready')
 except Exception:
+    print(json.dumps({
+        'public_dom_gate': 'failed',
+        'phase': phase,
+        'target_found': bool(target_id),
+        'session_attached': bool(session_id),
+        'evaluation_seen': evaluation_seen,
+        'visible': bool(last_value.get('visible')),
+        'status_nonempty': bool(last_value.get('statusNonempty')),
+        'idle_state': bool(last_value.get('idleState')),
+    }, sort_keys=True), file=sys.stderr)
     raise SystemExit('public DOM gate failed') from None
 
 print(json.dumps({

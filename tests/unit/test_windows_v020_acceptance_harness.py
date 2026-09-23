@@ -107,6 +107,52 @@ globalThis.getComputedStyle = (element) => ({
             {"visible": True, "statusNonempty": True, "idleState": True},
         )
 
+    def test_raw_cdp_failure_reports_only_bounded_state(self) -> None:
+        def fail_connect(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("PRIVATE_PROVIDER_BODY")
+
+        websockets = types.ModuleType("websockets")
+        sync = types.ModuleType("websockets.sync")
+        client = types.ModuleType("websockets.sync.client")
+        client.connect = fail_connect  # type: ignore[attr-defined]
+        sync.client = client  # type: ignore[attr-defined]
+        websockets.sync = sync  # type: ignore[attr-defined]
+
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {
+                    "websockets": websockets,
+                    "websockets.sync": sync,
+                    "websockets.sync.client": client,
+                },
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["dom_gate.py", "http://127.0.0.1:8765/", "ws://127.0.0.1:9229/test"],
+            ),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit),
+        ):
+            exec(compile(embedded_dom_gate_source(), "dom_gate.py", "exec"), {})
+
+        self.assertEqual(
+            json.loads(stderr.getvalue()),
+            {
+                "public_dom_gate": "failed",
+                "phase": "connect",
+                "target_found": False,
+                "session_attached": False,
+                "evaluation_seen": False,
+                "visible": False,
+                "status_nonempty": False,
+                "idle_state": False,
+            },
+        )
+        self.assertNotIn("PRIVATE_PROVIDER_BODY", stderr.getvalue())
+
     def test_listener_cleanup_handles_zero_results_under_strict_mode(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
 
