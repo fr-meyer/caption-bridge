@@ -290,14 +290,20 @@ expression = r'''(() => {
       bounds.width > 0 && bounds.height > 0;
   });
   const status = document.getElementById('status-label');
-  const idleState = ['idle_blocked', 'idle_ready'].includes(document.body.dataset.state);
-  return {visible, statusNonempty: Boolean(status && status.textContent.trim()), idleState};
+  const body = document.body;
+  const idleState = Boolean(body && ['idle_blocked', 'idle_ready'].includes(body.dataset.state));
+  return {
+    visible, statusNonempty: Boolean(status && status.textContent.trim()), idleState,
+    bodyPresent: Boolean(body), documentComplete: document.readyState === 'complete',
+    loopbackPage: location.protocol === 'http:' && location.hostname === '127.0.0.1',
+  };
 })()'''
 
 phase = 'connect'
 target_id = None
 session_id = None
 evaluation_seen = False
+evaluation_exception = False
 last_value = {}
 
 try:
@@ -345,6 +351,7 @@ try:
             )
             value = evaluation.get('result', {}).get('value', {})
             evaluation_seen = True
+            evaluation_exception = evaluation_exception or bool(evaluation.get('exceptionDetails'))
             last_value = value if isinstance(value, dict) else {}
             gate_passed = bool(last_value.get('visible') and last_value.get('statusNonempty') and last_value.get('idleState'))
             if gate_passed:
@@ -360,6 +367,10 @@ except Exception:
         'target_found': bool(target_id),
         'session_attached': bool(session_id),
         'evaluation_seen': evaluation_seen,
+        'evaluation_exception': evaluation_exception,
+        'body_present': bool(last_value.get('bodyPresent')),
+        'document_complete': bool(last_value.get('documentComplete')),
+        'loopback_page': bool(last_value.get('loopbackPage')),
         'visible': bool(last_value.get('visible')),
         'status_nonempty': bool(last_value.get('statusNonempty')),
         'idle_state': bool(last_value.get('idleState')),

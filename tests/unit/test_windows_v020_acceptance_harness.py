@@ -82,6 +82,7 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
 const ids = new Set(['status-label', 'start-btn', 'idle-target-select', 'gear-btn']);
 globalThis.document = {
   body: {dataset: {state: 'idle_blocked'}},
+  readyState: 'complete',
   getElementById(id) {
     if (!ids.has(id)) return null;
     return {
@@ -91,6 +92,7 @@ globalThis.document = {
     };
   },
 };
+globalThis.location = {protocol: 'http:', hostname: '127.0.0.1'};
 globalThis.getComputedStyle = (element) => ({
   display: element.id === 'gear-btn' ? 'none' : 'block',
   visibility: 'visible',
@@ -104,7 +106,14 @@ globalThis.getComputedStyle = (element) => ({
         )
         self.assertEqual(
             json.loads(result.stdout),
-            {"visible": True, "statusNonempty": True, "idleState": True},
+            {
+                "visible": True,
+                "statusNonempty": True,
+                "idleState": True,
+                "bodyPresent": True,
+                "documentComplete": True,
+                "loopbackPage": True,
+            },
         )
 
     def test_raw_cdp_failure_reports_only_bounded_state(self) -> None:
@@ -146,6 +155,10 @@ globalThis.getComputedStyle = (element) => ({
                 "target_found": False,
                 "session_attached": False,
                 "evaluation_seen": False,
+                "evaluation_exception": False,
+                "body_present": False,
+                "document_complete": False,
+                "loopback_page": False,
                 "visible": False,
                 "status_nonempty": False,
                 "idle_state": False,
