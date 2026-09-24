@@ -209,6 +209,29 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 - Do not schedule retention with cron or a LaunchAgent until the Mac lifecycle and
   operator policy are separately reviewed and approved.
 
+## Dependency review cadence
+
+Once a month, and again before a release, run this from an isolated GCP checkout:
+
+```bash
+uv sync --frozen
+make dependency-audit
+```
+
+The audit checks the locked Python dependencies against OSV for the supported
+Linux, macOS, and Windows Python targets. It requires network access and leaves
+`uv.lock` unchanged, so it is separate from the deterministic `make check` gate.
+Record the date, audited lockfile commit, package count, advisory IDs, and
+resolution in the project workboard. A zero-finding result is a point-in-time
+check, not a guarantee against later disclosures.
+
+Review direct dependencies and the pinned GitHub Actions revisions at the same
+cadence. Make any lockfile or action update on an isolated `agent/*` branch,
+then run `make check` and `make browser-e2e` on GCP. Require CI and an exact-head
+review before merging to `dev`; release promotion remains a separate decision.
+Do not put credentials, provider responses, captions, or transcript content in
+audit evidence.
+
 ## Release procedure
 
 1. Develop and validate on a GCP `agent/*` or feature branch.
