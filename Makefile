@@ -69,8 +69,13 @@ browser-e2e:
 
 dependency-audit:
 	$(UV) audit --frozen --python-version 3.11 --python-platform linux
+	$(UV) audit --frozen --python-version 3.12 --python-platform linux
 	$(UV) audit --frozen --python-version 3.13 --python-platform linux
 	$(UV) audit --frozen --python-version 3.11 --python-platform macos
+	$(UV) audit --frozen --python-version 3.12 --python-platform macos
+	$(UV) audit --frozen --python-version 3.13 --python-platform macos
+	$(UV) audit --frozen --python-version 3.11 --python-platform windows
+	$(UV) audit --frozen --python-version 3.12 --python-platform windows
 	$(UV) audit --frozen --python-version 3.13 --python-platform windows
 
 .PHONY: reliability-report

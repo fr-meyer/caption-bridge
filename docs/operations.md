@@ -218,8 +218,11 @@ uv sync --frozen
 make dependency-audit
 ```
 
-The audit checks the locked Python dependencies against OSV for the supported
-Linux, macOS, and Windows Python targets. It requires network access and leaves
+The audit checks the locked Python dependencies against OSV for every
+Python/platform combination allowed by `requires-python >=3.11,<3.14`:
+Python 3.11, 3.12, and 3.13 on Linux, macOS, and Windows. This checks
+dependency metadata; CI separately executes the application on its configured
+Python versions. The audit requires network access and leaves
 `uv.lock` unchanged, so it is separate from the deterministic `make check` gate.
 Record the date, audited lockfile commit, package count, advisory IDs, and
 resolution in the project workboard. A zero-finding result is a point-in-time
