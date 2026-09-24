@@ -180,6 +180,12 @@ try {
             throw 'The exact-release loopback health gate did not pass.'
         }
 
+        $currentStage = 'loopback-root-http'
+        $rootResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$AppPort/" -TimeoutSec 5
+        if ($rootResponse.StatusCode -ne 200) {
+            throw 'The exact-release application root did not return HTTP 200.'
+        }
+
         $browserPath = (& $python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()" | Select-Object -Last 1).Trim()
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $browserPath -PathType Leaf)) {
             throw 'The managed Chromium executable is unavailable.'
@@ -302,6 +308,7 @@ expression = r'''(() => {
 phase = 'connect'
 target_id = None
 session_id = None
+navigation_error = 'none'
 evaluation_seen = False
 evaluation_exception = False
 last_value = {}
@@ -339,6 +346,19 @@ try:
         if not session_id:
             raise RuntimeError('CDP target attach failed')
 
+        phase = 'navigate'
+        navigation = call(socket, 'Page.navigate', {'url': app_url}, session_id)
+        raw_navigation_error = str(navigation.get('errorText', ''))
+        if raw_navigation_error:
+            navigation_error = {
+                'net::ERR_CONNECTION_REFUSED': 'connection_refused',
+                'net::ERR_EMPTY_RESPONSE': 'empty_response',
+                'net::ERR_PROXY_CONNECTION_FAILED': 'proxy_connection_failed',
+                'net::ERR_BLOCKED_BY_CLIENT': 'blocked_by_client',
+                'net::ERR_INVALID_URL': 'invalid_url',
+            }.get(raw_navigation_error, 'other')
+            raise RuntimeError('application navigation failed')
+
         phase = 'evaluate'
         deadline = time.monotonic() + 10
         gate_passed = False
@@ -366,6 +386,7 @@ except Exception:
         'phase': phase,
         'target_found': bool(target_id),
         'session_attached': bool(session_id),
+        'navigation_error': navigation_error,
         'evaluation_seen': evaluation_seen,
         'evaluation_exception': evaluation_exception,
         'body_present': bool(last_value.get('bodyPresent')),

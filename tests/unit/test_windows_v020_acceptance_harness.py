@@ -58,6 +58,7 @@ class WindowsV020AcceptanceHarnessTests(unittest.TestCase):
         self.assertIn("proxy=None", source)
         self.assertIn("'Target.getTargets'", source)
         self.assertIn("'Target.attachToTarget'", source)
+        self.assertIn("'Page.navigate'", source)
         self.assertIn("'Runtime.evaluate'", source)
         self.assertIn("raise SystemExit('public DOM gate failed') from None", source)
         self.assertNotIn("connect_over_cdp", source)
@@ -154,6 +155,7 @@ globalThis.getComputedStyle = (element) => ({
                 "phase": "connect",
                 "target_found": False,
                 "session_attached": False,
+                "navigation_error": "none",
                 "evaluation_seen": False,
                 "evaluation_exception": False,
                 "body_present": False,
@@ -200,6 +202,8 @@ globalThis.getComputedStyle = (element) => ({
                     }
                 elif request["method"] == "Target.attachToTarget":
                     result = {"sessionId": "session-1"}
+                elif request["method"] == "Page.navigate":
+                    result = {"frameId": "frame-1"}
                 else:
                     result = {
                         "result": {
@@ -262,7 +266,7 @@ globalThis.getComputedStyle = (element) => ({
         )
         self.assertEqual(
             [call["method"] for call in calls],
-            ["Target.getTargets", "Target.attachToTarget", "Runtime.evaluate"],
+            ["Target.getTargets", "Target.attachToTarget", "Page.navigate", "Runtime.evaluate"],
         )
         self.assertEqual(calls[-1]["sessionId"], "session-1")
 
