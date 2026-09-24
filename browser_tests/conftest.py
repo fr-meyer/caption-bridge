@@ -101,11 +101,16 @@ def _snapshot(scenario: str) -> dict[str, Any]:
                 )
             ],
         )
-    elif scenario == "export":
+    elif scenario in {"export", "export_failure"}:
         snapshot.update(
             status="session_ended",
             started_at=_STARTED_AT,
             ended_at=_ENDED_AT,
+            export_failure=(
+                {"error": "Synthetic export failed"}
+                if scenario == "export_failure"
+                else None
+            ),
             segments=[
                 _segment(
                     1,

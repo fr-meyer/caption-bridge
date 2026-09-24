@@ -51,6 +51,7 @@
     };
     let providerNoticeTimer = null;
     let providerCapacityTimer = null;
+    const modalReturnFocus = new WeakMap();
 
     let ws = null;
     let reconnectAttempt = 0;
@@ -1071,21 +1072,40 @@
         }
     }
 
-    function renderModal() {
-        if (appState.modalVisible) {
-            els.discardModal.classList.add("visible");
+    function setModalVisible(modal, visible, firstControl) {
+        const wasVisible = modal.classList.contains("visible");
+        if (visible === wasVisible) return;
+
+        if (visible) {
+            modalReturnFocus.set(modal, document.activeElement);
+            modal.classList.add("visible");
+            firstControl.focus();
         } else {
-            els.discardModal.classList.remove("visible");
+            modal.classList.remove("visible");
+            const previous = modalReturnFocus.get(modal);
+            modalReturnFocus.delete(modal);
+            if (previous && previous !== document.body &&
+                previous.isConnected && previous.getClientRects().length) {
+                previous.focus();
+            } else {
+                els.statusLabel.focus();
+            }
         }
+    }
+
+    function renderModal() {
+        setModalVisible(els.discardModal, appState.modalVisible, els.cancelDiscard);
     }
 
     function renderExportFailureModal() {
         if (appState.exportFailureModalVisible && appState.exportFailure) {
-            els.exportFailureModal.classList.add("visible");
             els.exportFailureError.textContent = appState.exportFailure.error || "Export failed";
-        } else {
-            els.exportFailureModal.classList.remove("visible");
         }
+        setModalVisible(
+            els.exportFailureModal,
+            appState.exportFailureModalVisible && Boolean(appState.exportFailure),
+            els.retryExportBtn
+        );
     }
 
     function renderRecoveryFailureWarning() {
@@ -1126,12 +1146,27 @@
     }
 
     function renderDrawer() {
-        if (els.settingsDrawer) {
-            const s = appState.status;
-            if (appState.drawerOpen && s !== "listening" && s !== "reconnecting") {
-                appState.drawerOpen = false;
+        if (!els.settingsDrawer) return;
+
+        const s = appState.status;
+        if (appState.drawerOpen && s !== "listening" && s !== "reconnecting") {
+            appState.drawerOpen = false;
+        }
+        const wasOpen = els.settingsDrawer.classList.contains("open");
+        if (wasOpen && !appState.drawerOpen &&
+            els.settingsDrawer.contains(document.activeElement)) {
+            if (els.gearBtn.getClientRects().length) {
+                els.gearBtn.focus();
+            } else {
+                els.statusLabel.focus();
             }
-            els.settingsDrawer.classList.toggle("open", appState.drawerOpen);
+        }
+        els.settingsDrawer.classList.toggle("open", appState.drawerOpen);
+        els.settingsDrawer.inert = !appState.drawerOpen;
+        els.settingsDrawer.setAttribute("aria-hidden", String(!appState.drawerOpen));
+        els.gearBtn.setAttribute("aria-expanded", String(appState.drawerOpen));
+        if (appState.drawerOpen && !wasOpen) {
+            els.drawerClose.focus();
         }
     }
 
@@ -1343,11 +1378,45 @@
 
     // ===== 3.7 Keyboard Shortcuts =====
 
+    function handleModalKeyboard(e, modal) {
+        if (e.key === "Escape" && modal === els.discardModal) {
+            e.preventDefault();
+            appState.modalVisible = false;
+            render();
+            return;
+        }
+        if (e.key !== "Tab") return;
+
+        const controls = Array.from(modal.querySelectorAll("button:not([disabled])"));
+        if (!controls.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+
     function setupKeyboard() {
         document.addEventListener("keydown", function (e) {
+            const modal = els.discardModal.classList.contains("visible")
+                ? els.discardModal
+                : (els.exportFailureModal.classList.contains("visible") ? els.exportFailureModal : null);
+            if (modal) {
+                handleModalKeyboard(e, modal);
+                return;
+            }
+            if (e.key === "Escape" && appState.drawerOpen) {
+                e.preventDefault();
+                appState.drawerOpen = false;
+                renderDrawer();
+                return;
+            }
             const tag = e.target.tagName.toLowerCase();
             if (tag === "input" || tag === "textarea" || tag === "button" || tag === "select") return;
-            if (appState.modalVisible) return;
 
             const s = appState.status;
 
