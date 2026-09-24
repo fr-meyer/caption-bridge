@@ -11,14 +11,14 @@
 
     <header>
         <span class="title">CaptionBridge</span>
-            <span id="build-identity" class="build-identity" aria-label="Build identity"></span>
+        <span id="build-identity" class="build-identity"></span>
         <div class="header-right">
             <span id="header-lang" class="hidden"></span>
-            <button id="gear-btn" class="btn-icon" title="Settings (G)" aria-label="Settings">⚙</button>
+            <button id="gear-btn" class="btn-icon" title="Settings (G)" aria-label="Settings" aria-controls="settings-drawer" aria-expanded="false">⚙</button>
             <span id="elapsed">00:00</span>
             <span class="status-indicator">
                 <span id="status-dot" class="status-dot"></span>
-                <span id="status-label" role="status">Checking…</span>
+                <span id="status-label" role="status" tabindex="-1">Checking…</span>
             </span>
         </div>
     </header>
@@ -104,7 +104,7 @@
         </div>
     </footer>
 
-    <div id="settings-drawer">
+    <div id="settings-drawer" role="region" aria-label="Settings" aria-hidden="true" inert>
         <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-weight:600;font-size:15px">Settings</span>
             <button id="drawer-close" class="btn-icon" aria-label="Close settings">✕</button>
@@ -129,9 +129,9 @@
     </div>
 
     <div id="export-failure-modal" class="export-failure-modal">
-        <div class="modal-dialog">
-            <h2>Transcript not saved</h2>
-            <p><span id="export-failure-error"></span></p>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="export-failure-title" aria-describedby="export-failure-description">
+            <h2 id="export-failure-title">Transcript not saved</h2>
+            <p id="export-failure-description"><span id="export-failure-error"></span></p>
             <div class="modal-actions">
                 <button id="retry-export-btn" class="btn-primary">Retry Export</button>
                 <button id="discard-export-btn" class="btn-danger">Discard</button>
@@ -140,9 +140,9 @@
     </div>
 
     <div id="discard-modal" class="discard-modal">
-        <div class="modal-dialog">
-            <h2>Discard session?</h2>
-            <p>The current transcript has not been exported and will be lost.</p>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
+            <h2 id="discard-title">Discard session?</h2>
+            <p id="discard-description">The current transcript has not been exported and will be lost.</p>
             <div class="modal-actions">
                 <button id="cancel-discard" class="btn-secondary">Cancel</button>
                 <button id="confirm-discard" class="btn-danger">Discard &amp; start new</button>
