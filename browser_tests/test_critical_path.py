@@ -57,6 +57,51 @@ def test_reconnect_snapshot_restores_state_and_relocks_audio(
     assert browser_harness.message_count("tts_audio_enabled") == 1
 
 
+
+def test_captions_only_preference_survives_start_and_reload(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "idle_ready")
+    choice = page.locator("#captions-only-idle")
+    expect(choice).not_to_be_checked()
+    choice.check()
+    expect(choice).to_be_checked()
+    page.get_by_role("button", name="Start", exact=True).click()
+    assert browser_harness.wait_for_message("start")["tts_muted"] is True
+    expect(page.locator("#audio-enable-banner")).to_be_hidden()
+
+    browser_harness.configure("restored")
+    page.reload(wait_until="domcontentloaded")
+    browser_harness.wait_for_connections(1)
+    expect(page.locator("#audio-enable-banner")).to_be_hidden()
+    page.get_by_role("button", name="Settings").click()
+    drawer_choice = page.locator("#captions-only-drawer")
+    expect(drawer_choice).to_be_checked()
+    drawer_choice.uncheck()
+    expect(page.locator("#audio-enable-banner")).to_be_visible()
+
+    browser_harness.configure("restored")
+    page.reload(wait_until="domcontentloaded")
+    browser_harness.wait_for_connections(1)
+    expect(page.locator("#audio-enable-banner")).to_be_visible()
+    page.get_by_role("button", name="Settings").click()
+    expect(page.locator("#captions-only-drawer")).not_to_be_checked()
+
+
+def test_captions_only_preference_survives_new_session(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "idle_ready")
+    page.locator("#captions-only-idle").check()
+    browser_harness.configure("export")
+    page.reload(wait_until="domcontentloaded")
+    browser_harness.wait_for_connections(1)
+    expect(page.locator(".replay-btn")).to_be_disabled()
+    page.get_by_role("button", name="New Session").click()
+    page.get_by_role("button", name="Discard & start new").click()
+    assert browser_harness.wait_for_message("new_session")["tts_muted"] is True
+    expect(page.locator("#captions-only-idle")).to_be_checked()
+
 def test_export_and_new_session_controls(
     page: Page, browser_harness: BrowserHarness
 ) -> None:

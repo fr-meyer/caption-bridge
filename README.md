@@ -102,6 +102,14 @@ run remains optional endurance evidence in [the Mac soak runbook](docs/mac-soak.
 The GCP-only [Gemini Live Translate spike](docs/gemini-live-spike.md) records the
 research decision and remaining evaluation; it does not change the default provider.
 
+## Captions-only preference
+
+Select **Captions only** before starting or in Settings during a session to keep
+spoken readback off. The choice is saved in this browser and applies to future
+sessions and page reloads. Turning it off allows spoken readback again; the browser
+still requires **Enable audio** before speech can play. The speaker button provides
+a temporary mute when captions-only mode is off.
+
 ## Development
 
 For auto-reload during development:
