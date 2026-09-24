@@ -1,6 +1,23 @@
 # Release notes
 
-## v0.2.0 - Planned
+## Unreleased (dev)
+
+These changes are on `dev` and are not part of the immutable `v0.2.0` release.
+A next version and publication date have not been chosen; draft release PR #50
+tracks the remaining acceptance gates.
+
+- Add a hosted, synthetic exact-v0.2.0 Windows acceptance workflow and harness.
+  Physical Windows runtime acceptance remains pending.
+- Improve keyboard and screen-reader semantics, contrast, reduced-motion
+  behavior, and failure notices in the browser UI. GCP Chromium and WebKit
+  synthetic checks passed; physical Safari and screen-reader checks remain.
+- Add locked-dependency audit commands and a monthly/pre-release review
+  cadence. A concrete deployment-target audit is still required before release.
+- Record research-only Gemini Live Translate evaluation and a current-cycle
+  no-go for integration. Mistral remains the only production translation
+  provider; no Gemini runtime path or default change was added.
+
+## v0.2.0 - 2026-08-29
 
 Caption Bridge v0.2.0 completes the first post-release reliability and
 supportability cycle while preserving the local-first, on-demand product
