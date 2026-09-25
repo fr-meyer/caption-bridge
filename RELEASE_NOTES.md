@@ -1,10 +1,10 @@
 # Release notes
 
-## Unreleased (dev)
+## v0.2.1 (unreleased candidate)
 
-These changes are on `dev` and are not part of the immutable `v0.2.0` release.
-A next version and publication date have not been chosen; draft release PR #50
-tracks the remaining acceptance gates.
+These changes are staged on `dev` for a proposed maintenance release. The
+immutable `v0.2.0` release remains current until the release gates in draft
+PR #50 pass and a publication decision is recorded.
 
 - Add a hosted, synthetic exact-v0.2.0 Windows acceptance workflow and harness.
   Physical Windows runtime acceptance remains pending.
@@ -12,7 +12,10 @@ tracks the remaining acceptance gates.
   behavior, and failure notices in the browser UI. GCP Chromium and WebKit
   synthetic checks passed; physical Safari and screen-reader checks remain.
 - Add locked-dependency audit commands and a monthly/pre-release review
-  cadence. A concrete deployment-target audit is still required before release.
+  cadence. The concrete deployment-target audit passed for the current
+  locked package set; repeat it for the final candidate.
+- Prevent a delayed export failure from leaving both discard and
+  export-failure dialogs open.
 - Record research-only Gemini Live Translate evaluation and a current-cycle
   no-go for integration. Mistral remains the only production translation
   provider; no Gemini runtime path or default change was added.
