@@ -848,6 +848,9 @@
     // ===== 3.4 Render Function =====
 
     function render() {
+        if (appState.exportFailureModalVisible && appState.exportFailure) {
+            appState.modalVisible = false;
+        }
         document.body.dataset.state = appState.status;
         renderHeader();
         renderHeaderLang();

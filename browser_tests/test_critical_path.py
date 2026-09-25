@@ -158,3 +158,39 @@ def test_settings_drawer_is_unreachable_while_closed_and_returns_focus(
     expect(gear).to_have_attribute("aria-expanded", "false")
     expect(gear).to_be_focused()
     assert page.evaluate("document.querySelector('#settings-drawer').inert")
+
+
+def test_late_export_failure_replaces_discard_dialog(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    page.add_init_script(
+        """
+        (() => {
+            const NativeSocket = window.WebSocket;
+            window.WebSocket = function (...args) {
+                const socket = new NativeSocket(...args);
+                window.__bridgeSocket = socket;
+                return socket;
+            };
+        })();
+        """
+    )
+    _open(page, browser_harness, "export")
+
+    page.get_by_role("button", name="New Session").click()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_visible()
+
+    page.evaluate(
+        """() => window.__bridgeSocket.onmessage(
+            new MessageEvent("message", {
+                data: JSON.stringify({
+                    type: "export_result", success: false,
+                    error: "Synthetic delayed export failure"
+                })
+            })
+        )"""
+    )
+
+    expect(page.get_by_role("dialog", name="Transcript not saved")).to_be_visible()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_hidden()
+    expect(page.locator("#retry-export-btn")).to_be_focused()
