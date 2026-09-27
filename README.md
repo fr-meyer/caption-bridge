@@ -187,6 +187,13 @@ The microphone smoke test must run on the Mac because the GCP server has no audi
 uv run python -m scripts.smoke_test
 ```
 
+## Captions-only mode
+
+Choose **Captions only** before Start or in Settings to keep captions without
+spoken readback. The choice persists across sessions and browser refresh. Use the
+speaker control to turn speech back on. Transcription and translation can still
+incur provider charges. See the [operator guide](docs/captions-only.md).
+
 ## Semantic fragment merging
 
 Browser source partials remain immediate. Translation, export, and TTS finalization
