@@ -827,10 +827,14 @@
         var toggleTitle = supported
             ? (appState.ttsMuted ? "Unmute TTS" : "Mute TTS")
             : unsupportedTitle;
+        var toggleLabel = supported
+            ? (appState.ttsMuted ? "Unmute translated speech" : "Mute translated speech")
+            : "Translated speech unavailable for " + langLabel;
 
         if (els.ttsToggleBtn) {
             els.ttsToggleBtn.disabled = !supported;
             els.ttsToggleBtn.title = toggleTitle;
+            els.ttsToggleBtn.setAttribute("aria-label", toggleLabel);
             els.ttsToggleBtn.classList.toggle("active", !appState.ttsMuted);
             els.ttsToggleBtn.classList.toggle("tts-muted", appState.ttsMuted);
             els.ttsToggleBtn.textContent = appState.ttsMuted ? "🔇" : "🔊";
@@ -839,6 +843,7 @@
         if (els.ttsDrawerToggle) {
             els.ttsDrawerToggle.disabled = !supported;
             els.ttsDrawerToggle.title = toggleTitle;
+            els.ttsDrawerToggle.setAttribute("aria-label", toggleLabel);
             els.ttsDrawerToggle.classList.toggle("active", !appState.ttsMuted);
             els.ttsDrawerToggle.classList.toggle("tts-muted", appState.ttsMuted);
             els.ttsDrawerToggle.textContent = appState.ttsMuted ? "🔇" : "🔊";
