@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-PACKAGE_VERSION = "0.2.1"
+PACKAGE_VERSION = "0.3.0"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

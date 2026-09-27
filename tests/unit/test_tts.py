@@ -269,6 +269,26 @@ def test_replay_does_not_displace_live_jobs_when_queue_is_full() -> None:
     assert skipped[-1]["reason"] == "queue_full"
 
 
+
+def test_muting_discards_pending_and_new_tts_jobs() -> None:
+    dispatcher, manager, speech = _dispatcher([])
+    dispatcher.enqueue_live(_segment(1))
+    dispatcher.enqueue_replay(2, "replay", "en")
+    assert dispatcher._queue.qsize() == 2
+
+    dispatcher.set_muted(True)
+    dispatcher.enqueue_live(_segment(3))
+    dispatcher.enqueue_replay(4, "replay", "en")
+
+    assert dispatcher._queue.empty()
+    assert speech.calls == 0
+    assert [event["seq"] for event in manager.events if event["type"] == "tts_skipped"] == [2, 1, 3, 4]
+    assert all(
+        event["reason"] == "muted"
+        for event in manager.events
+        if event["type"] == "tts_skipped"
+    )
+
 def test_stale_job_does_not_record_synth_start() -> None:
     dispatcher, manager, speech = _dispatcher(
         [_Stream([SimpleNamespace(audio_data="audio")])]

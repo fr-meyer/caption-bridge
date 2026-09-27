@@ -699,6 +699,46 @@ body:not([data-state="listening"]):not([data-state="reconnecting"]) #gear-btn {
     font-style: italic;
 }
 
+.captions-only-option {
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.captions-only-option input {
+    margin-top: 3px;
+    accent-color: var(--accent);
+}
+
+.captions-only-option span {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.captions-only-option strong {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.captions-only-option small {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.captions-only-option:focus-within {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
 /* ===== TTS / audio readback ===== */
 .caption-entry.speaking {
     border-left-color: var(--green);
