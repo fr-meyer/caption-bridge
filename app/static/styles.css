@@ -4,9 +4,10 @@
     --surface: #202038;
     --border: #2a2a4a;
     --text-primary: #e0e0e0;
-    --text-muted: #8a8aaa;
-    --text-dim: #6c6c8a;
+    --text-muted: #aaaac4;
+    --text-dim: #9898b4;
     --accent: #4a6cf7;
+    --button-accent: #3656c9;
     --green: #4ade80;
     --yellow: #f59e0b;
     --red: #dc2626;
@@ -207,12 +208,12 @@ header .title {
 }
 
 .start-btn:enabled {
-    background: var(--accent);
+    background: var(--button-accent);
     color: #ffffff;
 }
 
 .start-btn:enabled:hover {
-    background: #5b7df8;
+    background: #3b5cd4;
 }
 
 .idle-hint {
@@ -294,7 +295,7 @@ body.source-hidden .caption-source { display: none; }
     right: 24px;
     padding: 8px 18px;
     border-radius: 999px;
-    background: var(--accent);
+    background: var(--button-accent);
     color: #ffffff;
     font-size: 13px;
     font-weight: 500;
@@ -304,7 +305,7 @@ body.source-hidden .caption-source { display: none; }
 }
 
 .jump-latest:hover {
-    background: #5b7df8;
+    background: #3b5cd4;
 }
 
 /* ===== Summary bar ===== */
@@ -377,13 +378,13 @@ body.source-hidden .caption-source { display: none; }
 .btn-primary {
     padding: 8px 20px;
     border-radius: 6px;
-    background: var(--accent);
+    background: var(--button-accent);
     color: #ffffff;
     font-size: 14px;
     font-weight: 500;
 }
 
-.btn-primary:hover { background: #5b7df8; }
+.btn-primary:hover { background: #3b5cd4; }
 
 .btn-primary:disabled {
     background: #3a3a5a;
@@ -433,7 +434,7 @@ body.source-hidden .caption-source { display: none; }
 }
 
 .btn-icon.active {
-    background: var(--accent);
+    background: var(--button-accent);
     color: #ffffff;
     border-color: var(--accent);
 }
@@ -793,7 +794,7 @@ body[data-state="session_ended"] #audio-enable-banner {
 .build-identity {
     margin-left: 8px;
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 button:focus-visible,

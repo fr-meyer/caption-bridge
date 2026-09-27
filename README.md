@@ -99,6 +99,9 @@ five-minute exact-candidate product path closed in
 [issue #35](https://github.com/fr-meyer/caption-bridge/issues/35). A two-hour
 run remains optional endurance evidence in [the Mac soak runbook](docs/mac-soak.md).
 
+The GCP-only [Gemini Live Translate spike](docs/gemini-live-spike.md) records the
+research decision and remaining evaluation; it does not change the default provider.
+
 ## Development
 
 For auto-reload during development:

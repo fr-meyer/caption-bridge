@@ -95,3 +95,121 @@ def test_keyboard_reachability_and_lifecycle_shortcuts(
     page.keyboard.press("Space")
     browser_harness.wait_for_message("stop")
     expect(page.locator("#status-label")).to_have_text("Session ended")
+
+
+def test_discard_dialog_keeps_keyboard_focus_and_restores_trigger(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "export")
+
+    page.get_by_role("button", name="New Session").click()
+    dialog = page.get_by_role("dialog", name="Discard session?")
+    expect(dialog).to_be_visible()
+    expect(page.locator("#cancel-discard")).to_be_focused()
+
+    page.keyboard.press("Shift+Tab")
+    expect(page.locator("#confirm-discard")).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(page.locator("#cancel-discard")).to_be_focused()
+
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    expect(page.get_by_role("button", name="New Session")).to_be_focused()
+
+
+def test_export_failure_dialog_confines_focus(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "export_failure")
+
+    dialog = page.get_by_role("dialog", name="Transcript not saved")
+    expect(dialog).to_be_visible()
+    expect(page.locator("#retry-export-btn")).to_be_focused()
+
+    page.keyboard.press("Shift+Tab")
+    expect(page.locator("#discard-export-btn")).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(page.locator("#retry-export-btn")).to_be_focused()
+
+    page.keyboard.press("Enter")
+    browser_harness.wait_for_message("export")
+    expect(dialog).to_be_hidden()
+    expect(page.locator("#status-label")).to_be_focused()
+
+
+def test_settings_drawer_is_unreachable_while_closed_and_returns_focus(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "restored")
+
+    drawer = page.locator("#settings-drawer")
+    gear = page.get_by_role("button", name="Settings", exact=True)
+    expect(drawer).to_have_attribute("aria-hidden", "true")
+    expect(gear).to_have_attribute("aria-expanded", "false")
+
+    gear.click()
+    expect(drawer).to_have_attribute("aria-hidden", "false")
+    expect(drawer).to_have_attribute("role", "region")
+    expect(gear).to_have_attribute("aria-expanded", "true")
+    expect(page.locator("#drawer-close")).to_be_focused()
+
+    page.keyboard.press("Escape")
+    expect(drawer).to_have_attribute("aria-hidden", "true")
+    expect(gear).to_have_attribute("aria-expanded", "false")
+    expect(gear).to_be_focused()
+    assert page.evaluate("document.querySelector('#settings-drawer').inert")
+
+
+def test_late_export_failure_replaces_discard_dialog(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    page.add_init_script(
+        """
+        (() => {
+            const NativeSocket = window.WebSocket;
+            window.WebSocket = function (...args) {
+                const socket = new NativeSocket(...args);
+                window.__bridgeSocket = socket;
+                return socket;
+            };
+        })();
+        """
+    )
+    _open(page, browser_harness, "export")
+
+    page.get_by_role("button", name="New Session").click()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_visible()
+
+    page.evaluate(
+        """() => window.__bridgeSocket.onmessage(
+            new MessageEvent("message", {
+                data: JSON.stringify({
+                    type: "export_result", success: false,
+                    error: "Synthetic delayed export failure"
+                })
+            })
+        )"""
+    )
+
+    expect(page.get_by_role("dialog", name="Transcript not saved")).to_be_visible()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_hidden()
+    expect(page.locator("#retry-export-btn")).to_be_focused()
+
+
+def test_speech_controls_announce_the_current_action(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "restored")
+    footer = page.locator("#tts-toggle-btn")
+    drawer = page.locator("#tts-drawer-toggle")
+    expect(footer).to_have_accessible_name("Mute translated speech")
+
+    footer.click()
+    browser_harness.wait_for_message("tts_mute")
+    expect(footer).to_have_accessible_name("Unmute translated speech")
+
+    page.get_by_role("button", name="Settings", exact=True).click()
+    expect(drawer).to_have_accessible_name("Unmute translated speech")
+    drawer.click()
+    expect(footer).to_have_accessible_name("Mute translated speech")
+    expect(drawer).to_have_accessible_name("Mute translated speech")

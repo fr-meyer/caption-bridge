@@ -1,0 +1,56 @@
+name: Windows v0.2.0 acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-v0.2.0-acceptance.yml
+      - scripts/windows_v020_acceptance.ps1
+      - tests/unit/test_windows_v020_acceptance_harness.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-v0.2.0-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-release-windows:
+    name: Exact v0.2.0 on Windows
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out acceptance harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out immutable v0.2.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: f00d3c65084dff4c0b42c7d05b298a78a846e000
+          path: release
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          enable-cache: true
+
+      - name: Test acceptance harness
+        shell: pwsh
+        run: |
+          uv python install 3.13
+          uv run --no-project --python 3.13 python -m unittest discover -s tests/unit -p test_windows_v020_acceptance_harness.py
+
+      - name: Run content-free Windows acceptance
+        shell: pwsh
+        run: >-
+          ./scripts/windows_v020_acceptance.ps1
+          -RepoRoot (Resolve-Path -LiteralPath ./release).Path
+          -ExpectedSha f00d3c65084dff4c0b42c7d05b298a78a846e000
+          -AppPort 8765
+          -CdpPort 9229
