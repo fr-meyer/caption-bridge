@@ -194,3 +194,22 @@ def test_late_export_failure_replaces_discard_dialog(
     expect(page.get_by_role("dialog", name="Transcript not saved")).to_be_visible()
     expect(page.get_by_role("dialog", name="Discard session?")).to_be_hidden()
     expect(page.locator("#retry-export-btn")).to_be_focused()
+
+
+def test_speech_controls_announce_the_current_action(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "restored")
+    footer = page.locator("#tts-toggle-btn")
+    drawer = page.locator("#tts-drawer-toggle")
+    expect(footer).to_have_accessible_name("Mute translated speech")
+
+    footer.click()
+    browser_harness.wait_for_message("tts_mute")
+    expect(footer).to_have_accessible_name("Unmute translated speech")
+
+    page.get_by_role("button", name="Settings", exact=True).click()
+    expect(drawer).to_have_accessible_name("Unmute translated speech")
+    drawer.click()
+    expect(footer).to_have_accessible_name("Mute translated speech")
+    expect(drawer).to_have_accessible_name("Mute translated speech")
