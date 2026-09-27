@@ -1,5 +1,23 @@
 # Release notes
 
+## v0.3.0 - 2026-09-27
+
+- Add a persistent **Captions only** preference before a session and in Settings.
+  It survives New Session, browser refresh and reconnect.
+- Stop current playback and suppress queued/new speech and Replay while the
+  preference is on. Source and translated captions continue.
+- Allow the speaker control to turn spoken readback back on, with truthful
+  accessible names and the browser's normal audio-enable gesture.
+- Store only a Boolean browser preference; no caption content or credentials
+  are stored by this setting.
+- Add an [operator guide](docs/captions-only.md). Transcription and translation
+  still use the existing provider and can incur charges.
+
+The supported owner Mac repository/CLI path remains on demand and loopback only.
+Mistral remains the sole production provider. This release makes no physical
+Windows, complete VoiceOver or second-operator support claim. Publication is
+identified by the immutable tag and GitHub Release.
+
 ## v0.2.1 - 2026-09-27
 
 Maintenance changes for the supported owner Mac repository/CLI path. Release
