@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
+from app.glossary import Glossary
 from app.languages import is_valid_target_language
 from app.reliability import ReliabilityTracker, write_session_record
 
@@ -139,6 +140,7 @@ class Session(BaseModel):
     journal_path: str | None = None
     source_language: str = "auto"
     target_language: str = "en"
+    glossary: Glossary | None = None
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
 
@@ -482,6 +484,8 @@ class SessionManager:
             self.session.started_at = _utcnow()
             if self._journal is not None:
                 self._journal.record_session_started()
+                if self.session.glossary is not None:
+                    self._journal.record_glossary(self.session.glossary)
 
         if status == "listening":
             self._start_elapsed_ticker()
@@ -585,6 +589,7 @@ class SessionManager:
             ),
             "source_language": s.source_language,
             "target_language": s.target_language,
+            "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
             "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "runtime_metrics": {

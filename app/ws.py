@@ -13,6 +13,7 @@ import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.config import settings
+from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
 from app.state import RecoveryNotice, SessionManager
@@ -541,17 +542,26 @@ async def _handle_start(
 
     target_language = msg.get("target_language")
     if target_language is not None:
-        if not is_valid_target_language(target_language):
+        if not isinstance(target_language, str) or not is_valid_target_language(target_language):
             _enqueue_outbound(
                 outbound_queue,
                 {
                     "type": "error",
-                    "message": f"Unsupported target language: {target_language!r}",
+                    "message": "Unsupported target language.",
                 },
                 obs,
             )
             return
-        manager.set_target_language(target_language)
+    language = target_language or manager.session.target_language
+    try:
+        glossary = parse_glossary(msg.get("glossary", []), language)
+    except ValueError as exc:
+        _enqueue_outbound(
+            outbound_queue, {"type": "error", "message": str(exc)}, obs
+        )
+        return
+    manager.set_target_language(language)
+    manager.session.glossary = glossary
 
     if start_pipeline is not None:
         try:

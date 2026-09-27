@@ -194,6 +194,9 @@ spoken readback. The choice persists across sessions and browser refresh. Use th
 speaker control to turn speech back on. Transcription and translation can still
 incur provider charges. See the [operator guide](docs/captions-only.md).
 
+Optional [terminology preferences](docs/terminology.md) can guide technical terms.
+Browser storage is opt-in; session exports include the terms used.
+
 ## Semantic fragment merging
 
 Browser source partials remain immediate. Translation, export, and TTS finalization

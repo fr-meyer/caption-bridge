@@ -852,3 +852,14 @@ select:focus-visible {
         scroll-behavior: auto !important;
     }
 }
+
+/* Optional pre-session terminology editor. */
+.glossary-editor { margin: 16px 0; text-align: left; max-width: 480px; width: 100%; }
+.glossary-editor summary { cursor: pointer; margin-bottom: 10px; }
+.glossary-editor textarea { width: 100%; box-sizing: border-box; margin: 8px 0;
+    padding: 8px; background: var(--surface); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.glossary-editor small { display: block; color: var(--text-muted); line-height: 1.5; }
+.glossary-remember { display: block; margin: 12px 0; }
+.glossary-session-note { margin: 8px 24px; color: var(--text-muted); font-size: 13px; }
+textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
