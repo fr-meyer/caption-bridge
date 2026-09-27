@@ -832,13 +832,16 @@
         var toggleTitle = supported
             ? (appState.captionsOnly ? "Turn on spoken readback" : (appState.ttsMuted ? "Unmute TTS" : "Mute TTS"))
             : unsupportedTitle;
+        var toggleLabel = supported
+            ? (appState.captionsOnly ? "Turn on spoken readback" : (appState.ttsMuted ? "Unmute translated speech" : "Mute translated speech"))
+            : "Translated speech unavailable for " + langLabel;
         if (els.captionsOnlyIdle) els.captionsOnlyIdle.checked = appState.captionsOnly;
         if (els.captionsOnlyDrawer) els.captionsOnlyDrawer.checked = appState.captionsOnly;
 
         if (els.ttsToggleBtn) {
             els.ttsToggleBtn.disabled = !supported;
             els.ttsToggleBtn.title = toggleTitle;
-            els.ttsToggleBtn.setAttribute("aria-label", toggleTitle);
+            els.ttsToggleBtn.setAttribute("aria-label", toggleLabel);
             els.ttsToggleBtn.classList.toggle("active", !appState.ttsMuted);
             els.ttsToggleBtn.classList.toggle("tts-muted", appState.ttsMuted);
             els.ttsToggleBtn.textContent = appState.ttsMuted ? "🔇" : "🔊";
@@ -847,7 +850,7 @@
         if (els.ttsDrawerToggle) {
             els.ttsDrawerToggle.disabled = !supported;
             els.ttsDrawerToggle.title = toggleTitle;
-            els.ttsDrawerToggle.setAttribute("aria-label", toggleTitle);
+            els.ttsDrawerToggle.setAttribute("aria-label", toggleLabel);
             els.ttsDrawerToggle.classList.toggle("active", !appState.ttsMuted);
             els.ttsDrawerToggle.classList.toggle("tts-muted", appState.ttsMuted);
             els.ttsDrawerToggle.textContent = appState.ttsMuted ? "🔇" : "🔊";
@@ -857,6 +860,9 @@
     // ===== 3.4 Render Function =====
 
     function render() {
+        if (appState.exportFailureModalVisible && appState.exportFailure) {
+            appState.modalVisible = false;
+        }
         document.body.dataset.state = appState.status;
         renderHeader();
         renderHeaderLang();

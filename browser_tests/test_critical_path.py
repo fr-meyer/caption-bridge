@@ -57,7 +57,6 @@ def test_reconnect_snapshot_restores_state_and_relocks_audio(
     assert browser_harness.message_count("tts_audio_enabled") == 1
 
 
-
 def test_captions_only_preference_survives_start_and_reload(
     page: Page, browser_harness: BrowserHarness
 ) -> None:
@@ -101,6 +100,23 @@ def test_captions_only_preference_survives_new_session(
     page.get_by_role("button", name="Discard & start new").click()
     assert browser_harness.wait_for_message("new_session")["tts_muted"] is True
     expect(page.locator("#captions-only-idle")).to_be_checked()
+    expect(page.locator("body")).to_have_attribute("data-state", "idle_ready")
+    page.get_by_role("button", name="Start", exact=True).click()
+    expect(page.locator("body")).to_have_attribute("data-state", "listening")
+    page.get_by_role("button", name="Settings").click()
+    speech_toggle = page.locator("#tts-drawer-toggle")
+    expect(speech_toggle).to_have_accessible_name("Turn on spoken readback")
+    speech_toggle.click()
+    expect(page.locator("#captions-only-drawer")).not_to_be_checked()
+    expect(speech_toggle).to_have_accessible_name("Mute translated speech")
+    page.keyboard.press("Escape")
+    expect(page.locator("#captions-only-idle")).not_to_be_checked()
+    browser_harness.configure("restored")
+    page.reload(wait_until="domcontentloaded")
+    browser_harness.wait_for_connections(1)
+    page.get_by_role("button", name="Settings").click()
+    expect(page.locator("#captions-only-drawer")).not_to_be_checked()
+
 
 def test_export_and_new_session_controls(
     page: Page, browser_harness: BrowserHarness
@@ -203,3 +219,58 @@ def test_settings_drawer_is_unreachable_while_closed_and_returns_focus(
     expect(gear).to_have_attribute("aria-expanded", "false")
     expect(gear).to_be_focused()
     assert page.evaluate("document.querySelector('#settings-drawer').inert")
+
+
+def test_late_export_failure_replaces_discard_dialog(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    page.add_init_script(
+        """
+        (() => {
+            const NativeSocket = window.WebSocket;
+            window.WebSocket = function (...args) {
+                const socket = new NativeSocket(...args);
+                window.__bridgeSocket = socket;
+                return socket;
+            };
+        })();
+        """
+    )
+    _open(page, browser_harness, "export")
+
+    page.get_by_role("button", name="New Session").click()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_visible()
+
+    page.evaluate(
+        """() => window.__bridgeSocket.onmessage(
+            new MessageEvent("message", {
+                data: JSON.stringify({
+                    type: "export_result", success: false,
+                    error: "Synthetic delayed export failure"
+                })
+            })
+        )"""
+    )
+
+    expect(page.get_by_role("dialog", name="Transcript not saved")).to_be_visible()
+    expect(page.get_by_role("dialog", name="Discard session?")).to_be_hidden()
+    expect(page.locator("#retry-export-btn")).to_be_focused()
+
+
+def test_speech_controls_announce_the_current_action(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness, "restored")
+    footer = page.locator("#tts-toggle-btn")
+    drawer = page.locator("#tts-drawer-toggle")
+    expect(footer).to_have_accessible_name("Mute translated speech")
+
+    footer.click()
+    browser_harness.wait_for_message("tts_mute")
+    expect(footer).to_have_accessible_name("Unmute translated speech")
+
+    page.get_by_role("button", name="Settings", exact=True).click()
+    expect(drawer).to_have_accessible_name("Unmute translated speech")
+    drawer.click()
+    expect(footer).to_have_accessible_name("Mute translated speech")
+    expect(drawer).to_have_accessible_name("Mute translated speech")
