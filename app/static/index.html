@@ -69,6 +69,10 @@
             <span class="idle-lang-label">Target language</span>
             <select id="idle-target-select" class="drawer-select" aria-label="Target language"></select>
         </div>
+        <label class="captions-only-option" for="captions-only-idle">
+            <input id="captions-only-idle" type="checkbox">
+            <span><strong>Captions only</strong><small>Keep spoken readback off. Remember this choice on this browser.</small></span>
+        </label>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
@@ -121,6 +125,10 @@
         <hr style="border:none;border-top:1px solid var(--border);margin:0">
         <div class="drawer-section">
             <span class="drawer-label">Audio Readback</span>
+            <label class="captions-only-option" for="captions-only-drawer">
+                <input id="captions-only-drawer" type="checkbox">
+                <span><strong>Captions only</strong><small>Keep spoken readback off. Remember this choice on this browser.</small></span>
+            </label>
             <div style="display:flex;align-items:center;justify-content:space-between">
                 <span style="font-size:14px;color:var(--text-primary)">Read captions aloud</span>
                 <button id="tts-drawer-toggle" class="btn-icon active" title="Mute TTS" aria-label="Mute translated speech">🔊</button>

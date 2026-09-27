@@ -102,6 +102,16 @@ class TTSDispatcher:
 
 
     def enqueue_live(self, seg: Any) -> None:
+        if self._muted:
+            self._session_manager._emit(
+                "tts_skipped",
+                {
+                    "seq": seg.seq,
+                    "reason": "muted",
+                    "tts_epoch": self._tts_epoch,
+                },
+            )
+            return
         lang = seg.target_language or ""
         if lang not in VOICE_MAP:
             self._session_manager._emit(
@@ -155,6 +165,17 @@ class TTSDispatcher:
         self._record_queue_depth()
 
     def enqueue_replay(self, seq: int, text: str, language: str) -> None:
+        if self._muted:
+            self._session_manager._emit(
+                "tts_skipped",
+                {
+                    "seq": seq,
+                    "kind": "replay",
+                    "reason": "muted",
+                    "tts_epoch": self._tts_epoch,
+                },
+            )
+            return
         if language not in VOICE_MAP:
             self._session_manager._emit(
                 "tts_skipped",
@@ -195,11 +216,19 @@ class TTSDispatcher:
         self._record_queue_depth()
 
     def set_muted(self, muted: bool) -> None:
+        was_muted = self._muted
         self._muted = muted
         if not muted:
             self._unmute_event.set()
         else:
             self._unmute_event.clear()
+            if not was_muted:
+                self._tts_epoch += 1
+            while not self._queue.empty():
+                job = self._queue.get_nowait()
+                self._queue.task_done()
+                self._emit_queue_skip(job, "muted")
+            self._record_queue_depth()
             task = self._synth_task
             if task is not None and not task.done():
                 task.cancel()
@@ -210,10 +239,6 @@ class TTSDispatcher:
             self._unlock_event.set()
         else:
             self._unlock_event.clear()
-
-    def reset_mute(self) -> None:
-        self._muted = False
-        self._unmute_event.set()
 
     def _job_stale(self, job: TTSJob) -> bool:
         if job.tts_epoch != self._tts_epoch:
@@ -248,7 +273,7 @@ class TTSDispatcher:
                             self._tts_epoch,
                         )
                         continue
-                    if self._muted and self._session_manager.session.status in ("listening", "reconnecting"):
+                    if self._muted:
                         await self._unmute_event.wait()
                     if self._job_stale(job):
                         logger.debug(

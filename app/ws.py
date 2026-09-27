@@ -330,7 +330,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             elif msg_type == "export":
                 _handle_export()
             elif msg_type == "new_session":
-                await _handle_new_session()
+                await _handle_new_session(msg, outbound_queue, obs)
             elif msg_type == "retry_recovery":
                 await _handle_retry_recovery()
             elif msg_type == "discard_recovery":
@@ -465,7 +465,8 @@ async def _handle_tts_replay(
     muted = manager._tts_dispatcher._muted
 
     if status == "session_ended":
-        manager._tts_dispatcher.enqueue_replay(seq, seg.translated_text, seg.target_language)
+        if not muted:
+            manager._tts_dispatcher.enqueue_replay(seq, seg.translated_text, seg.target_language)
     elif status in ("listening", "reconnecting"):
         if not muted:
             manager._tts_dispatcher.enqueue_replay(seq, seg.translated_text, seg.target_language)
@@ -529,6 +530,15 @@ async def _handle_start(
         )
         return
 
+    tts_muted = msg.get("tts_muted", False)
+    if not isinstance(tts_muted, bool):
+        _enqueue_outbound(
+            outbound_queue,
+            {"type": "error", "message": "start: 'tts_muted' must be a boolean"},
+            obs,
+        )
+        return
+
     target_language = msg.get("target_language")
     if target_language is not None:
         if not is_valid_target_language(target_language):
@@ -545,9 +555,9 @@ async def _handle_start(
 
     if start_pipeline is not None:
         try:
-            await start_pipeline()
             if manager._tts_dispatcher is not None:
-                manager._tts_dispatcher.reset_mute()
+                manager._tts_dispatcher.set_muted(tts_muted)
+            await start_pipeline()
         except Exception as exc:
             logger.error("Pipeline startup failed: error_type=%s", type(exc).__name__)
             _enqueue_outbound(
@@ -584,8 +594,20 @@ def _handle_export() -> None:
     manager._emit("export_result", result)
 
 
-async def _handle_new_session() -> None:
+async def _handle_new_session(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
     assert manager is not None
+    tts_muted = msg.get("tts_muted", False)
+    if not isinstance(tts_muted, bool):
+        _enqueue_outbound(
+            outbound_queue,
+            {"type": "error", "message": "new_session: 'tts_muted' must be a boolean"},
+            obs,
+        )
+        return
     if stop_pipeline is not None and manager.session.status in (
         "listening",
         "reconnecting",
@@ -593,7 +615,7 @@ async def _handle_new_session() -> None:
         await stop_pipeline()
     await manager.reset(emit_snapshot=False)
     if manager._tts_dispatcher is not None:
-        manager._tts_dispatcher.reset_mute()
+        manager._tts_dispatcher.set_muted(tts_muted)
     journal = SessionJournal(session_id=manager.session.id, config=settings)
     manager.set_journal(journal)
     if poller is not None:
