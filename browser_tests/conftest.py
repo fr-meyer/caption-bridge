@@ -120,6 +120,8 @@ def _snapshot(scenario: str) -> dict[str, Any]:
                 )
             ],
         )
+    elif scenario == "glossary_idle":
+        snapshot["available_target_languages"].append({"code": "fr", "label": "French"})
     elif scenario != "idle_ready":
         raise ValueError(f"unsupported browser scenario: {scenario}")
     return snapshot

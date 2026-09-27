@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+- Add optional, bounded terminology preferences before Start, tied to a session
+  and target language. Browser storage requires explicit opt-in.
+- Preserve used terms in private export/recovery metadata; keep diagnostics
+  content-free. Existing provider, call/retry limits and retention are unchanged.
+- Add the [terminology guide](docs/terminology.md). Live provider quality
+  acceptance remains separate from synthetic prompt/browser checks.
+
 ## v0.3.0 - 2026-09-27
 
 - Add a persistent **Captions only** preference before a session and in Settings.

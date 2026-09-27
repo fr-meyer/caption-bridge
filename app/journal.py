@@ -11,6 +11,7 @@ import orjson
 
 from app.config import AppConfig
 from app.exporter import export_session
+from app.glossary import Glossary, parse_glossary
 from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class SessionJournal:
 
     def record_session_started(self) -> None:
         self._write({"type": "session_started"})
+
+    def record_glossary(self, glossary: Glossary) -> None:
+        self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json")})
 
     def record_segment_created(self, seg: Segment) -> None:
         self._write({
@@ -106,6 +110,17 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
 
             if rec_type == "session_started":
                 session.started_at = datetime.fromisoformat(rec["ts"])
+
+            elif rec_type == "session_glossary":
+                value = rec.get("glossary")
+                try:
+                    if not isinstance(value, dict) or set(value) != {"entries", "target_language"}:
+                        raise ValueError("Invalid glossary record.")
+                    session.glossary = parse_glossary(
+                        value["entries"], value["target_language"]
+                    )
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery glossary metadata — ignored")
 
             elif rec_type == "session_stopped":
                 session.ended_at = datetime.fromisoformat(rec["ts"])
