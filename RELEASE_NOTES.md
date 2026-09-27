@@ -1,19 +1,26 @@
 # Release notes
 
-## v0.2.1 (unreleased candidate)
+## v0.2.1 - 2026-09-27
 
-These changes are staged on `dev` for a proposed maintenance release. The
-immutable `v0.2.0` release remains current until the release gates in draft
-PR #50 pass and a publication decision is recorded.
+Maintenance changes for the supported owner Mac repository/CLI path. Release
+publication is identified by the immutable tag and GitHub Release, rather than
+by a merge to `dev`.
 
 - Add a hosted, synthetic exact-v0.2.0 Windows acceptance workflow and harness.
   Physical Windows runtime acceptance remains pending.
 - Improve keyboard and screen-reader semantics, contrast, reduced-motion
   behavior, and failure notices in the browser UI. GCP Chromium and WebKit
-  synthetic checks passed; physical Safari and screen-reader checks remain.
+  synthetic checks passed. Physical Safari checks covered corrected speech-control
+  names, keyboard access, muted captions, live replay, browser refresh/audio
+  relock, brief-outage recovery, retry exhaustion, export, and shutdown. Physical
+  VoiceOver and second-operator onboarding remain follow-up audits; no complete
+  screen-reader certification is claimed.
 - Add locked-dependency audit commands and a monthly/pre-release review
   cadence. The concrete deployment-target audit passed for the current
-  locked package set; repeat it for the final candidate.
+  locked package set. The release keeps that dependency lock unchanged.
+- Correct speech-control accessible names when playback is muted or unmuted.
+- Reconcile acceptance runbooks with the optional two-hour endurance run and
+  existing owner CLI support scope.
 - Prevent a delayed export failure from leaving both discard and
   export-failure dialogs open.
 - Record research-only Gemini Live Translate evaluation and a current-cycle

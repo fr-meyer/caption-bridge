@@ -1,10 +1,16 @@
-# Exact-candidate two-hour Mac soak
+# Optional exact-candidate two-hour Mac soak
 
-This runbook closes the final P1 reliability gate tracked by
-[issue #35](https://github.com/fr-meyer/caption-bridge/issues/35) and roadmap
-[issue #23](https://github.com/fr-meyer/caption-bridge/issues/23). Development,
-review, and automated validation remain on GCP. Only the bounded microphone,
-speaker, browser, TCC, and lifecycle run happens on the Mac.
+The P1.4 product-path gate in
+[issue #35](https://github.com/fr-meyer/caption-bridge/issues/35) is complete.
+The current [roadmap](https://github.com/fr-meyer/caption-bridge/issues/23) and
+[CLI support scope](mac-cli.md) make this run optional, non-blocking endurance
+evidence. It is not a prerequisite for each maintenance release.
+
+When an optional soak is chosen, follow the continuous-window and evidence
+rules below. Development, review, and automated validation remain on GCP.
+Only the bounded microphone, speaker, browser, TCC, and lifecycle run happens
+on the Mac. Obtain a recording allowance and provider spend ceiling that
+cover the chosen run before starting it.
 
 The qualifying run is one continuous 120-minute listening session at one exact
 reviewed candidate commit. Time from separate sessions cannot be combined. A
@@ -21,7 +27,8 @@ pass/fail results.
 Complete these steps in the canonical GCP checkout before reserving the Mac
 window:
 
-1. Select the reviewed `dev` commit and record its full SHA in issue #35.
+1. Select the reviewed `dev` commit and record its full SHA in the current
+   acceptance issue or PR.
 2. Confirm the GCP worktree is clean and the candidate is the expected branch
    head.
 3. Run `uv sync --frozen` and `make check`.
@@ -43,9 +50,10 @@ not edit source or configuration as part of acceptance.
 
 1. Confirm the checkout is clean before changing its revision. Stop if it is
    dirty; do not discard another person's work.
-2. Check out the exact candidate SHA recorded in issue #35 and verify it again
-   with `git rev-parse HEAD`.
-3. Run `uv sync --frozen` and `make check`.
+2. Check out the exact candidate SHA recorded in the current acceptance issue
+   or PR and verify it again with `git rev-parse HEAD`.
+3. Run `uv sync --frozen`. Confirm GCP `make check` and required CI passed
+   for the same exact candidate; do not move automated validation to the Mac.
 4. Confirm required `.env` key names are present without printing values.
 5. Confirm microphone permission belongs to the terminal or application that
    will own the runtime.
@@ -138,8 +146,8 @@ Generate the content-free summary locally:
 uv run python -m scripts.reliability_report --json
 ```
 
-The report may be summarized in issue #35. Do not attach the entire reliability
-directory, transcript exports, journals, controller state, `.env`, or logs.
+The report may be summarized in the current acceptance issue or PR. Do not
+attach the entire reliability directory, transcript exports, journals, controller state, `.env`, or logs.
 
 ## 6. Pass criteria
 
@@ -193,7 +201,7 @@ splice evidence from the failed run.
 
 ## 8. Content-free evidence form
 
-Post one final comment to issue #35 using this structure:
+Post one final comment to the current acceptance issue or PR using this structure:
 
 ```text
 Candidate SHA:
@@ -234,8 +242,9 @@ text.
    chooses to retain it.
 4. Restore the Mac checkout only if requested and only after confirming it is
    still clean. Never discard user changes.
-5. Mark issue #35 and P1.4 in issue #23 complete only after the evidence form
-   proves a passing exact-candidate run.
+5. Record the optional endurance result only after the evidence form proves
+   a passing exact-candidate run. Preserve the existing P1.4 completion record;
+   do not reopen that completed gate because an optional soak was skipped.
 6. If the whole-machine network test remains deferred, track it separately; it
    does not authorize GCP networking changes, public binding, or unrelated Mac
    disruption.

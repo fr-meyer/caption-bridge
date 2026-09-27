@@ -7,9 +7,12 @@ automated validation on GCP.
 Do not paste captions, provider responses, API keys, or exported transcript
 content into the acceptance record.
 
-For the final post-v1 P1 gate, use this checklist together with
-[`mac-soak.md`](mac-soak.md). The soak runbook adds the mandatory continuous
-120-minute window, checkpoint schedule, abort and rerun rules, and evidence form.
+The P1.4 product-path gate was completed by the exact-candidate five-minute
+run recorded in [issue #35](https://github.com/fr-meyer/caption-bridge/issues/35).
+The current [roadmap](https://github.com/fr-meyer/caption-bridge/issues/23) and
+[CLI support scope](mac-cli.md) make the two-hour run optional, non-blocking
+endurance evidence. Use [`mac-soak.md`](mac-soak.md) only when that separate
+run is chosen; its continuous-window rules do not add a release prerequisite.
 
 ## Record
 
@@ -30,7 +33,8 @@ For the final post-v1 P1 gate, use this checklist together with
    printing their values.
 4. Confirm macOS grants microphone permission to the owning terminal or app.
 5. Confirm port 8765 is free.
-6. Run `make check`; all checks must pass.
+6. Confirm `make check` and required CI passed for this candidate on GCP.
+   Keep automated validation on GCP; run hardware/readiness preflight on the Mac.
 
 ## 2. Loopback and startup
 
@@ -106,5 +110,10 @@ All mandatory steps pass at the candidate commit. The controlled network
 interruption may be deferred only if the reason is recorded; reconnect unit
 coverage and GCP CI do not replace the remaining Mac hardware checks.
 
-A short acceptance run does not satisfy the two-hour gate. A failed or
-interrupted soak cannot be completed by adding time from a later session.
+A short acceptance run does not constitute a two-hour endurance result. If
+an optional soak is selected, a failed or interrupted run cannot be completed
+by adding time from a later session.
+
+Physical VoiceOver and second-operator onboarding are follow-up audits under
+the [CLI support scope](mac-cli.md). Record them as unperformed when they have
+not occurred; do not claim screen-reader certification or new-operator evidence.
