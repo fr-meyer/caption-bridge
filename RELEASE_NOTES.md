@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Draft target-language/caption-timing profiles with explicit browser opt-in,
+  fixed session/reconnect timing and export/recovery transparency. Current settings
+  preserve operator defaults; live timing/quality/cost acceptance and release
+  promotion remain pending. See the [profile guide](docs/session-profiles.md).
 - Add optional, bounded terminology preferences before Start, tied to a session
   and target language. Browser storage requires explicit opt-in.
 - Preserve used terms in private export/recovery metadata; keep diagnostics

@@ -46,6 +46,11 @@ def _format_relative_timestamp(session: Session, seg: Segment) -> str:
 
 def _write_transcript_txt(export_dir: Path, session: Session) -> None:
     lines: list[str] = []
+    if session.caption_profile is not None:
+        profile = session.caption_profile
+        lines.append(f"Caption timing: {profile.id} (pause {profile.pause_timeout_ms} ms, "
+                     f"fragment hold {profile.fragment_max_hold_ms} ms)")
+        lines.append("")
     if session.glossary is not None:
         lines.append(f"Terminology preferences ({session.glossary.target_language}):")
         lines.extend(
@@ -127,6 +132,7 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
         "source_language": session.source_language,
         "target_language": session.target_language,
         "glossary": session.glossary.model_dump(mode="json") if session.glossary else None,
+        "caption_profile": session.caption_profile.model_dump(mode="json") if session.caption_profile else None,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "config": {

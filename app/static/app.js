@@ -7,6 +7,11 @@
     const DEFAULT_FONT_SIZE = 28;
     const CAPTIONS_ONLY_KEY = "captionBridge.captionsOnly";
     const GLOSSARY_KEY = "captionBridge.glossary";
+    const CAPTION_PROFILE_KEY = "captionBridge.sessionProfile";
+    let savedCaptionProfile = null;
+    let defaultProfileTargetLanguage = "en";
+    let captionProfileStorageNotice = "";
+
     const glossaryDrafts = Object.create(null);
     let activeGlossary = null;
 
@@ -41,6 +46,8 @@
         exportFailureModalVisible: false,
         recoveryFailure: null,
         targetLanguage: "en",
+        captionProfileId: "current",
+        availableCaptionProfiles: [],
         availableTargetLanguages: [],
         drawerOpen: false,
         ttsEnabled: true,
@@ -135,6 +142,12 @@
         els.captionsOnlyIdle = $("captions-only-idle");
         els.captionsOnlyDrawer = $("captions-only-drawer");
         els.buildIdentity = $("build-identity");
+        els.captionProfileEditor = $("caption-profile-editor");
+        els.captionTiming = $("caption-timing");
+        els.captionProfileRemember = $("caption-profile-remember");
+        els.captionProfileClear = $("caption-profile-clear");
+        els.captionProfileHelp = $("caption-profile-help");
+        els.captionProfileSessionNote = $("caption-profile-session-note");
         els.glossaryTerms = $("glossary-terms");
         els.glossaryRemember = $("glossary-remember");
         els.glossaryClear = $("glossary-clear");
@@ -286,6 +299,7 @@
         appState.availableTargetLanguages = msg.available_target_languages || [];
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
+        restoreCaptionProfile(msg);
         activeGlossary = msg.glossary || null;
 
         appState.exportFailure = msg.export_failure || null;
@@ -1260,6 +1274,21 @@
     // ===== 3.6 Controls & Event Listeners =====
 
     function setupControls() {
+        els.captionTiming.addEventListener("change", function () {
+            appState.captionProfileId = els.captionTiming.value;
+            if (els.captionProfileRemember.checked) persistCaptionProfile();
+            renderCaptionProfile();
+        });
+        els.captionProfileRemember.addEventListener("change", persistCaptionProfile);
+        els.captionProfileClear.addEventListener("click", function () {
+            els.captionProfileRemember.checked = false;
+            persistCaptionProfile();
+            appState.captionProfileId = "current";
+            appState.targetLanguage = defaultProfileTargetLanguage;
+            populateLanguageDropdowns();
+            renderHeaderLang();
+            renderCaptionProfile();
+        });
         els.glossaryTerms.addEventListener("input", function () {
             glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
             els.glossaryError.classList.add("hidden");
@@ -1338,6 +1367,7 @@
 
         els.idleTargetSelect.addEventListener("change", function (e) {
             appState.targetLanguage = e.target.value;
+            if (els.captionProfileRemember.checked) persistCaptionProfile();
             renderHeaderLang();
             renderGlossary();
         });
@@ -1561,6 +1591,7 @@
     }
 
     function renderGlossary() {
+        renderCaptionProfile();
         if (!els.glossaryTerms) return;
         const label = appState.availableTargetLanguages.find(function (lang) {
             return lang.code === appState.targetLanguage;
@@ -1595,7 +1626,91 @@
             entries: entries, target_language: appState.targetLanguage
         } : null;
         send({ type: "start", target_language: appState.targetLanguage,
-            tts_muted: appState.ttsMuted, glossary: entries });
+            tts_muted: appState.ttsMuted, glossary: entries,
+            caption_profile: appState.captionProfileId });
+    }
+
+
+    // ===== Language and caption timing profile =====
+
+    function loadCaptionProfile() {
+        try {
+            const raw = localStorage.getItem(CAPTION_PROFILE_KEY);
+            if (!raw || raw.length > 256) return;
+            const saved = JSON.parse(raw);
+            if (!saved || Array.isArray(saved) ||
+                Object.keys(saved).sort().join(",") !== "id,targetLanguage,version" ||
+                saved.version !== 1 || typeof saved.targetLanguage !== "string" ||
+                !["current", "shorter", "longer"].includes(saved.id)) return;
+            savedCaptionProfile = saved;
+            els.captionProfileRemember.checked = true;
+        } catch (_) { /* storage is optional */ }
+    }
+
+    function restoreCaptionProfile(msg) {
+        appState.availableCaptionProfiles = msg.available_caption_profiles || [];
+        const idle = msg.status === "idle_ready" || msg.status === "idle_blocked";
+        appState.captionProfileId = (msg.caption_profile && msg.caption_profile.id) || "current";
+        if (idle) {
+            defaultProfileTargetLanguage = appState.targetLanguage;
+            if (savedCaptionProfile &&
+                appState.availableTargetLanguages.some(function (item) {
+                    return item.code === savedCaptionProfile.targetLanguage;
+                }) &&
+                appState.availableCaptionProfiles.some(function (item) {
+                    return item.id === savedCaptionProfile.id;
+                })) {
+                appState.targetLanguage = savedCaptionProfile.targetLanguage;
+                appState.captionProfileId = savedCaptionProfile.id;
+            } else if (savedCaptionProfile) {
+                savedCaptionProfile = null;
+                els.captionProfileRemember.checked = false;
+            }
+        }
+    }
+
+    function persistCaptionProfile() {
+        captionProfileStorageNotice = "";
+        try {
+            if (els.captionProfileRemember.checked) {
+                savedCaptionProfile = { version: 1, targetLanguage: appState.targetLanguage,
+                    id: appState.captionProfileId };
+                localStorage.setItem(CAPTION_PROFILE_KEY, JSON.stringify(savedCaptionProfile));
+            } else {
+                localStorage.removeItem(CAPTION_PROFILE_KEY);
+                savedCaptionProfile = null;
+            }
+        } catch (_) {
+            savedCaptionProfile = null;
+            els.captionProfileRemember.checked = false;
+            captionProfileStorageNotice = "Could not remember this profile. Your current selection still works.";
+        }
+        renderCaptionProfile();
+    }
+
+    function renderCaptionProfile() {
+        const profiles = appState.availableCaptionProfiles;
+        els.captionProfileEditor.classList.toggle("hidden", profiles.length === 0);
+        const selected = profiles.find(function (item) { return item.id === appState.captionProfileId; });
+        els.captionTiming.innerHTML = "";
+        profiles.forEach(function (item) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.textContent = item.label;
+            els.captionTiming.appendChild(option);
+        });
+        els.captionTiming.value = appState.captionProfileId;
+        const idle = appState.status === "idle_ready" || appState.status === "idle_blocked";
+        els.captionTiming.disabled = !idle;
+        els.captionProfileRemember.disabled = !idle;
+        els.captionProfileClear.disabled = !idle || !savedCaptionProfile;
+        els.captionProfileHelp.textContent = captionProfileStorageNotice ||
+            (selected ? selected.description : "");
+        els.captionProfileSessionNote.classList.toggle("hidden", idle || !selected);
+        if (selected) {
+            els.captionProfileSessionNote.textContent =
+                "Caption timing: " + selected.label + ". Fixed until New Session.";
+        }
     }
 
     // ===== 3.8 Session Preferences Reset =====
@@ -1687,6 +1802,7 @@
         cacheDom();
         loadCaptionsOnlyPreference();
         loadGlossaryPreference();
+        loadCaptionProfile();
         loadBuildIdentity();
         setupAutoScroll();
         setupControls();

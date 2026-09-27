@@ -12,6 +12,7 @@ import orjson
 from app.config import AppConfig
 from app.exporter import export_session
 from app.glossary import Glossary, parse_glossary
+from app.profiles import CaptionProfile
 from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ class SessionJournal:
 
     def record_session_started(self) -> None:
         self._write({"type": "session_started"})
+
+    def record_caption_profile(self, profile: CaptionProfile) -> None:
+        self._write({"type": "session_caption_profile", "caption_profile": profile.model_dump(mode="json")})
 
     def record_glossary(self, glossary: Glossary) -> None:
         self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json")})
@@ -110,6 +114,12 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
 
             if rec_type == "session_started":
                 session.started_at = datetime.fromisoformat(rec["ts"])
+
+            elif rec_type == "session_caption_profile":
+                try:
+                    session.caption_profile = CaptionProfile.model_validate(rec.get("caption_profile"))
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery caption profile metadata — ignored")
 
             elif rec_type == "session_glossary":
                 value = rec.get("glossary")

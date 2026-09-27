@@ -194,6 +194,9 @@ spoken readback. The choice persists across sessions and browser refresh. Use th
 speaker control to turn speech back on. Transcription and translation can still
 incur provider charges. See the [operator guide](docs/captions-only.md).
 
+An unpublished [session profile draft](docs/session-profiles.md) adds explicit
+remembering of a target language and bounded caption timing choices.
+
 Optional [terminology preferences](docs/terminology.md) can guide technical terms.
 Browser storage is opt-in; session exports include the terms used.
 

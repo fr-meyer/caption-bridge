@@ -18,6 +18,7 @@ from app.boundary import BoundaryDetector
 from app.config import settings
 from app.identity import runtime_identity
 from app.journal import SessionJournal, run_recovery
+from app.profiles import resolve_profile
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
 from app.state import SessionManager
@@ -107,12 +108,13 @@ async def _start_pipeline() -> None:
         metrics_callback=manager.record_audio_queue,
         onset_callback=manager.observe_speech_pcm,
     )
+    profile = manager.session.caption_profile or resolve_profile("current", settings)
     detector = BoundaryDetector(
-        pause_timeout_s=settings.pause_timeout_ms / 1000,
+        pause_timeout_s=profile.pause_timeout_ms / 1000,
         on_partial=manager.update_partial,
         on_finalize=manager.finalize_segment,
         fragment_merge_enabled=settings.fragment_merge_enabled,
-        fragment_max_hold_s=settings.fragment_max_hold_ms / 1000,
+        fragment_max_hold_s=profile.fragment_max_hold_ms / 1000,
         min_segment_chars=settings.fragment_min_chars,
         min_segment_tokens=settings.fragment_min_tokens,
     )

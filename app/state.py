@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.config import AppConfig
 from app.glossary import Glossary
 from app.languages import is_valid_target_language
+from app.profiles import CaptionProfile, available_profiles, resolve_profile
 from app.reliability import ReliabilityTracker, write_session_record
 
 if TYPE_CHECKING:
@@ -141,6 +142,7 @@ class Session(BaseModel):
     source_language: str = "auto"
     target_language: str = "en"
     glossary: Glossary | None = None
+    caption_profile: CaptionProfile | None = None
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
 
@@ -214,6 +216,7 @@ class SessionManager:
         return Session(
             source_language=self.config.default_source_language,
             target_language=target,
+            caption_profile=resolve_profile("current", self.config),
         )
 
     # -- event system -------------------------------------------------------
@@ -484,6 +487,8 @@ class SessionManager:
             self.session.started_at = _utcnow()
             if self._journal is not None:
                 self._journal.record_session_started()
+                if self.session.caption_profile is not None:
+                    self._journal.record_caption_profile(self.session.caption_profile)
                 if self.session.glossary is not None:
                     self._journal.record_glossary(self.session.glossary)
 
@@ -590,6 +595,8 @@ class SessionManager:
             "source_language": s.source_language,
             "target_language": s.target_language,
             "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
+            "caption_profile": s.caption_profile.model_dump(mode="json") if s.caption_profile else None,
+            "available_caption_profiles": available_profiles(self.config),
             "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "runtime_metrics": {

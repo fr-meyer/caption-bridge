@@ -16,6 +16,7 @@ from app.config import settings
 from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
+from app.profiles import resolve_profile
 from app.state import RecoveryNotice, SessionManager
 from app.tts import VOICE_MAP
 
@@ -555,6 +556,7 @@ async def _handle_start(
     language = target_language or manager.session.target_language
     try:
         glossary = parse_glossary(msg.get("glossary", []), language)
+        profile = resolve_profile(msg.get("caption_profile", "current"), manager.config)
     except ValueError as exc:
         _enqueue_outbound(
             outbound_queue, {"type": "error", "message": str(exc)}, obs
@@ -562,6 +564,7 @@ async def _handle_start(
         return
     manager.set_target_language(language)
     manager.session.glossary = glossary
+    manager.session.caption_profile = profile
 
     if start_pipeline is not None:
         try:

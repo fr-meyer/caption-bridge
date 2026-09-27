@@ -16,6 +16,9 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 
+from app.config import AppConfig
+from app.profiles import available_profiles, resolve_profile
+
 STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
 _STARTED_AT = "2026-01-01T00:00:00+00:00"
 _ENDED_AT = "2026-01-01T00:01:00+00:00"
@@ -63,6 +66,8 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "recovery_notice": None,
         "source_language": "auto",
         "target_language": "en",
+        "caption_profile": resolve_profile("current", AppConfig(_env_file=None)).model_dump(mode="json"),
+        "available_caption_profiles": available_profiles(AppConfig(_env_file=None)),
         "available_target_languages": [{"code": "en", "label": "English"}],
         "started_at": None,
         "ended_at": None,
@@ -120,6 +125,9 @@ def _snapshot(scenario: str) -> dict[str, Any]:
                 )
             ],
         )
+    elif scenario == "profiles_restored":
+        snapshot.update(status="listening", started_at=_STARTED_AT,
+                        caption_profile=resolve_profile("longer", AppConfig(_env_file=None)).model_dump(mode="json"))
     elif scenario == "glossary_idle":
         snapshot["available_target_languages"].append({"code": "fr", "label": "French"})
     elif scenario != "idle_ready":
