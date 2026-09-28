@@ -37,3 +37,17 @@ A bounded GLM probe returned valid answer and usage data with both thinking and 
 In a later six-case public Korean-to-English comparison, GLM with 1024 tokens and Small with 200 both produced a caption for every case, with no automatic quality flags. GLM preserved the trailing "but" on one paused clause that Small closed as a sentence. Other outputs showed no clear quality advantage; a technical-term rendering was less faithful to "synthetic model." Median API latency was 1,052 ms for GLM versus 658 ms for Small, and completion usage was 1,155 versus 48 tokens across these six cases. These small samples are directional, not a performance guarantee. Two GLM High requests also returned captions, with differing response structures.
 
 The owner prefers GLM 5.3 as the eventual default if representative quality, latency, reliability, and real-audio acceptance support it. These public-text checks do not meet that release gate, so Mistral Small remains the default. The private GCP ledgers contain only public final answers and structural metadata, not thinking text. The cumulative conservative usage-equivalent upper after these checks was $1.1480764 under the owner's revised $1.15 maximum; it is not a bill.
+
+
+### Public recorded-audio check (2026-09-29)
+
+Two Korean [FLEURS](https://huggingface.co/datasets/google/fleurs) test clips (12.48 and 12.36 seconds, CC BY 4.0) were streamed on GCP through Caption Bridge's Voxtral Realtime transcription adapter. Each resulting transcript was translated once with Small and once with Mistral-hosted GLM 5.3 using the production prompt, Provider default thinking, and the model-specific output limits. All six provider requests completed without retry; both models returned usable English captions.
+
+| Clip | First ASR text | Small translation | GLM 5.3 translation |
+| --- | ---: | ---: | ---: |
+| Bridge clearance | 4.2 s | 741 ms, 35 completion tokens | 2,742 ms, 793 completion tokens |
+| Dark matter | 5.5 s | 684 ms, 20 completion tokens | 955 ms, 243 completion tokens |
+
+The first ASR transcript fused a Korean phrase meaning “under the bridge” into a different word. Both translators recovered the bridge-clearance sense; GLM phrased it more naturally. On the second clip, their translations were equivalent. GLM took longer and used more output tokens on both clips. Combined with the six mixed public-text cases above, this does not establish enough quality benefit to change the translation default from Small. High reasoning was not used in this audio check.
+
+This tested recorded public audio, the real ASR adapter, and the production translation prompt. It did not exercise microphone hardware, browser rendering, spoken output, live model switching, or human readability. The added conservative usage-equivalent reservation was $0.0615488, bringing the cumulative upper to $1.2096252 under the owner's $1.25 ceiling. It is not an invoice.
