@@ -57,14 +57,14 @@ caption text into a report. These counters are not a provider invoice.
 No provider/model, microphone format, streaming delay, concurrency, retry limit,
 audio default, automatic startup or retention behavior changes. Default Start
 uses the existing configured detector values. Returning to **Current settings**
-before Start is the per-session rollback. The published v0.3.0 and glossary
-release candidate #60 remain separate and unchanged.
+before Start is the per-session rollback. The published v0.4.0 glossary release
+remains unchanged and is the software rollback for this unpublished draft.
 
 ## Remaining acceptance
 
 GCP tests must prove validation before Start side effects, frozen/reconnect
 timing, new-session reset, export/recovery, explicit storage and active-session
 refresh precedence. Chromium/WebKit tests are synthetic, not native Safari,
-microphone, human readability, VoiceOver or billed provider evidence. Promotion
-requires the glossary release decision and bounded live timing/quality/cost
-evidence within the remaining approved budget.
+microphone, human readability, VoiceOver or billed provider evidence. The glossary predecessor is published. Promotion still requires bounded live
+timing/quality/cost evidence and a rollout decision under approved billing
+controls.
