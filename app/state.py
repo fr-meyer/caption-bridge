@@ -345,7 +345,8 @@ class SessionManager:
             translation_model_revision=self.session.translation_model_revision,
             translation_reasoning_effort=self.session.translation_reasoning_effort,
             translation_max_tokens=translation_output_limit(
-                self.session.translation_reasoning_effort or "default"
+                self.session.translation_model or self.config.translate_model,
+                self.session.translation_reasoning_effort or "default",
             ),
             translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
@@ -370,7 +371,8 @@ class SessionManager:
             translation_model_revision=self.session.translation_model_revision,
             translation_reasoning_effort=self.session.translation_reasoning_effort,
             translation_max_tokens=translation_output_limit(
-                self.session.translation_reasoning_effort or "default"
+                self.session.translation_model or self.config.translate_model,
+                self.session.translation_reasoning_effort or "default",
             ),
             translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )

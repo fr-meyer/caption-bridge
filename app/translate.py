@@ -344,10 +344,10 @@ class TranslationDispatcher:
         self, messages: list[dict], temperature: float
     ) -> str:
         effort = self._request_effort.get()
+        model = self._request_model.get() or self._config.translate_model
         request = dict(
-            model=self._request_model.get() or self._config.translate_model,
-            messages=messages, temperature=temperature,
-            max_tokens=translation_output_limit(effort),
+            model=model, messages=messages, temperature=temperature,
+            max_tokens=translation_output_limit(model, effort),
         )
         if effort == "high":
             request["reasoning_effort"] = "high"
