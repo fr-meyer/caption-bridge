@@ -18,7 +18,7 @@ from app.exporter import export_session
 from app.journal import SessionJournal, run_recovery
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
-from app.translation_models import validate_reasoning_effort
+from app.translation_models import translation_output_limit, validate_reasoning_effort
 
 
 def config_at(path: Path) -> AppConfig:
@@ -28,6 +28,14 @@ def config_at(path: Path) -> AppConfig:
         RECOVERY_EXPORT_DIR=str(path / "recovered"),
         RELIABILITY_DIR=str(path / "reliability"),
     )
+
+
+def test_glm_default_has_room_for_answer_after_thinking() -> None:
+    assert translation_output_limit("zai-glm-5-3", "default") == 1024
+    assert translation_output_limit("zai-glm-5-3", "high") == 1024
+    assert translation_output_limit("mistral-small-latest", "default") == 200
+    assert translation_output_limit("mistral-medium-latest", "default") == 200
+    assert translation_output_limit("mistral-small-latest", "high") == 1024
 
 
 def test_effort_allowlist_is_model_specific(tmp_path: Path) -> None:
@@ -87,22 +95,25 @@ def test_effort_switch_applies_to_future_segments_and_export(tmp_path: Path) -> 
         manager.finalize_segment("이 결과는 통계적으로 유의미하지만 추가 검증이 필요합니다.")
         manager.set_translation_settings("mistral-small-latest", "default")
         manager.finalize_segment("이 결과는 통계적으로 유의미하지만 추가 검증이 필요합니다.")
+        manager.set_translation_settings("zai-glm-5-3", "default")
+        manager.finalize_segment("이 결과는 통계적으로 유의미하지만 추가 검증이 필요합니다.")
         await dispatcher.drain()
-        assert [call["max_tokens"] for call in provider.calls] == [1024, 200]
+        assert [call["max_tokens"] for call in provider.calls] == [1024, 200, 1024]
         assert provider.calls[0]["reasoning_effort"] == "high"
         assert "reasoning_effort" not in provider.calls[1]
+        assert "reasoning_effort" not in provider.calls[2]
         assert [seg.translation_reasoning_effort for seg in manager.session.segments] == [
-            "high", "default"
+            "high", "default", "default"
         ]
-        assert [seg.translation_max_tokens for seg in manager.session.segments] == [1024, 200]
+        assert [seg.translation_max_tokens for seg in manager.session.segments] == [1024, 200, 1024]
         assert manager.session.translation_model_changes[0].reasoning_effort == "default"
         manager.set_status("session_ended")
         exported = Path(export_session(manager.session, config))
         data = json.loads((exported / "transcript.json").read_text())
         assert [seg["translation_reasoning_effort"] for seg in data["segments"]] == [
-            "high", "default"
+            "high", "default", "default"
         ]
-        assert [seg["translation_max_tokens"] for seg in data["segments"]] == [1024, 200]
+        assert [seg["translation_max_tokens"] for seg in data["segments"]] == [1024, 200, 1024]
         records = [json.loads(line) for line in next((tmp_path / "journal").glob("*.jsonl")).read_text().splitlines()]
         assert next(rec for rec in records if rec["type"] == "session_translation_model")["reasoning_effort"] == "high"
 

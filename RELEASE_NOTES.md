@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add an experimental translation thinking selector (Provider default or High) before Start and in Settings. Capture each caption’s requested level and output-token limit in private export/recovery metadata; live changes affect future captions.
+- Give Mistral-hosted GLM 5.3 a 1024-token output allowance even at Provider default; a bounded public-text check showed that 200 tokens could be spent entirely on thinking without a caption. Small and Medium retain the 200-token default allowance. GLM remains an optional model pending broader quality and live-audio acceptance.
 
 - Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Mistral Small remains the default.
 - Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 is an optional preview model; comparative live-caption quality remains to be evaluated.

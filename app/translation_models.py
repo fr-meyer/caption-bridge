@@ -16,8 +16,9 @@ HIGH_REASONING_EFFORT = "high"
 TRANSLATION_PROMPT_VERSION = "academic-caption-v1"
 
 
-def translation_output_limit(effort: str) -> int:
-    return 1024 if effort == HIGH_REASONING_EFFORT else 200
+def translation_output_limit(model: str, effort: str) -> int:
+    # GLM may spend 200 completion tokens on thinking without an answer.
+    return 1024 if model == "zai-glm-5-3" or effort == HIGH_REASONING_EFFORT else 200
 
 
 def available_translation_models(config: AppConfig) -> list[dict[str, str]]:
