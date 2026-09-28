@@ -33,10 +33,9 @@ off the Mac.
 
 ## Rollback
 
-For a future v0.2.1 promotion, the published rollback target is `v0.2.0`
-at `f00d3c65084dff4c0b42c7d05b298a78a846e000` on `main`.
-The earlier `v0.1.0` tag remains available at
-`708f2d3ad3a21488b1a476d3918e7128af2d343a`.
+For v0.4.0, the immediate published rollback is immutable `v0.3.0`
+at `1542b462534590b7183765d9071efff4ae9e65ab` on `main`.
+Earlier `v0.2.1`, `v0.2.0` and `v0.1.0` tags remain available.
 
 1. Stop the controller.
 2. Check out that tag or SHA in a clean tree.

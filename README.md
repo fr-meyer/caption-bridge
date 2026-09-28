@@ -199,6 +199,8 @@ remembering of a target language and bounded caption timing choices.
 
 Optional [terminology preferences](docs/terminology.md) can guide technical terms.
 Browser storage is opt-in; session exports include the terms used.
+See the [public quality evaluation](docs/glossary-quality-evaluation.md) for
+its offline checks and separately authorized live gate.
 
 ## Semantic fragment merging
 
