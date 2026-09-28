@@ -14,8 +14,9 @@ These values control the existing caption boundary detector. They are not
 end-to-end latency promises. Punctuation, semantic boundaries, fragment rules,
 transcription/provider response time, translation and spoken playback still
 affect delivery. A shorter pause can split phrases and increase translation
-requests/cost. A longer pause can delay captions. Live readability/quality and
-cost comparisons are pending; the presets remain an unpublished draft.
+requests/cost. A longer pause can delay captions. The bounded public-text
+comparison below is directional; real-audio and human-readability comparisons
+remain pending. The presets remain an unpublished draft.
 
 The selected timing is fixed at Start and retained across reconnect. **New
 Session** permits a new choice. The active target language can still be changed
@@ -60,11 +61,32 @@ uses the existing configured detector values. Returning to **Current settings**
 before Start is the per-session rollback. The published v0.4.0 glossary release
 remains unchanged and is the software rollback for this unpublished draft.
 
+## Bounded public-text comparison
+
+On GCP, a replay fed two public Korean examples through the production
+boundary detector under each timing choice. One example had a 1.1-second pause
+between complete clauses; the other was a single unpunctuated sentence.
+Shorter pauses finalized the first clause at about 0.8 seconds and made two
+translation requests. Current settings and Longer pauses waited for the second
+clause at about 1.1 seconds and made one request each. The standalone sentence
+finalized at about 0.8 / 1.5 / 2.2 seconds, respectively.
+
+Seven bounded Mistral Small translation requests completed. All seven passed
+the existing automated output-quality checks. Shorter used three requests
+across the examples; Current and Longer used two each. The conservative
+seven-call usage reservation was below $0.01; this is a pricing-based upper
+bound, not a provider invoice. The event replay had no microphone, human
+readability judgment, speech playback or full end-to-end latency measurement.
+The results show the expected latency/request-count tradeoff for these two
+public examples, not a general quality claim.
+
 ## Remaining acceptance
 
-GCP tests must prove validation before Start side effects, frozen/reconnect
-timing, new-session reset, export/recovery, explicit storage and active-session
-refresh precedence. Chromium/WebKit tests are synthetic, not native Safari,
-microphone, human readability, VoiceOver or billed provider evidence. The glossary predecessor is published. Promotion still requires bounded live
-timing/quality/cost evidence and a rollout decision under approved billing
-controls.
+GCP tests cover validation before Start side effects, frozen/reconnect timing,
+new-session reset, export/recovery, explicit storage and active-session refresh
+precedence. Chromium/WebKit and prior native Safari controls were synthetic;
+they do not establish microphone, human readability, VoiceOver or invoiced
+provider evidence. The
+glossary predecessor is published. Promotion still requires real-audio and
+human-readability review, any final native Safari acceptance needed by the
+rollout, and a version/release decision.
