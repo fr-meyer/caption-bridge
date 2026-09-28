@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## v0.4.0 candidate — not yet published
 
 - Add optional, bounded terminology preferences before Start, tied to a session
   and target language. Browser storage requires explicit opt-in.
@@ -8,6 +8,12 @@
   content-free. Existing provider, call/retry limits and retention are unchanged.
 - Add the [terminology guide](docs/terminology.md). Live provider quality
   acceptance remains separate from synthetic prompt/browser checks.
+- Add an offline-by-default [public quality evaluation](docs/glossary-quality-evaluation.md)
+  with an eight-request cap, durable cost reservations and no automatic retry.
+
+Live glossary quality and the final promotion decision remain pending. The
+immutable v0.3.0 release remains the current published version.
+
 
 ## v0.3.0 - 2026-09-27
 

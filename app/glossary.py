@@ -69,10 +69,18 @@ def parse_glossary(raw: object, target_language: str) -> Glossary | None:
 
 
 def add_to_messages(
-    messages: list[dict], glossary: Glossary | None, target_language: str
+    messages: list[dict], glossary: Glossary | None, target_language: str,
+    *, source_text: str,
 ) -> list[dict]:
-    """Copy prompts; encode operator terms as data, including repair prompts."""
+    """Copy prompts; send only terms present in the current source segment."""
     if glossary is None or glossary.target_language != target_language:
+        return messages
+    normalized_source = unicodedata.normalize("NFC", source_text).casefold()
+    relevant = [
+        entry for entry in glossary.entries
+        if entry.source.casefold() in normalized_source
+    ]
+    if not relevant:
         return messages
     result = [dict(message) for message in messages]
     result[0]["content"] += (
@@ -82,7 +90,7 @@ def add_to_messages(
         "Do not translate or echo the terminology list, or add absent terms."
     )
     data = json.dumps(
-        [entry.model_dump() for entry in glossary.entries],
+        [entry.model_dump() for entry in relevant],
         ensure_ascii=False,
         separators=(",", ":"),
     ).replace("<", "\\u003c").replace(">", "\\u003e")
