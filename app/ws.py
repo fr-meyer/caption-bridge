@@ -17,7 +17,10 @@ from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
 from app.state import RecoveryNotice, SessionManager
-from app.translation_models import ERROR_MESSAGE, validate_translation_model
+from app.translation_models import (
+    validate_reasoning_effort,
+    validate_translation_model,
+)
 from app.tts import VOICE_MAP
 
 if TYPE_CHECKING:
@@ -513,10 +516,14 @@ async def _handle_set_translation_model(
     assert manager is not None
     try:
         model = validate_translation_model(msg.get("model"), manager.config)
-        manager.set_translation_model(model)
-    except ValueError:
+        effort = validate_reasoning_effort(
+            msg.get("reasoning_effort", manager.session.translation_reasoning_effort or "default"),
+            model,
+        )
+        manager.set_translation_settings(model, effort)
+    except ValueError as exc:
         _enqueue_outbound(
-            outbound_queue, {"type": "error", "message": ERROR_MESSAGE}, obs
+            outbound_queue, {"type": "error", "message": str(exc)}, obs
         )
 
 
@@ -584,13 +591,16 @@ async def _handle_start(
             msg.get("translation_model", manager.session.translation_model),
             manager.config,
         )
-    except ValueError:
+        effort = validate_reasoning_effort(
+            msg.get("translation_reasoning_effort", "default"), model
+        )
+    except ValueError as exc:
         _enqueue_outbound(
-            outbound_queue, {"type": "error", "message": ERROR_MESSAGE}, obs
+            outbound_queue, {"type": "error", "message": str(exc)}, obs
         )
         return
     manager.set_target_language(language)
-    manager.set_translation_model(model)
+    manager.set_translation_settings(model, effort)
     manager.session.glossary = glossary
 
     if start_pipeline is not None:

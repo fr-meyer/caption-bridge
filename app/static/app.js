@@ -43,6 +43,7 @@
         targetLanguage: "en",
         availableTargetLanguages: [],
         translationModel: "mistral-small-latest",
+        translationReasoningEffort: "default",
         availableTranslationModels: [],
         drawerOpen: false,
         ttsEnabled: true,
@@ -122,6 +123,8 @@
         els.settingsDrawer = $("settings-drawer");
         els.drawerTargetSelect = $("drawer-target-select");
         els.drawerModelSelect = $("drawer-model-select");
+        els.drawerThinkingSelect = $("drawer-thinking-select");
+        els.idleThinkingSelect = $("idle-thinking-select");
         els.drawerModelError = $("drawer-model-error");
         els.idleModelSelect = $("idle-model-select");
         els.sourceToggle = $("source-toggle");
@@ -296,6 +299,7 @@
         appState.translationModel = msg.translation_model ||
             (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
             "mistral-small-latest";
+        appState.translationReasoningEffort = msg.translation_reasoning_effort || "default";
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
         activeGlossary = msg.glossary || null;
@@ -362,6 +366,7 @@
 
         populateLanguageDropdowns();
         populateModelDropdowns();
+        populateThinkingDropdowns();
         renderGlossary();
         fullRender();
 
@@ -459,14 +464,19 @@
     function handleTranslationModelChanged(msg) {
         if (typeof msg.model !== "string") return;
         appState.translationModel = msg.model;
+        if (msg.reasoning_effort === "default" || msg.reasoning_effort === "high") {
+            appState.translationReasoningEffort = msg.reasoning_effort;
+        }
         populateModelDropdowns();
+        populateThinkingDropdowns();
     }
 
     function handleError(msg) {
         console.error("Server error:", msg.message);
 
-        if (msg.message && /model/i.test(msg.message)) {
+        if (msg.message && /model|thinking/i.test(msg.message)) {
             populateModelDropdowns();
+            populateThinkingDropdowns();
             if (els.drawerModelError) {
                 els.drawerModelError.textContent = msg.message;
                 els.drawerModelError.classList.remove("hidden");
@@ -1268,19 +1278,55 @@
         });
     }
 
+    function supportsHighReasoning(model) {
+        return ["mistral-small-latest", "mistral-medium-latest",
+            "zai-glm-5-3"].includes(model);
+    }
+
+    function populateThinkingDropdowns() {
+        [els.idleThinkingSelect, els.drawerThinkingSelect].forEach(function (sel) {
+            sel.innerHTML = "";
+            [["default", "Provider default"], ["high", "High reasoning (experimental)"]].forEach(function (item) {
+                const option = document.createElement("option");
+                option.value = item[0];
+                option.textContent = item[1];
+                option.disabled = item[0] === "high" &&
+                    !supportsHighReasoning(appState.translationModel);
+                sel.appendChild(option);
+            });
+            sel.value = appState.translationReasoningEffort;
+        });
+    }
+
     function renderModelSelectors() {
         if (els.drawerModelSelect) {
             els.drawerModelSelect.disabled = appState.status === "session_ended";
+            els.drawerThinkingSelect.disabled = appState.status === "session_ended";
         }
     }
 
     function handleDrawerModelChange(e) {
         var model = e.target.value;
+        var effort = supportsHighReasoning(model) ?
+            appState.translationReasoningEffort : "default";
         if (appState.status === "idle_ready" || appState.status === "idle_blocked") {
             appState.translationModel = model;
-            if (els.idleModelSelect) els.idleModelSelect.value = model;
+            appState.translationReasoningEffort = effort;
+            els.idleModelSelect.value = model;
+            populateThinkingDropdowns();
         } else {
-            send({ type: "set_translation_model", model: model });
+            send({ type: "set_translation_model", model: model, reasoning_effort: effort });
+        }
+    }
+
+    function handleDrawerThinkingChange(e) {
+        var effort = e.target.value;
+        if (appState.status === "idle_ready" || appState.status === "idle_blocked") {
+            appState.translationReasoningEffort = effort;
+            els.idleThinkingSelect.value = effort;
+        } else {
+            send({ type: "set_translation_model", model: appState.translationModel,
+                reasoning_effort: effort });
         }
     }
 
@@ -1398,9 +1444,18 @@
 
         els.drawerTargetSelect.addEventListener("change", handleDrawerTargetChange);
         els.drawerModelSelect.addEventListener("change", handleDrawerModelChange);
+        els.drawerThinkingSelect.addEventListener("change", handleDrawerThinkingChange);
         els.idleModelSelect.addEventListener("change", function (e) {
             appState.translationModel = e.target.value;
+            if (!supportsHighReasoning(appState.translationModel)) {
+                appState.translationReasoningEffort = "default";
+            }
             els.drawerModelSelect.value = e.target.value;
+            populateThinkingDropdowns();
+        });
+        els.idleThinkingSelect.addEventListener("change", function (e) {
+            appState.translationReasoningEffort = e.target.value;
+            els.drawerThinkingSelect.value = e.target.value;
         });
 
         els.idleTargetSelect.addEventListener("change", function (e) {
@@ -1663,6 +1718,7 @@
         } : null;
         send({ type: "start", target_language: appState.targetLanguage,
             translation_model: appState.translationModel,
+            translation_reasoning_effort: appState.translationReasoningEffort,
             tts_muted: appState.ttsMuted, glossary: entries });
     }
 

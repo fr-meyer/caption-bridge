@@ -42,8 +42,13 @@ class SessionJournal:
     def record_session_started(self) -> None:
         self._write({"type": "session_started"})
 
-    def record_translation_model_start(self, model: str) -> None:
-        self._write({"type": "session_translation_model", "model": model})
+    def record_translation_model_start(
+        self, model: str, reasoning_effort: str | None = None
+    ) -> None:
+        self._write({
+            "type": "session_translation_model", "model": model,
+            "reasoning_effort": reasoning_effort,
+        })
 
     def record_translation_model_change(self, change: TranslationModelChange) -> None:
         self._write({
@@ -64,6 +69,8 @@ class SessionJournal:
             "target_language": seg.target_language,
             "translation_model": seg.translation_model,
             "translation_model_revision": seg.translation_model_revision,
+            "translation_reasoning_effort": seg.translation_reasoning_effort,
+            "translation_max_tokens": seg.translation_max_tokens,
             "translation_prompt_version": seg.translation_prompt_version,
         })
 
@@ -137,12 +144,17 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                 model = rec.get("model")
                 if isinstance(model, str) and model:
                     session.translation_model = model
+                effort = rec.get("reasoning_effort")
+                if effort in {"default", "high"}:
+                    session.translation_reasoning_effort = effort
 
             elif rec_type == "translation_model_changed":
                 try:
                     change = TranslationModelChange.model_validate(rec.get("change"))
                     if change.revision > session.translation_model_revision:
                         session.translation_model = change.model
+                        if change.reasoning_effort in {"default", "high"}:
+                            session.translation_reasoning_effort = change.reasoning_effort
                         session.translation_model_revision = change.revision
                         session.translation_model_changes.append(change)
                 except (ValueError, TypeError):
@@ -172,6 +184,8 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     target_language=rec.get("target_language"),
                     translation_model=rec.get("translation_model"),
                     translation_model_revision=rec.get("translation_model_revision"),
+                    translation_reasoning_effort=rec.get("translation_reasoning_effort"),
+                    translation_max_tokens=rec.get("translation_max_tokens"),
                     translation_prompt_version=rec.get("translation_prompt_version"),
                     translation_status="pending",
                 )

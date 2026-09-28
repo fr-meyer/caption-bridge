@@ -15,6 +15,7 @@ from app.glossary import Glossary, add_to_messages
 from app.languages import get_language_label
 from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
+from app.translation_models import translation_output_limit
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ class TranslationDispatcher:
         self._request_model: ContextVar[str | None] = ContextVar(
             "caption_translation_model", default=None
         )
+        self._request_effort: ContextVar[str] = ContextVar(
+            "caption_translation_reasoning_effort", default="default"
+        )
         self._request_segment: ContextVar[object | None] = ContextVar(
             "caption_translation_segment", default=None
         )
@@ -84,7 +88,7 @@ class TranslationDispatcher:
         task = asyncio.ensure_future(
             self._translate_task(
                 segment, context_segments, session_id, target_language, glossary,
-                model,
+                model, getattr(segment, "translation_reasoning_effort", None) or "default",
             )
         )
         self._in_flight.add(task)
@@ -237,9 +241,11 @@ class TranslationDispatcher:
         self, segment, context_segments: list, session_id: str, target_language: str,
         glossary: Glossary | None = None,
         model: str | None = None,
+        effort: str = "default",
     ) -> None:
         seq = segment.seq
         token = self._request_model.set(model or self._config.translate_model)
+        effort_token = self._request_effort.set(effort)
         segment_token = self._request_segment.set(segment)
         try:
             messages = self._build_messages(segment, context_segments, target_language, glossary)
@@ -314,6 +320,7 @@ class TranslationDispatcher:
             self._session_manager.mark_translation_failed(seq, session_id)
         finally:
             self._request_segment.reset(segment_token)
+            self._request_effort.reset(effort_token)
             self._request_model.reset(token)
 
     def _record_response(self, response: str | TranslationResponse) -> str:
@@ -333,23 +340,25 @@ class TranslationDispatcher:
                 )
         return response.text
 
-    async def _call_api(self, messages: list[dict]) -> str:
-        response = await self._provider.translate(
+    async def _request_translation(
+        self, messages: list[dict], temperature: float
+    ) -> str:
+        effort = self._request_effort.get()
+        request = dict(
             model=self._request_model.get() or self._config.translate_model,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=200,
+            messages=messages, temperature=temperature,
+            max_tokens=translation_output_limit(effort),
         )
+        if effort == "high":
+            request["reasoning_effort"] = "high"
+        response = await self._provider.translate(**request)
         return self._record_response(response)
 
+    async def _call_api(self, messages: list[dict]) -> str:
+        return await self._request_translation(messages, 0.2)
+
     async def _call_repair_api(self, messages: list[dict]) -> str:
-        response = await self._provider.translate(
-            model=self._request_model.get() or self._config.translate_model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=200,
-        )
-        return self._record_response(response)
+        return await self._request_translation(messages, 0.0)
 
     async def _check_and_repair(
         self, raw_text: str, segment, target_language: str,

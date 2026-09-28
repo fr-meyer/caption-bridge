@@ -64,6 +64,7 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "source_language": "auto",
         "target_language": "en",
         "translation_model": "mistral-small-latest",
+        "translation_reasoning_effort": "default",
         "available_translation_models": [
             {"id": "mistral-small-latest", "label": "Mistral Small (latest)"},
             {"id": "mistral-medium-latest", "label": "Mistral Medium (latest)"},

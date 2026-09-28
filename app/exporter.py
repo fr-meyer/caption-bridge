@@ -127,6 +127,7 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
         "source_language": session.source_language,
         "target_language": session.target_language,
         "translation_model_at_export": session.translation_model,
+        "translation_reasoning_effort_at_export": session.translation_reasoning_effort,
         "translation_model_changes": [
             change.model_dump(mode="json") for change in session.translation_model_changes
         ],
@@ -152,6 +153,8 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
                 "target_language": seg.target_language,
                 "translation_model": seg.translation_model,
                 "translation_model_revision": seg.translation_model_revision,
+                "translation_reasoning_effort": seg.translation_reasoning_effort,
+                "translation_max_tokens": seg.translation_max_tokens,
                 "translation_prompt_version": seg.translation_prompt_version,
                 "translation_model_resolved": seg.translation_model_resolved,
                 "translation_prompt_tokens": seg.translation_prompt_tokens,
