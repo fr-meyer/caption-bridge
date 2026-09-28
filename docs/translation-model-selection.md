@@ -13,3 +13,11 @@ The -latest IDs are aliases and can point to a newer release later. A response m
 No model choice is saved in browser storage. A fresh session starts from the server's configured default. The journal persists the session's model changes and per-segment metadata for interrupted-session recovery; old journals retain unknown model metadata rather than guessing.
 
 References: [Mistral model lifecycle](https://docs.mistral.ai/inference/model-lifecycle), [GLM 5.3 model](https://docs.mistral.ai/models/zai-glm-5-3), [Mistral chat API](https://docs.mistral.ai/api).
+
+## Bounded public-text comparison
+
+Run python -m scripts.compare_translation_models on GCP for an offline plan. It prepares one fixed Korean-English public caption with the production translation prompt for all three listed models and makes no provider calls by default.
+
+Live mode requires --live, --key-stdin or a process environment key, --ledger, --prior-cost-upper-usd, and an allowance that fits the unchanged $1 project ceiling. It sends at most three sequential Chat Completions requests, each capped at 200 output tokens, with no retry. It durably reserves a conservative upper bound before each request and will not replay an existing ledger. The private ledger contains the public source/output text, model IDs, reported token usage, latency, and automated quality signals. Keep it outside the repository with owner-only permissions. The CLI prints only counts, bounds, and static failure codes.
+
+The reservation uses twice the standard token rates listed by [Mistral pricing](https://docs.mistral.ai/inference/pricing) on 2026-09-28. It bounds this run's usage equivalent; it is not an invoice. The single public sentence can establish API availability and a directional latency/quality observation, not comparative superiority. Human review on a broader representative corpus is required before changing the default.
