@@ -281,6 +281,13 @@ class TranslationDispatcher:
                     if translated is None:
                         return
 
+            if not translated or not translated.strip():
+                logger.warning("Translation provider returned no answer text for segment #%d", seq)
+                self._session_manager.mark_translation_failed(
+                    seq, session_id, reason="provider_no_text"
+                )
+                return
+
             translated, quality = await self._check_and_repair(
                 translated, segment, target_language, glossary
             )

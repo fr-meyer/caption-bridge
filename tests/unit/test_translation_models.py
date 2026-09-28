@@ -127,6 +127,40 @@ def test_switch_keeps_in_flight_segments_on_their_original_model(tmp_path: Path)
     asyncio.run(scenario())
 
 
+def test_empty_provider_answer_fails_without_another_request(tmp_path: Path) -> None:
+    class EmptyProvider:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def translate(self, **kwargs) -> TranslationResponse:
+            self.calls += 1
+            return TranslationResponse(
+                text="", resolved_model=kwargs["model"],
+                prompt_tokens=155, completion_tokens=200,
+            )
+
+    async def scenario() -> None:
+        config = config_at(tmp_path)
+        manager = SessionManager(config)
+        provider = EmptyProvider()
+        dispatcher = TranslationDispatcher(manager, config, provider)
+        manager.set_dispatcher(dispatcher)
+        manager.session.status = "listening"
+        manager.session.started_at = datetime.now(timezone.utc)
+        manager.finalize_segment("이 결과는 통계적으로 유의미합니다.")
+        await dispatcher.drain()
+        segment = manager.session.segments[0]
+        assert provider.calls == 1
+        assert segment.translation_status == "failed"
+        assert segment.failure_reason == "provider_no_text"
+        assert segment.translation_model_resolved == "mistral-small-latest"
+        assert segment.translation_completion_tokens == 200
+
+    asyncio.run(scenario())
+
+
 def test_recovery_preserves_each_model_and_old_unknown_metadata(tmp_path: Path) -> None:
     config = config_at(tmp_path)
     journal = SessionJournal("model-session", config)

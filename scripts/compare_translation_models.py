@@ -21,6 +21,7 @@ from typing import Callable
 import httpx
 
 from app.config import AppConfig
+from app.providers import extract_translation_text
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
 from app.translation_quality import check
@@ -111,14 +112,19 @@ def request_translation(
         raise EvaluationError("provider_http_failure_no_retry")
     try:
         data = response.json()
-        output = data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+    except Exception:
+        raise EvaluationError("provider_response_invalid_no_retry") from None
+    output = extract_translation_text(content)
+    if not output:
+        raise EvaluationError("provider_no_answer_text_no_retry")
+    try:
         usage = data["usage"]
         prompt = usage["prompt_tokens"]
         completion = usage["completion_tokens"]
         resolved = data.get("model")
         if (
-            not isinstance(output, str)
-            or type(prompt) is not int
+            type(prompt) is not int
             or type(completion) is not int
             or not 0 <= prompt <= item["input_token_bound"]
             or not 0 <= completion <= MAX_OUTPUT_TOKENS
@@ -126,7 +132,7 @@ def request_translation(
         ):
             raise ValueError
     except Exception:
-        raise EvaluationError("provider_response_or_usage_invalid_no_retry") from None
+        raise EvaluationError("provider_usage_invalid_no_retry") from None
     return output.strip(), {
         "prompt_tokens": prompt,
         "completion_tokens": completion,

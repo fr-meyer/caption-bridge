@@ -16,6 +16,23 @@ class TranslationResponse:
     completion_tokens: int | None = None
 
 
+def extract_translation_text(content: object) -> str:
+    """Use answer text, excluding provider thinking and non-text chunks."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for chunk in content:
+            kind = chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None)
+            if kind != "text":
+                continue
+            value = chunk.get("text") if isinstance(chunk, dict) else getattr(chunk, "text", None)
+            if isinstance(value, str):
+                parts.append(value)
+        return "".join(parts).strip()
+    return ""
+
+
 class TranslationProvider(Protocol):
     """Narrow seam used by the dispatcher and deterministic resilience tests."""
 
@@ -54,7 +71,7 @@ class MistralTranslationProvider:
         )
         usage = getattr(response, "usage", None)
         return TranslationResponse(
-            text=response.choices[0].message.content.strip(),
+            text=extract_translation_text(response.choices[0].message.content),
             resolved_model=getattr(response, "model", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),

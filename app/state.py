@@ -438,7 +438,9 @@ class SessionManager:
             self._journal.record_translation_updated(seg)
         self._try_deliver()
 
-    def mark_translation_failed(self, seq: int, session_id: str) -> None:
+    def mark_translation_failed(
+        self, seq: int, session_id: str, reason: str | None = None
+    ) -> None:
         if session_id != self.session.id:
             logger.warning(
                 "mark_translation_failed: ignoring stale callback for seq #%d "
@@ -451,6 +453,8 @@ class SessionManager:
             logger.warning("mark_translation_failed: segment #%d not found", seq)
             return
         seg.translation_status = "failed"
+        if reason is not None:
+            seg.failure_reason = reason
         seg.translated_at = _utcnow()
         if self._journal is not None:
             self._journal.record_translation_updated(seg)

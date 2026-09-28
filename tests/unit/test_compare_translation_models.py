@@ -11,6 +11,7 @@ from scripts.compare_translation_models import (
     MODELS,
     EvaluationError,
     build_plan,
+    request_translation,
     run_live,
     validate_budget,
 )
@@ -53,3 +54,40 @@ def test_reservations_are_durable_and_never_replayed(tmp_path) -> None:
     with pytest.raises(EvaluationError, match="ledger_exists_no_automatic_replay"):
         run_live(plan, "test-key", ledger, PRIOR, Decimal("0.02"), request)
     assert calls == list(MODELS[:2])
+
+
+def test_chunked_public_response_uses_text_and_rejects_thinking_only() -> None:
+    class Client:
+        def __init__(self, content) -> None:
+            self.content = content
+
+        def post(self, *args, **kwargs):
+            class Response:
+                status_code = 200
+
+                def __init__(self, content) -> None:
+                    self.content = content
+
+                def json(self):
+                    return {
+                        "model": "zai-glm-5-3",
+                        "choices": [{"message": {"content": self.content}}],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+                    }
+
+            return Response(self.content)
+
+    item = build_plan()[2]
+    answer, usage = request_translation(
+        Client([
+            {"type": "thinking", "thinking": "not a caption"},
+            {"type": "text", "text": "Further validation is needed."},
+        ]), "test-key", item
+    )
+    assert answer == "Further validation is needed."
+    assert usage["resolved_model"] == "zai-glm-5-3"
+    with pytest.raises(EvaluationError, match="provider_no_answer_text_no_retry"):
+        request_translation(
+            Client([{"type": "thinking", "thinking": "still reasoning"}]),
+            "test-key", item,
+        )
