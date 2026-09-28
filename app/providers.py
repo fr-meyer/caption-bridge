@@ -45,6 +45,7 @@ class TranslationProvider(Protocol):
         messages: list[dict],
         temperature: float,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> str | TranslationResponse:
         """Return translated text and optional response metadata, or raise."""
 
@@ -62,13 +63,15 @@ class MistralTranslationProvider:
         messages: list[dict],
         temperature: float,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> TranslationResponse:
-        response = await self._client.chat.complete_async(
-            model=model,
-            messages=messages,
-            temperature=temperature,
+        request = dict(
+            model=model, messages=messages, temperature=temperature,
             max_tokens=max_tokens,
         )
+        if reasoning_effort is not None:
+            request["reasoning_effort"] = reasoning_effort
+        response = await self._client.chat.complete_async(**request)
         usage = getattr(response, "usage", None)
         return TranslationResponse(
             text=extract_translation_text(response.choices[0].message.content),

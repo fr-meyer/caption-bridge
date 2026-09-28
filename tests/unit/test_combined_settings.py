@@ -33,16 +33,20 @@ def test_combined_settings_are_recorded(monkeypatch, tmp_path: Path) -> None:
         monkeypatch.setattr(ws, "start_pipeline", start)
         await ws._handle_start(
             {"type": "start", "caption_profile": "shorter",
-             "translation_model": "mistral-medium-latest"},
+             "translation_model": "mistral-medium-latest",
+             "translation_reasoning_effort": "high"},
             asyncio.Queue(), ws._OutboundObsState(),
         )
         assert manager.session.caption_profile.id == "shorter"
         assert manager.session.translation_model == "mistral-medium-latest"
+        assert manager.session.translation_reasoning_effort == "high"
         manager.set_status("session_ended")
         exported = Path(export_session(manager.session, config))
         data = json.loads((exported / "transcript.json").read_text())
         assert data["caption_profile"]["id"] == "shorter"
         assert data["translation_model_at_export"] == "mistral-medium-latest"
+        assert data["translation_reasoning_effort_at_export"] == "high"
         records = [json.loads(line) for line in next((tmp_path / "journal").glob("*.jsonl")).read_text().splitlines()]
         assert {record["type"] for record in records} >= {"session_caption_profile", "session_translation_model"}
+        assert next(record for record in records if record["type"] == "session_translation_model")["reasoning_effort"] == "high"
     asyncio.run(scenario())

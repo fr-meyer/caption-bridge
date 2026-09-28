@@ -69,6 +69,7 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "caption_profile": resolve_profile("current", AppConfig(_env_file=None)).model_dump(mode="json"),
         "available_caption_profiles": available_profiles(AppConfig(_env_file=None)),
         "translation_model": "mistral-small-latest",
+        "translation_reasoning_effort": "default",
         "available_translation_models": [
             {"id": "mistral-small-latest", "label": "Mistral Small (latest)"},
             {"id": "mistral-medium-latest", "label": "Mistral Medium (latest)"},

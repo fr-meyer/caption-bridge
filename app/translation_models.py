@@ -10,7 +10,14 @@ _CHOICES = (
     ("zai-glm-5-3", "Z.ai GLM 5.3 (preview)"),
 )
 ERROR_MESSAGE = "Choose a listed translation model."
+EFFORT_ERROR_MESSAGE = "Choose an available translation thinking level."
+DEFAULT_REASONING_EFFORT = "default"
+HIGH_REASONING_EFFORT = "high"
 TRANSLATION_PROMPT_VERSION = "academic-caption-v1"
+
+
+def translation_output_limit(effort: str) -> int:
+    return 1024 if effort == HIGH_REASONING_EFFORT else 200
 
 
 def available_translation_models(config: AppConfig) -> list[dict[str, str]]:
@@ -21,6 +28,16 @@ def available_translation_models(config: AppConfig) -> list[dict[str, str]]:
             "label": "Configured default",
         })
     return choices
+
+
+def validate_reasoning_effort(raw: object, model: str) -> str:
+    """Only expose the Mistral request value used by its Vibe adapter."""
+    allowed = {DEFAULT_REASONING_EFFORT}
+    if model in {item[0] for item in _CHOICES}:
+        allowed.add(HIGH_REASONING_EFFORT)
+    if not isinstance(raw, str) or raw not in allowed:
+        raise ValueError(EFFORT_ERROR_MESSAGE)
+    return raw
 
 
 def validate_translation_model(raw: object, config: AppConfig) -> str:

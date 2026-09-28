@@ -20,6 +20,8 @@ from app.reliability import ReliabilityTracker, write_session_record
 from app.translation_models import (
     TRANSLATION_PROMPT_VERSION,
     available_translation_models,
+    translation_output_limit,
+    validate_reasoning_effort,
     validate_translation_model,
 )
 
@@ -99,6 +101,8 @@ class Segment(BaseModel):
     target_language: str | None = None
     translation_model: str | None = None
     translation_model_revision: int | None = None
+    translation_reasoning_effort: str | None = None
+    translation_max_tokens: int | None = None
     translation_prompt_version: str | None = None
     translation_model_resolved: str | None = None
     translation_prompt_tokens: int | None = None
@@ -114,6 +118,7 @@ class TranslationModelChange(BaseModel):
 
     changed_at: datetime = Field(default_factory=_utcnow)
     model: str
+    reasoning_effort: str | None = None
     revision: int
     applies_from_seq: int
 
@@ -163,6 +168,7 @@ class Session(BaseModel):
     target_language: str = "en"
     translation_model: str | None = None
     translation_model_revision: int = 0
+    translation_reasoning_effort: str | None = None
     translation_model_changes: list[TranslationModelChange] = Field(default_factory=list)
     glossary: Glossary | None = None
     caption_profile: CaptionProfile | None = None
@@ -241,6 +247,7 @@ class SessionManager:
             target_language=target,
             caption_profile=resolve_profile("current", self.config),
             translation_model=self.config.translate_model,
+            translation_reasoning_effort="default",
         )
 
     # -- event system -------------------------------------------------------
@@ -336,6 +343,10 @@ class SessionManager:
             target_language=self.session.target_language,
             translation_model=self.session.translation_model,
             translation_model_revision=self.session.translation_model_revision,
+            translation_reasoning_effort=self.session.translation_reasoning_effort,
+            translation_max_tokens=translation_output_limit(
+                self.session.translation_reasoning_effort or "default"
+            ),
             translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
@@ -357,6 +368,10 @@ class SessionManager:
             target_language=self.session.target_language,
             translation_model=self.session.translation_model,
             translation_model_revision=self.session.translation_model_revision,
+            translation_reasoning_effort=self.session.translation_reasoning_effort,
+            translation_max_tokens=translation_output_limit(
+                self.session.translation_reasoning_effort or "default"
+            ),
             translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
@@ -489,6 +504,8 @@ class SessionManager:
                     "target_language": seg.target_language,
                     "translation_model": seg.translation_model,
                     "translation_model_revision": seg.translation_model_revision,
+                    "translation_reasoning_effort": seg.translation_reasoning_effort,
+                    "translation_max_tokens": seg.translation_max_tokens,
                     "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
                     "segment_kind": seg.segment_kind,
@@ -527,7 +544,8 @@ class SessionManager:
                     self._journal.record_caption_profile(self.session.caption_profile)
                 if self.session.translation_model is not None:
                     self._journal.record_translation_model_start(
-                        self.session.translation_model
+                        self.session.translation_model,
+                        self.session.translation_reasoning_effort,
                     )
                 if self.session.glossary is not None:
                     self._journal.record_glossary(self.session.glossary)
@@ -636,6 +654,7 @@ class SessionManager:
             "target_language": s.target_language,
             "translation_model": s.translation_model,
             "translation_model_revision": s.translation_model_revision,
+            "translation_reasoning_effort": s.translation_reasoning_effort,
             "translation_model_changes": [
                 change.model_dump(mode="json") for change in s.translation_model_changes
             ],
@@ -661,15 +680,21 @@ class SessionManager:
         logger.info("Target language set to %s", language)
 
     def set_translation_model(self, raw: object) -> None:
-        model = validate_translation_model(raw, self.config)
+        self.set_translation_settings(
+            raw, self.session.translation_reasoning_effort or "default"
+        )
+
+    def set_translation_settings(self, raw_model: object, raw_effort: object) -> None:
+        model = validate_translation_model(raw_model, self.config)
+        effort = validate_reasoning_effort(raw_effort, model)
         if self.session.status == "session_ended":
-            raise ValueError("Start a new session before choosing a model.")
-        if model == self.session.translation_model:
+            raise ValueError("Start a new session before choosing translation settings.")
+        if model == self.session.translation_model and effort == self.session.translation_reasoning_effort:
             return
         if self.session.started_at is not None:
             self.session.translation_model_revision += 1
             change = TranslationModelChange(
-                model=model,
+                model=model, reasoning_effort=effort,
                 revision=self.session.translation_model_revision,
                 applies_from_seq=self.session.next_seq,
             )
@@ -677,8 +702,10 @@ class SessionManager:
             if self._journal is not None:
                 self._journal.record_translation_model_change(change)
         self.session.translation_model = model
+        self.session.translation_reasoning_effort = effort
         self._emit("translation_model_changed", {
             "model": model,
+            "reasoning_effort": effort,
             "revision": self.session.translation_model_revision,
             "applies_from_seq": self.session.next_seq,
         })

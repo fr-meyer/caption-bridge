@@ -1,4 +1,4 @@
-"""A single session can use a timing profile and selected translation model."""
+"""A single session can use a timing profile and selected translation model and thinking level."""
 
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ def test_start_sends_both_settings(page: Page, browser_harness: BrowserHarness) 
     page.goto(browser_harness.url, wait_until="domcontentloaded")
     browser_harness.wait_for_connections(1)
     page.locator("#idle-model-select").select_option("mistral-medium-latest")
+    page.locator("#idle-thinking-select").select_option("high")
     page.locator("#caption-profile-editor summary").click()
     page.locator("#caption-timing").select_option("shorter")
     page.get_by_role("button", name="Start", exact=True).click()
     message = browser_harness.wait_for_message("start")
     assert message["translation_model"] == "mistral-medium-latest"
+    assert message["translation_reasoning_effort"] == "high"
     assert message["caption_profile"] == "shorter"
