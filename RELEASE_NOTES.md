@@ -18,10 +18,9 @@ On the final glossary code, eight public-text live quality cases passed. GCP
 release gates passed 246 Python tests (1 skipped), 28 Chromium/WebKit browser
 contracts, lint, quality/segmentation benchmarks, a 1,000-segment resilience
 soak and the full-pipeline scenario. Exact-head GitHub Python 3.11, Python 3.13
-and browser checks passed before main promotion. The two bounded live runs,
-including an earlier failed adversarial case that prompted the matching-term
-fix, kept the conservative project API-usage upper bound below the approved $1
-maximum. Neither run used a microphone or speech playback. This evidence does
+and browser checks passed before main promotion. An earlier adversarial case
+failed and prompted the matching-term fix; the bounded follow-up passed.
+Neither run used a microphone or speech playback. This evidence does
 not establish general translation accuracy, human playback quality, complete
 VoiceOver support or physical Windows support.
 
