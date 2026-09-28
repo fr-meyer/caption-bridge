@@ -1,5 +1,33 @@
 # Release notes
 
+## v0.4.0 - 2026-09-28
+
+- Add optional, bounded terminology preferences before Start, tied to a session
+  and target language. Browser storage requires explicit opt-in.
+- Send only preferred terms whose source occurs in the current caption segment.
+  Terms appearing only in earlier context or elsewhere in the glossary are
+  withheld from translation and repair prompts.
+- Preserve the session glossary in private export/recovery metadata; keep
+  diagnostics content-free. Existing provider, call/retry limits and retention
+  are unchanged.
+- Add the [terminology guide](docs/terminology.md) and offline-by-default
+  [public quality evaluation](docs/glossary-quality-evaluation.md) with an
+  eight-request cap, durable cost reservations and no automatic retry.
+
+On the final glossary code, eight public-text live quality cases passed. GCP
+release gates passed 246 Python tests (1 skipped), 28 Chromium/WebKit browser
+contracts, lint, quality/segmentation benchmarks, a 1,000-segment resilience
+soak and the full-pipeline scenario. Exact-head GitHub Python 3.11, Python 3.13
+and browser checks passed before main promotion. An earlier adversarial case
+failed and prompted the matching-term fix; the bounded follow-up passed.
+Neither run used a microphone or speech playback. This evidence does
+not establish general translation accuracy, human playback quality, complete
+VoiceOver support or physical Windows support.
+
+The immutable v0.3.0 release is the immediate rollback. The app remains
+on-demand and loopback only; Mistral remains its sole production provider.
+
+
 ## v0.3.0 - 2026-09-27
 
 - Add a persistent **Captions only** preference before a session and in Settings.

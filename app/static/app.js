@@ -6,6 +6,9 @@
     const FONT_SIZES = [20, 24, 28, 32, 36, 40];
     const DEFAULT_FONT_SIZE = 28;
     const CAPTIONS_ONLY_KEY = "captionBridge.captionsOnly";
+    const GLOSSARY_KEY = "captionBridge.glossary";
+    const glossaryDrafts = Object.create(null);
+    let activeGlossary = null;
 
     const TTS_SUPPORTED_LANGUAGES = new Set([
         "en", "fr", "de", "es", "nl", "pt", "it", "hi", "ar",
@@ -132,6 +135,12 @@
         els.captionsOnlyIdle = $("captions-only-idle");
         els.captionsOnlyDrawer = $("captions-only-drawer");
         els.buildIdentity = $("build-identity");
+        els.glossaryTerms = $("glossary-terms");
+        els.glossaryRemember = $("glossary-remember");
+        els.glossaryClear = $("glossary-clear");
+        els.glossaryError = $("glossary-error");
+        els.glossaryLanguage = $("glossary-language");
+        els.glossarySessionNote = $("glossary-session-note");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -277,6 +286,7 @@
         appState.availableTargetLanguages = msg.available_target_languages || [];
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
+        activeGlossary = msg.glossary || null;
 
         appState.exportFailure = msg.export_failure || null;
         if (appState.exportFailure && msg.status === "session_ended") {
@@ -338,6 +348,7 @@
         }
 
         populateLanguageDropdowns();
+        renderGlossary();
         fullRender();
 
         if (wasReviewing) {
@@ -380,6 +391,7 @@
             appState.exportFailureModalVisible = false;
         }
 
+        renderGlossary();
         render();
     }
 
@@ -1191,6 +1203,7 @@
     }
 
     function populateLanguageDropdowns() {
+        renderGlossary();
         var langs = appState.availableTargetLanguages;
         if (langs.length === 0) {
             langs = [{ code: "en", label: "English" }];
@@ -1218,6 +1231,7 @@
         }
         renderHeaderLang();
         renderTtsControls();
+        renderGlossary();
     }
 
     // ===== 3.5 Auto-Scroll =====
@@ -1246,10 +1260,35 @@
     // ===== 3.6 Controls & Event Listeners =====
 
     function setupControls() {
+        els.glossaryTerms.addEventListener("input", function () {
+            glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
+            els.glossaryError.classList.add("hidden");
+            // Only explicit opt-in allows content to reach browser storage.
+            if (els.glossaryRemember.checked) {
+                try { parseGlossaryText(els.glossaryTerms.value); persistGlossary(); }
+                catch (_) { /* retain the last valid saved draft */ }
+            }
+        });
+        els.glossaryRemember.addEventListener("change", function () {
+            glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
+            if (!els.glossaryRemember.checked) { persistGlossary(); return; }
+            try { parseGlossaryText(els.glossaryTerms.value); persistGlossary(); }
+            catch (error) {
+                els.glossaryRemember.checked = false;
+                persistGlossary();
+                els.glossaryError.textContent = error.message;
+                els.glossaryError.classList.remove("hidden");
+            }
+        });
+        els.glossaryClear.addEventListener("click", function () {
+            glossaryDrafts[appState.targetLanguage] = "";
+            persistGlossary();
+            renderGlossary();
+        });
         els.startBtn.addEventListener("click", function () {
             appState.recoverySuppressed = true;
             appState.recoveryNotice = null;
-            send({ type: "start", target_language: appState.targetLanguage, tts_muted: appState.ttsMuted });
+            startWithGlossary();
         });
 
         els.stopBtn.addEventListener("click", function () {
@@ -1300,6 +1339,7 @@
         els.idleTargetSelect.addEventListener("change", function (e) {
             appState.targetLanguage = e.target.value;
             renderHeaderLang();
+            renderGlossary();
         });
 
         els.dismissRecovery.addEventListener("click", function () {
@@ -1427,7 +1467,7 @@
                 if (s === "idle_ready" && appState.recoveryFailure === null) {
                     appState.recoverySuppressed = true;
                     appState.recoveryNotice = null;
-                    send({ type: "start", target_language: appState.targetLanguage, tts_muted: appState.ttsMuted });
+                    startWithGlossary();
                 } else if (s === "listening" || s === "reconnecting") {
                     send({ type: "stop" });
                 }
@@ -1467,6 +1507,95 @@
                 return;
             }
         });
+    }
+
+    // ===== Terminology preferences =====
+
+    function parseGlossaryText(text) {
+        const lines = text.split("\n").map(function (line) { return line.trim(); }).filter(Boolean);
+        if (lines.length > 20) throw new Error("Use at most 20 terminology pairs.");
+        const seen = new Set();
+        return lines.map(function (line) {
+            const at = line.indexOf("=>");
+            if (at < 0) throw new Error("Use Source term => preferred rendering on each line.");
+            const source = line.slice(0, at).trim().normalize("NFC");
+            const preferred = line.slice(at + 2).trim().normalize("NFC");
+            if ([source, preferred].some(function (term) {
+                return !term || Array.from(term).length > 80 || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(term);
+            })) throw new Error("Each term needs 1–80 characters without control characters.");
+            const key = source.toLowerCase();
+            if (seen.has(key)) throw new Error("Each source term must be unique.");
+            seen.add(key);
+            return { source: source, preferred: preferred };
+        });
+    }
+
+    function loadGlossaryPreference() {
+        try {
+            const savedText = localStorage.getItem(GLOSSARY_KEY);
+            if (!savedText || savedText.length > 5000) return;
+            const saved = JSON.parse(savedText);
+            if (typeof saved.targetLanguage !== "string" || typeof saved.text !== "string" ||
+                saved.text.length > 4000 || !/^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(saved.targetLanguage)) return;
+            parseGlossaryText(saved.text);
+            glossaryDrafts[saved.targetLanguage] = saved.text;
+            els.glossaryRemember.checked = true;
+        } catch (_) { /* invalid or unavailable storage does not activate terms */ }
+    }
+
+    function persistGlossary() {
+        try {
+            const text = glossaryDrafts[appState.targetLanguage] || "";
+            if (els.glossaryRemember.checked && text.trim()) {
+                localStorage.setItem(GLOSSARY_KEY, JSON.stringify({
+                    targetLanguage: appState.targetLanguage, text: text
+                }));
+            } else {
+                const saved = JSON.parse(localStorage.getItem(GLOSSARY_KEY) || "null");
+                if (!els.glossaryRemember.checked ||
+                    (saved && saved.targetLanguage === appState.targetLanguage)) {
+                    localStorage.removeItem(GLOSSARY_KEY);
+                }
+            }
+        } catch (_) { /* storage may be unavailable */ }
+    }
+
+    function renderGlossary() {
+        if (!els.glossaryTerms) return;
+        const label = appState.availableTargetLanguages.find(function (lang) {
+            return lang.code === appState.targetLanguage;
+        });
+        els.glossaryLanguage.textContent = label ? label.label : appState.targetLanguage;
+        els.glossaryTerms.value = glossaryDrafts[appState.targetLanguage] || "";
+        els.glossaryError.classList.add("hidden");
+        const active = activeGlossary && Array.isArray(activeGlossary.entries) &&
+            activeGlossary.entries.length > 0;
+        els.glossarySessionNote.classList.toggle("hidden", !active ||
+            appState.status === "idle_ready" || appState.status === "idle_blocked");
+        if (active) {
+            els.glossarySessionNote.textContent = activeGlossary.target_language === appState.targetLanguage
+                ? "Session terminology is fixed until New Session."
+                : "Session terminology is paused for this target language.";
+        }
+    }
+
+    function startWithGlossary() {
+        let entries;
+        try {
+            entries = parseGlossaryText(els.glossaryTerms.value);
+        } catch (error) {
+            els.glossaryError.textContent = error.message;
+            els.glossaryError.classList.remove("hidden");
+            els.glossaryTerms.focus();
+            return;
+        }
+        glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
+        persistGlossary();
+        activeGlossary = entries.length ? {
+            entries: entries, target_language: appState.targetLanguage
+        } : null;
+        send({ type: "start", target_language: appState.targetLanguage,
+            tts_muted: appState.ttsMuted, glossary: entries });
     }
 
     // ===== 3.8 Session Preferences Reset =====
@@ -1557,6 +1686,7 @@
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
         loadCaptionsOnlyPreference();
+        loadGlossaryPreference();
         loadBuildIdentity();
         setupAutoScroll();
         setupControls();

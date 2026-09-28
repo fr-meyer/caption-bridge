@@ -73,10 +73,20 @@
             <input id="captions-only-idle" type="checkbox">
             <span><strong>Captions only</strong><small>Keep spoken readback off. Remember this choice on this browser.</small></span>
         </label>
+        <details id="glossary-editor" class="glossary-editor">
+            <summary>Terminology (optional)</summary>
+            <label for="glossary-terms">Preferred terms for <span id="glossary-language">English</span></label>
+            <textarea id="glossary-terms" rows="4" maxlength="4000" aria-describedby="glossary-help glossary-error" placeholder="Source term => preferred rendering"></textarea>
+            <small id="glossary-help">One pair per line; up to 20 pairs, 80 characters per term. Terms go to the translation provider and your session export. They can increase cost.</small>
+            <label class="glossary-remember"><input id="glossary-remember" type="checkbox"> Remember terms on this browser</label>
+            <button id="glossary-clear" class="btn-secondary" type="button">Clear terms</button>
+            <p id="glossary-error" class="export-error hidden" role="alert"></p>
+        </details>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
 
+    <p id="glossary-session-note" class="glossary-session-note hidden" role="status"></p>
     <div id="source-partial" class="source-partial"></div>
 
     <div id="caption-log" class="caption-log"></div>

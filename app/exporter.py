@@ -46,6 +46,13 @@ def _format_relative_timestamp(session: Session, seg: Segment) -> str:
 
 def _write_transcript_txt(export_dir: Path, session: Session) -> None:
     lines: list[str] = []
+    if session.glossary is not None:
+        lines.append(f"Terminology preferences ({session.glossary.target_language}):")
+        lines.extend(
+            f"  {entry.source} => {entry.preferred}"
+            for entry in session.glossary.entries
+        )
+        lines.append("")
     for seg in session.segments:
         ts = _format_relative_timestamp(session, seg)
         prefix = f"[{ts}] "
@@ -119,6 +126,7 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
         "session_id": session.id,
         "source_language": session.source_language,
         "target_language": session.target_language,
+        "glossary": session.glossary.model_dump(mode="json") if session.glossary else None,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "config": {

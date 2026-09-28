@@ -10,6 +10,7 @@ import time
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
+from app.glossary import Glossary, add_to_messages
 from app.languages import get_language_label
 from app.providers import MistralTranslationProvider, TranslationProvider
 from app.state import SegmentQuality
@@ -65,8 +66,16 @@ class TranslationDispatcher:
     # -- public API ---------------------------------------------------------
 
     def dispatch(self, segment, context_segments: list, session_id: str, target_language: str) -> None:
+        # Capture before scheduling: reset/language changes cannot leak new terms
+        # into work already dispatched for an earlier session.
+        session = self._session_manager.session
+        glossary = getattr(session, "glossary", None)
+        if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
+            glossary = None
         task = asyncio.ensure_future(
-            self._translate_task(segment, context_segments, session_id, target_language)
+            self._translate_task(
+                segment, context_segments, session_id, target_language, glossary
+            )
         )
         self._in_flight.add(task)
         task.add_done_callback(self._in_flight.discard)
@@ -215,11 +224,12 @@ class TranslationDispatcher:
             return None
 
     async def _translate_task(
-        self, segment, context_segments: list, session_id: str, target_language: str
+        self, segment, context_segments: list, session_id: str, target_language: str,
+        glossary: Glossary | None = None,
     ) -> None:
         seq = segment.seq
         try:
-            messages = self._build_messages(segment, context_segments, target_language)
+            messages = self._build_messages(segment, context_segments, target_language, glossary)
             timeout_s = self._config.translation_timeout_ms / 1000
 
             try:
@@ -259,7 +269,7 @@ class TranslationDispatcher:
                         return
 
             translated, quality = await self._check_and_repair(
-                translated, segment, target_language
+                translated, segment, target_language, glossary
             )
             logger.info(
                 "Translated segment: seq=%d chars=%d", seq, len(translated or "")
@@ -300,7 +310,8 @@ class TranslationDispatcher:
         )
 
     async def _check_and_repair(
-        self, raw_text: str, segment, target_language: str
+        self, raw_text: str, segment, target_language: str,
+        glossary: Glossary | None = None,
     ) -> tuple[str, SegmentQuality]:
         result = translation_quality.check(
             raw_text, segment.source_text, target_language
@@ -333,6 +344,10 @@ class TranslationDispatcher:
         label = get_language_label(target_language)
         repair_messages = translation_quality.build_repair_prompt(
             segment.source_text, label, initial_reasons
+        )
+        repair_messages = add_to_messages(
+            repair_messages, glossary, target_language,
+            source_text=segment.source_text,
         )
         repair_timeout_s = min(
             self._config.translation_timeout_ms / 2, 5000
@@ -395,7 +410,10 @@ class TranslationDispatcher:
             ),
         )
 
-    def _build_messages(self, segment, context_segments: list, target_language: str) -> list[dict]:
+    def _build_messages(
+        self, segment, context_segments: list, target_language: str,
+        glossary: Glossary | None = None,
+    ) -> list[dict]:
         system_content = _build_system_prompt(target_language)
         if segment.segment_kind == "reconnect_fragment":
             system_content += _RECONNECT_ADDENDUM
@@ -420,7 +438,7 @@ class TranslationDispatcher:
                 f"</segment_to_translate>"
             )
 
-        return [
+        return add_to_messages([
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
-        ]
+        ], glossary, target_language, source_text=segment.source_text)
