@@ -1,18 +1,32 @@
 # Release notes
 
-## v0.4.0 candidate — not yet published
+## v0.4.0 - 2026-09-28
 
 - Add optional, bounded terminology preferences before Start, tied to a session
   and target language. Browser storage requires explicit opt-in.
-- Preserve used terms in private export/recovery metadata; keep diagnostics
-  content-free. Existing provider, call/retry limits and retention are unchanged.
-- Add the [terminology guide](docs/terminology.md). Live provider quality
-  acceptance remains separate from synthetic prompt/browser checks.
-- Add an offline-by-default [public quality evaluation](docs/glossary-quality-evaluation.md)
-  with an eight-request cap, durable cost reservations and no automatic retry.
+- Send only preferred terms whose source occurs in the current caption segment.
+  Terms appearing only in earlier context or elsewhere in the glossary are
+  withheld from translation and repair prompts.
+- Preserve the session glossary in private export/recovery metadata; keep
+  diagnostics content-free. Existing provider, call/retry limits and retention
+  are unchanged.
+- Add the [terminology guide](docs/terminology.md) and offline-by-default
+  [public quality evaluation](docs/glossary-quality-evaluation.md) with an
+  eight-request cap, durable cost reservations and no automatic retry.
 
-Live glossary quality and the final promotion decision remain pending. The
-immutable v0.3.0 release remains the current published version.
+On the final glossary code, eight public-text live quality cases passed. GCP
+release gates passed 246 Python tests (1 skipped), 28 Chromium/WebKit browser
+contracts, lint, quality/segmentation benchmarks, a 1,000-segment resilience
+soak and the full-pipeline scenario. Exact-head GitHub Python 3.11, Python 3.13
+and browser checks passed before main promotion. The two bounded live runs,
+including an earlier failed adversarial case that prompted the matching-term
+fix, kept the conservative project API-usage upper bound below the approved $1
+maximum. Neither run used a microphone or speech playback. This evidence does
+not establish general translation accuracy, human playback quality, complete
+VoiceOver support or physical Windows support.
+
+The immutable v0.3.0 release is the immediate rollback. The app remains
+on-demand and loopback only; Mistral remains its sole production provider.
 
 
 ## v0.3.0 - 2026-09-27
