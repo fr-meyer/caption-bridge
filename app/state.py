@@ -17,6 +17,11 @@ from app.glossary import Glossary
 from app.languages import is_valid_target_language
 from app.profiles import CaptionProfile, available_profiles, resolve_profile
 from app.reliability import ReliabilityTracker, write_session_record
+from app.translation_models import (
+    TRANSLATION_PROMPT_VERSION,
+    available_translation_models,
+    validate_translation_model,
+)
 
 if TYPE_CHECKING:
     from app.journal import SessionJournal
@@ -92,10 +97,25 @@ class Segment(BaseModel):
     segment_kind: SegmentKind
     translated_text: str | None = None
     target_language: str | None = None
+    translation_model: str | None = None
+    translation_model_revision: int | None = None
+    translation_prompt_version: str | None = None
+    translation_model_resolved: str | None = None
+    translation_prompt_tokens: int | None = None
+    translation_completion_tokens: int | None = None
     translation_status: TranslationStatus = "pending"
     translated_at: datetime | None = None
     quality: SegmentQuality | None = None
     failure_reason: str | None = None
+
+
+class TranslationModelChange(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    changed_at: datetime = Field(default_factory=_utcnow)
+    model: str
+    revision: int
+    applies_from_seq: int
 
 
 class ReadinessCheck(BaseModel):
@@ -141,6 +161,9 @@ class Session(BaseModel):
     journal_path: str | None = None
     source_language: str = "auto"
     target_language: str = "en"
+    translation_model: str | None = None
+    translation_model_revision: int = 0
+    translation_model_changes: list[TranslationModelChange] = Field(default_factory=list)
     glossary: Glossary | None = None
     caption_profile: CaptionProfile | None = None
     client_connected: bool = False
@@ -217,6 +240,7 @@ class SessionManager:
             source_language=self.config.default_source_language,
             target_language=target,
             caption_profile=resolve_profile("current", self.config),
+            translation_model=self.config.translate_model,
         )
 
     # -- event system -------------------------------------------------------
@@ -310,6 +334,9 @@ class SessionManager:
             source_text=text,
             segment_kind="complete",
             target_language=self.session.target_language,
+            translation_model=self.session.translation_model,
+            translation_model_revision=self.session.translation_model_revision,
+            translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -328,6 +355,9 @@ class SessionManager:
             source_text=text,
             segment_kind="reconnect_fragment",
             target_language=self.session.target_language,
+            translation_model=self.session.translation_model,
+            translation_model_revision=self.session.translation_model_revision,
+            translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -411,7 +441,9 @@ class SessionManager:
             self._journal.record_translation_updated(seg)
         self._try_deliver()
 
-    def mark_translation_failed(self, seq: int, session_id: str) -> None:
+    def mark_translation_failed(
+        self, seq: int, session_id: str, reason: str | None = None
+    ) -> None:
         if session_id != self.session.id:
             logger.warning(
                 "mark_translation_failed: ignoring stale callback for seq #%d "
@@ -424,6 +456,8 @@ class SessionManager:
             logger.warning("mark_translation_failed: segment #%d not found", seq)
             return
         seg.translation_status = "failed"
+        if reason is not None:
+            seg.failure_reason = reason
         seg.translated_at = _utcnow()
         if self._journal is not None:
             self._journal.record_translation_updated(seg)
@@ -453,6 +487,8 @@ class SessionManager:
                     "source_text": seg.source_text,
                     "translated_text": seg.translated_text,
                     "target_language": seg.target_language,
+                    "translation_model": seg.translation_model,
+                    "translation_model_revision": seg.translation_model_revision,
                     "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
                     "segment_kind": seg.segment_kind,
@@ -489,6 +525,10 @@ class SessionManager:
                 self._journal.record_session_started()
                 if self.session.caption_profile is not None:
                     self._journal.record_caption_profile(self.session.caption_profile)
+                if self.session.translation_model is not None:
+                    self._journal.record_translation_model_start(
+                        self.session.translation_model
+                    )
                 if self.session.glossary is not None:
                     self._journal.record_glossary(self.session.glossary)
 
@@ -594,6 +634,12 @@ class SessionManager:
             ),
             "source_language": s.source_language,
             "target_language": s.target_language,
+            "translation_model": s.translation_model,
+            "translation_model_revision": s.translation_model_revision,
+            "translation_model_changes": [
+                change.model_dump(mode="json") for change in s.translation_model_changes
+            ],
+            "available_translation_models": available_translation_models(self.config),
             "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
             "caption_profile": s.caption_profile.model_dump(mode="json") if s.caption_profile else None,
             "available_caption_profiles": available_profiles(self.config),
@@ -613,6 +659,29 @@ class SessionManager:
     def set_target_language(self, language: str) -> None:
         self.session.target_language = language
         logger.info("Target language set to %s", language)
+
+    def set_translation_model(self, raw: object) -> None:
+        model = validate_translation_model(raw, self.config)
+        if self.session.status == "session_ended":
+            raise ValueError("Start a new session before choosing a model.")
+        if model == self.session.translation_model:
+            return
+        if self.session.started_at is not None:
+            self.session.translation_model_revision += 1
+            change = TranslationModelChange(
+                model=model,
+                revision=self.session.translation_model_revision,
+                applies_from_seq=self.session.next_seq,
+            )
+            self.session.translation_model_changes.append(change)
+            if self._journal is not None:
+                self._journal.record_translation_model_change(change)
+        self.session.translation_model = model
+        self._emit("translation_model_changed", {
+            "model": model,
+            "revision": self.session.translation_model_revision,
+            "applies_from_seq": self.session.next_seq,
+        })
 
     # -- elapsed ticker -----------------------------------------------------
 

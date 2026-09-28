@@ -68,6 +68,12 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "target_language": "en",
         "caption_profile": resolve_profile("current", AppConfig(_env_file=None)).model_dump(mode="json"),
         "available_caption_profiles": available_profiles(AppConfig(_env_file=None)),
+        "translation_model": "mistral-small-latest",
+        "available_translation_models": [
+            {"id": "mistral-small-latest", "label": "Mistral Small (latest)"},
+            {"id": "mistral-medium-latest", "label": "Mistral Medium (latest)"},
+            {"id": "zai-glm-5-3", "label": "Z.ai GLM 5.3 (preview)"},
+        ],
         "available_target_languages": [{"code": "en", "label": "English"}],
         "started_at": None,
         "ended_at": None,
@@ -253,6 +259,13 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                             }
                         )
                     )
+                elif message_type == "set_translation_model":
+                    await websocket.send_bytes(orjson.dumps({
+                        "type": "translation_model_changed",
+                        "model": message["model"],
+                        "revision": 1,
+                        "applies_from_seq": 2,
+                    }))
                 elif message_type == "stop":
                     await websocket.send_bytes(
                         orjson.dumps(

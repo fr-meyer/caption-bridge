@@ -69,6 +69,10 @@
             <span class="idle-lang-label">Target language</span>
             <select id="idle-target-select" class="drawer-select" aria-label="Target language"></select>
         </div>
+        <div class="idle-lang-row">
+            <label class="idle-lang-label" for="idle-model-select">Translation model</label>
+            <select id="idle-model-select" class="drawer-select" aria-label="Translation model"></select>
+        </div>
         <label class="captions-only-option" for="captions-only-idle">
             <input id="captions-only-idle" type="checkbox">
             <span><strong>Captions only</strong><small>Keep spoken readback off. Remember this choice on this browser.</small></span>
@@ -136,6 +140,12 @@
             <span class="drawer-label">Target Language</span>
             <select id="drawer-target-select" class="drawer-select" aria-label="Target language"></select>
             <span id="drawer-lang-error" class="export-error hidden"></span>
+        </div>
+        <div class="drawer-section">
+            <label class="drawer-label" for="drawer-model-select">Translation model</label>
+            <select id="drawer-model-select" class="drawer-select" aria-describedby="drawer-model-help drawer-model-error"></select>
+            <small id="drawer-model-help">Changes apply to future captions. Requests already underway keep their model.</small>
+            <span id="drawer-model-error" class="export-error hidden" role="alert"></span>
         </div>
         <div class="drawer-section">
             <span class="drawer-label">Source Text</span>

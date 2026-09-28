@@ -6,6 +6,9 @@
   fixed session/reconnect timing and export/recovery transparency. Current settings
   preserve operator defaults; live timing/quality/cost acceptance and release
   promotion remain pending. See the [profile guide](docs/session-profiles.md).
+- Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Mistral Small remains the default.
+- Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 is an optional preview model; comparative live-caption quality remains to be evaluated.
+- Add the [translation model guide](docs/translation-model-selection.md) and an offline-by-default, capped public-text comparison runner.
 
 ## v0.4.0 - 2026-09-28
 
