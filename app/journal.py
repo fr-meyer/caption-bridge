@@ -12,7 +12,14 @@ import orjson
 from app.config import AppConfig
 from app.exporter import export_session
 from app.glossary import Glossary, parse_glossary
-from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
+from app.state import (
+    RecoveryNotice,
+    RecoveryState,
+    Segment,
+    SegmentQuality,
+    Session,
+    TranslationModelChange,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +42,15 @@ class SessionJournal:
     def record_session_started(self) -> None:
         self._write({"type": "session_started"})
 
+    def record_translation_model_start(self, model: str) -> None:
+        self._write({"type": "session_translation_model", "model": model})
+
+    def record_translation_model_change(self, change: TranslationModelChange) -> None:
+        self._write({
+            "type": "translation_model_changed",
+            "change": change.model_dump(mode="json"),
+        })
+
     def record_glossary(self, glossary: Glossary) -> None:
         self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json")})
 
@@ -46,6 +62,9 @@ class SessionJournal:
             "segment_kind": seg.segment_kind,
             "created_at": seg.created_at.isoformat(),
             "target_language": seg.target_language,
+            "translation_model": seg.translation_model,
+            "translation_model_revision": seg.translation_model_revision,
+            "translation_prompt_version": seg.translation_prompt_version,
         })
 
     def record_translation_updated(self, seg: Segment) -> None:
@@ -55,6 +74,9 @@ class SessionJournal:
             "translated_text": seg.translated_text,
             "target_language": seg.target_language,
             "translation_status": seg.translation_status,
+            "translation_model_resolved": seg.translation_model_resolved,
+            "translation_prompt_tokens": seg.translation_prompt_tokens,
+            "translation_completion_tokens": seg.translation_completion_tokens,
             "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
             "failure_reason": seg.failure_reason,
         })
@@ -111,6 +133,21 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
             if rec_type == "session_started":
                 session.started_at = datetime.fromisoformat(rec["ts"])
 
+            elif rec_type == "session_translation_model":
+                model = rec.get("model")
+                if isinstance(model, str) and model:
+                    session.translation_model = model
+
+            elif rec_type == "translation_model_changed":
+                try:
+                    change = TranslationModelChange.model_validate(rec.get("change"))
+                    if change.revision > session.translation_model_revision:
+                        session.translation_model = change.model
+                        session.translation_model_revision = change.revision
+                        session.translation_model_changes.append(change)
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery translation model change — ignored")
+
             elif rec_type == "session_glossary":
                 value = rec.get("glossary")
                 try:
@@ -133,6 +170,9 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     segment_kind=rec["segment_kind"],
                     created_at=datetime.fromisoformat(rec["created_at"]),
                     target_language=rec.get("target_language"),
+                    translation_model=rec.get("translation_model"),
+                    translation_model_revision=rec.get("translation_model_revision"),
+                    translation_prompt_version=rec.get("translation_prompt_version"),
                     translation_status="pending",
                 )
                 segments_by_seq[seg.seq] = seg
@@ -143,6 +183,9 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     seg.translated_text = rec.get("translated_text")
                     seg.target_language = rec.get("target_language")
                     seg.translation_status = rec.get("translation_status", "pending")
+                    seg.translation_model_resolved = rec.get("translation_model_resolved")
+                    seg.translation_prompt_tokens = rec.get("translation_prompt_tokens")
+                    seg.translation_completion_tokens = rec.get("translation_completion_tokens")
                     quality_data = rec.get("quality")
                     if quality_data is not None and isinstance(quality_data, dict):
                         try:

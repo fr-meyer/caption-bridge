@@ -17,6 +17,7 @@ from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
 from app.state import RecoveryNotice, SessionManager
+from app.translation_models import ERROR_MESSAGE, validate_translation_model
 from app.tts import VOICE_MAP
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ _CRITICAL_EVENT_TYPES = frozenset(
         "recovered",
         "session_snapshot",
         "status",
+        "translation_model_changed",
         "tts_error",
         "tts_skipped",
     }
@@ -326,6 +328,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_start(msg, outbound_queue, obs)
             elif msg_type == "set_target_language":
                 await _handle_set_target_language(msg, outbound_queue, obs)
+            elif msg_type == "set_translation_model":
+                await _handle_set_translation_model(msg, outbound_queue, obs)
             elif msg_type == "stop":
                 await _handle_stop()
             elif msg_type == "export":
@@ -501,6 +505,21 @@ async def _handle_set_target_language(
     manager.set_target_language(language)
 
 
+async def _handle_set_translation_model(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
+    assert manager is not None
+    try:
+        model = validate_translation_model(msg.get("model"), manager.config)
+        manager.set_translation_model(model)
+    except ValueError:
+        _enqueue_outbound(
+            outbound_queue, {"type": "error", "message": ERROR_MESSAGE}, obs
+        )
+
+
 async def _handle_start(
     msg: dict,
     outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
@@ -560,7 +579,18 @@ async def _handle_start(
             outbound_queue, {"type": "error", "message": str(exc)}, obs
         )
         return
+    try:
+        model = validate_translation_model(
+            msg.get("translation_model", manager.session.translation_model),
+            manager.config,
+        )
+    except ValueError:
+        _enqueue_outbound(
+            outbound_queue, {"type": "error", "message": ERROR_MESSAGE}, obs
+        )
+        return
     manager.set_target_language(language)
+    manager.set_translation_model(model)
     manager.session.glossary = glossary
 
     if start_pipeline is not None:

@@ -42,6 +42,8 @@
         recoveryFailure: null,
         targetLanguage: "en",
         availableTargetLanguages: [],
+        translationModel: "mistral-small-latest",
+        availableTranslationModels: [],
         drawerOpen: false,
         ttsEnabled: true,
         // Audio permission is document-scoped: a browser replacement must
@@ -119,6 +121,9 @@
         els.drawerClose = $("drawer-close");
         els.settingsDrawer = $("settings-drawer");
         els.drawerTargetSelect = $("drawer-target-select");
+        els.drawerModelSelect = $("drawer-model-select");
+        els.drawerModelError = $("drawer-model-error");
+        els.idleModelSelect = $("idle-model-select");
         els.sourceToggle = $("source-toggle");
         els.idleTargetSelect = $("idle-target-select");
         els.headerLang = $("header-lang");
@@ -217,6 +222,9 @@
             case "session_snapshot":
                 handleSnapshot(msg);
                 break;
+            case "translation_model_changed":
+                handleTranslationModelChanged(msg);
+                break;
             case "readiness":
                 handleReadiness(msg);
                 break;
@@ -284,6 +292,10 @@
         appState.endedAt = msg.ended_at || null;
 
         appState.availableTargetLanguages = msg.available_target_languages || [];
+        appState.availableTranslationModels = msg.available_translation_models || [];
+        appState.translationModel = msg.translation_model ||
+            (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
+            "mistral-small-latest";
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
         activeGlossary = msg.glossary || null;
@@ -321,6 +333,7 @@
                 translationStatus: seg.translation_status,
                 createdAt: seg.created_at,
                 targetLanguage: seg.target_language,
+                translationModel: seg.translation_model,
             });
         }
         appState.captions.reverse();
@@ -348,6 +361,7 @@
         }
 
         populateLanguageDropdowns();
+        populateModelDropdowns();
         renderGlossary();
         fullRender();
 
@@ -411,6 +425,7 @@
             translationStatus: msg.translation_status,
             createdAt: msg.created_at,
             targetLanguage: msg.target_language,
+            translationModel: msg.translation_model,
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);
@@ -441,9 +456,25 @@
         }
     }
 
+    function handleTranslationModelChanged(msg) {
+        if (typeof msg.model !== "string") return;
+        appState.translationModel = msg.model;
+        populateModelDropdowns();
+    }
+
     function handleError(msg) {
         console.error("Server error:", msg.message);
 
+        if (msg.message && /model/i.test(msg.message)) {
+            populateModelDropdowns();
+            if (els.drawerModelError) {
+                els.drawerModelError.textContent = msg.message;
+                els.drawerModelError.classList.remove("hidden");
+                setTimeout(function () {
+                    els.drawerModelError.classList.add("hidden");
+                }, 4000);
+            }
+        }
         if (msg.message && /language/i.test(msg.message)) {
             appState.targetLanguage = confirmedTargetLanguage;
             if (els.drawerTargetSelect) {
@@ -879,6 +910,7 @@
         renderHeader();
         renderHeaderLang();
         renderIdlePanel();
+        renderModelSelectors();
         renderRecoveryNotice();
         renderRecoveryFailureWarning();
         renderProviderNotice();
@@ -1222,6 +1254,36 @@
         });
     }
 
+    function populateModelDropdowns() {
+        [els.idleModelSelect, els.drawerModelSelect].forEach(function (sel) {
+            if (!sel) return;
+            sel.innerHTML = "";
+            appState.availableTranslationModels.forEach(function (model) {
+                var option = document.createElement("option");
+                option.value = model.id;
+                option.textContent = model.label;
+                sel.appendChild(option);
+            });
+            sel.value = appState.translationModel;
+        });
+    }
+
+    function renderModelSelectors() {
+        if (els.drawerModelSelect) {
+            els.drawerModelSelect.disabled = appState.status === "session_ended";
+        }
+    }
+
+    function handleDrawerModelChange(e) {
+        var model = e.target.value;
+        if (appState.status === "idle_ready" || appState.status === "idle_blocked") {
+            appState.translationModel = model;
+            if (els.idleModelSelect) els.idleModelSelect.value = model;
+        } else {
+            send({ type: "set_translation_model", model: model });
+        }
+    }
+
     function handleDrawerTargetChange(e) {
         var newLang = e.target.value;
         appState.targetLanguage = newLang;
@@ -1335,6 +1397,11 @@
         });
 
         els.drawerTargetSelect.addEventListener("change", handleDrawerTargetChange);
+        els.drawerModelSelect.addEventListener("change", handleDrawerModelChange);
+        els.idleModelSelect.addEventListener("change", function (e) {
+            appState.translationModel = e.target.value;
+            els.drawerModelSelect.value = e.target.value;
+        });
 
         els.idleTargetSelect.addEventListener("change", function (e) {
             appState.targetLanguage = e.target.value;
@@ -1595,6 +1662,7 @@
             entries: entries, target_language: appState.targetLanguage
         } : null;
         send({ type: "start", target_language: appState.targetLanguage,
+            translation_model: appState.translationModel,
             tts_muted: appState.ttsMuted, glossary: entries });
     }
 

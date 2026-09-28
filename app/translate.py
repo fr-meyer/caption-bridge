@@ -6,13 +6,14 @@ import asyncio
 import logging
 import random
 import time
+from contextvars import ContextVar
 
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
 from app.glossary import Glossary, add_to_messages
 from app.languages import get_language_label
-from app.providers import MistralTranslationProvider, TranslationProvider
+from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,13 @@ class TranslationDispatcher:
             max_concurrency = 8
         self._provider_slots = asyncio.Semaphore(max_concurrency)
         self._in_flight: set[asyncio.Task] = set()
+        # Each task keeps its dispatch-time model through retries and repair.
+        self._request_model: ContextVar[str | None] = ContextVar(
+            "caption_translation_model", default=None
+        )
+        self._request_segment: ContextVar[object | None] = ContextVar(
+            "caption_translation_segment", default=None
+        )
 
     # -- public API ---------------------------------------------------------
 
@@ -72,9 +80,11 @@ class TranslationDispatcher:
         glossary = getattr(session, "glossary", None)
         if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
             glossary = None
+        model = getattr(segment, "translation_model", None) or self._config.translate_model
         task = asyncio.ensure_future(
             self._translate_task(
-                segment, context_segments, session_id, target_language, glossary
+                segment, context_segments, session_id, target_language, glossary,
+                model,
             )
         )
         self._in_flight.add(task)
@@ -103,7 +113,7 @@ class TranslationDispatcher:
             seq,
             self._config.translation_timeout_ms,
             target_language,
-            self._config.translate_model,
+            self._request_model.get() or self._config.translate_model,
             self._provider.name,
         )
         self._session_manager.mark_translation_timed_out(seq, session_id)
@@ -213,7 +223,7 @@ class TranslationDispatcher:
                 "provider_capacity_warning",
                 {
                     "provider": self._provider.name,
-                    "model": self._config.translate_model,
+                    "model": self._request_model.get() or self._config.translate_model,
                     "reason": "service_tier_capacity_exceeded",
                     "status_code": 429,
                     "segment_seq": seq,
@@ -226,8 +236,11 @@ class TranslationDispatcher:
     async def _translate_task(
         self, segment, context_segments: list, session_id: str, target_language: str,
         glossary: Glossary | None = None,
+        model: str | None = None,
     ) -> None:
         seq = segment.seq
+        token = self._request_model.set(model or self._config.translate_model)
+        segment_token = self._request_segment.set(segment)
         try:
             messages = self._build_messages(segment, context_segments, target_language, glossary)
             timeout_s = self._config.translation_timeout_ms / 1000
@@ -292,22 +305,44 @@ class TranslationDispatcher:
                 type(exc).__name__,
             )
             self._session_manager.mark_translation_failed(seq, session_id)
+        finally:
+            self._request_segment.reset(segment_token)
+            self._request_model.reset(token)
+
+    def _record_response(self, response: str | TranslationResponse) -> str:
+        if isinstance(response, str):
+            return response
+        segment = self._request_segment.get()
+        if segment is not None:
+            if response.resolved_model:
+                segment.translation_model_resolved = response.resolved_model
+            if response.prompt_tokens is not None:
+                segment.translation_prompt_tokens = (
+                    (segment.translation_prompt_tokens or 0) + response.prompt_tokens
+                )
+            if response.completion_tokens is not None:
+                segment.translation_completion_tokens = (
+                    (segment.translation_completion_tokens or 0) + response.completion_tokens
+                )
+        return response.text
 
     async def _call_api(self, messages: list[dict]) -> str:
-        return await self._provider.translate(
-            model=self._config.translate_model,
+        response = await self._provider.translate(
+            model=self._request_model.get() or self._config.translate_model,
             messages=messages,
             temperature=0.2,
             max_tokens=200,
         )
+        return self._record_response(response)
 
     async def _call_repair_api(self, messages: list[dict]) -> str:
-        return await self._provider.translate(
-            model=self._config.translate_model,
+        response = await self._provider.translate(
+            model=self._request_model.get() or self._config.translate_model,
             messages=messages,
             temperature=0.0,
             max_tokens=200,
         )
+        return self._record_response(response)
 
     async def _check_and_repair(
         self, raw_text: str, segment, target_language: str,
