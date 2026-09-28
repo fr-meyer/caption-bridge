@@ -345,7 +345,10 @@ class TranslationDispatcher:
         repair_messages = translation_quality.build_repair_prompt(
             segment.source_text, label, initial_reasons
         )
-        repair_messages = add_to_messages(repair_messages, glossary, target_language)
+        repair_messages = add_to_messages(
+            repair_messages, glossary, target_language,
+            source_text=segment.source_text,
+        )
         repair_timeout_s = min(
             self._config.translation_timeout_ms / 2, 5000
         ) / 1000
@@ -438,4 +441,4 @@ class TranslationDispatcher:
         return add_to_messages([
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
-        ], glossary, target_language)
+        ], glossary, target_language, source_text=segment.source_text)

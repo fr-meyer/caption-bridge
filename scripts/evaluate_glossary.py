@@ -108,7 +108,7 @@ def build_plan() -> list[dict]:
             messages = add_to_messages(
                 build_repair_prompt(
                     case.source, get_language_label(case.language), ["prompt_leakage"]
-                ), case.glossary, case.language,
+                ), case.glossary, case.language, source_text=case.source,
             )
         else:
             segment = SimpleNamespace(source_text=case.source, segment_kind="complete")
