@@ -97,3 +97,10 @@ This GCP-only draft raises the GLM output allowance to 4096 tokens and gives GLM
 
 These changes are mitigations inferred from one private session, not a measured GLM reliability fix. A higher cap increases possible token use, and a longer deadline may delay ordered captions. The app still does not retry a thinking-only answer automatically or switch the requested model silently. Provider-free tests cover model-specific budgets, timeouts, and preserved diagnostic metadata. The candidate needs a bounded live GLM run and a human quality/latency review before any Mac rollout.
 <!-- glm-private-session-preparation-20260929 -->
+
+### GCP public-text check of the 4096-token candidate (2026-09-29)
+
+With the owner's added test allowance, a private GCP ledger reserved a conservative $0.1234840 for three no-retry GLM 5.3 requests at the draft's 4096-token output cap and Provider-default thinking. For extra caution, the budget guard treated the full previous $1.50 ceiling as spent, so the accounted upper became $1.6234840 under the newly approved $1.65 ceiling. This is a usage-equivalent bound based on twice Mistral's published standard rates, not a bill. Only public synthetic Korean and French academic text was sent; no Mac session text, microphone audio, or TTS was used.
+
+All three requests returned HTTP 200, answer text, and `finish_reason=stop`. They took 812–1326 ms, used 124–218 completion tokens, and had no automated quality flags. Manual inspection found the three captions faithful to their source text. The cases were much shorter and easier than the private Mac request that consumed all 2048 tokens without an answer, so this confirms API compatibility and basic quality but does not establish that the intermittent no-answer or 10-second timeout is fixed. The GCP-only draft remains unpromoted; a later isolated live-session check is needed before Mac rollout.
+<!-- glm-4096-public-text-check-20260929 -->
