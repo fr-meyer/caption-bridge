@@ -7,10 +7,10 @@
   preserve operator defaults; live timing/quality/cost acceptance and release
   promotion remain pending. See the [profile guide](docs/session-profiles.md).
 - Add an experimental translation thinking selector (Provider default or High) before Start and in Settings. Capture each caption’s requested level and output-token limit in private export/recovery metadata; live changes affect future captions.
-- Give Mistral-hosted GLM 5.3 a 1024-token output allowance even at Provider default; a bounded public-text check showed that 200 tokens could be spent entirely on thinking without a caption. Small and Medium retain the 200-token default allowance. GLM remains an optional model pending broader quality and live-audio acceptance.
+- Give Mistral-hosted GLM 5.3 a 1024-token output allowance even at Provider default; a bounded public-text check showed that 200 tokens could be spent entirely on thinking without a caption. Small and Medium retain the 200-token default allowance. GLM is the owner-selected draft default, with broader quality and live-audio acceptance still pending before release.
 
-- Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Mistral Small remains the default.
-- Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 is an optional preview model; comparative live-caption quality remains to be evaluated.
+- Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Z.ai GLM 5.3 is the owner-selected default for new sessions in this draft; Mistral Small and Medium remain selectable.
+- Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 remains a public-preview model; the new default is an owner preference, not an established caption-quality advantage. Comparative live-caption quality remains to be evaluated.
 - Add the [translation model guide](docs/translation-model-selection.md) and an offline-by-default, capped public-text comparison runner.
 
 ## v0.4.0 - 2026-09-28

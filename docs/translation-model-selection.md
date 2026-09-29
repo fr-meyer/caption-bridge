@@ -2,7 +2,7 @@
 
 Caption Bridge uses Voxtral for live speech transcription and Mistral's chat API for text translation. The translation selector affects only text translation. Spoken readback remains on its separate TTS path.
 
-Mistral Small (mistral-small-latest) remains the default. The selector also offers Mistral Medium (mistral-medium-latest) and Z.ai GLM 5.3 (zai-glm-5-3, public preview) through Mistral's chat API. An operator-configured default, if different, is also listed. Availability depends on the account and Mistral's current model catalog. A model being listed does not establish better caption quality or low enough latency for live use.
+Z.ai GLM 5.3 (zai-glm-5-3) is the owner-selected default translation model for new sessions in this draft. It is a third-party public-preview model hosted by Mistral. The selector also offers Mistral Small (mistral-small-latest) and Mistral Medium 3.5 (mistral-medium-latest) through Mistral's chat API. An operator-configured default, if different, is also listed. Availability depends on the account and Mistral's current model catalog. A model being listed does not establish better caption quality or low enough latency for live use.
 
 Choose a translation thinking level before Start, or change it in Settings. **Provider default** leaves the API reasoning setting unspecified. Small and Medium use a 200-output-token limit; GLM uses 1024 because a live public-text request spent all 200 tokens on thinking and returned no answer. **High reasoning (experimental)** sends Mistral's `reasoning_effort="high"` and uses a 1024-token limit for the listed models. It can change cost, latency, and wording; the existing 10-second translation timeout still applies. A response with no answer text fails that caption without an automatic retry. High is offered only for the three listed models; an unrecognized configured default uses Provider default.
 
@@ -28,7 +28,7 @@ The reservation uses twice the standard token rates listed by [Mistral pricing](
 
 ### First bounded GCP observation (2026-09-28)
 
-On the single fixed public sentence, Small and Medium both returned the same faithful English caption, with observed response times of 570 ms and 499 ms. The GLM 5.3 request returned HTTP 200, but its response did not pass the comparator's text/usage validation; the run stopped without a retry. That first run did not isolate whether answer text or usage metadata caused the failure. The follow-up below identified the model-specific output limit issue. Small remains the default. The private owner-only ledger retains the two public responses and reported token counts. These individual timings do not predict typical latency.
+On the single fixed public sentence, Small and Medium both returned the same faithful English caption, with observed response times of 570 ms and 499 ms. The GLM 5.3 request returned HTTP 200, but its response did not pass the comparator's text/usage validation; the run stopped without a retry. That first run did not isolate whether answer text or usage metadata caused the failure. The follow-up below identified the model-specific output limit issue. Small was the default at the time. The private owner-only ledger retains the two public responses and reported token counts. These individual timings do not predict typical latency.
 
 ### Follow-up GCP evidence (2026-09-29)
 
@@ -36,7 +36,7 @@ A bounded GLM probe returned valid answer and usage data with both thinking and 
 
 In a later six-case public Korean-to-English comparison, GLM with 1024 tokens and Small with 200 both produced a caption for every case, with no automatic quality flags. GLM preserved the trailing "but" on one paused clause that Small closed as a sentence. Other outputs showed no clear quality advantage; a technical-term rendering was less faithful to "synthetic model." Median API latency was 1,052 ms for GLM versus 658 ms for Small, and completion usage was 1,155 versus 48 tokens across these six cases. These small samples are directional, not a performance guarantee. Two GLM High requests also returned captions, with differing response structures.
 
-The owner prefers GLM 5.3 as the eventual default if representative quality, latency, reliability, and real-audio acceptance support it. These public-text checks do not meet that release gate, so Mistral Small remains the default. The private GCP ledgers contain only public final answers and structural metadata, not thinking text. The cumulative conservative usage-equivalent upper after these checks was $1.1480764 under the owner's revised $1.15 maximum; it is not a bill.
+At this checkpoint, the owner preferred GLM 5.3 as an eventual default if representative quality, latency, reliability, and real-audio acceptance supported it. These public-text checks did not meet that release gate, so Mistral Small was still the default. The private GCP ledgers contain only public final answers and structural metadata, not thinking text. The cumulative conservative usage-equivalent upper after these checks was $1.1480764 under the owner's revised $1.15 maximum; it is not a bill.
 
 
 ### Public recorded-audio check (2026-09-29)
@@ -56,8 +56,17 @@ This tested recorded public audio, the real ASR adapter, and the production tran
 
 Two new synthetic Korean academic captions tested “synthetic data” with negation and an estimate falling from 0.15 to 0.08 while its confidence interval still included zero. On GCP, the production translation prompt with Provider-default thinking produced four answer texts without retries, truncation, or automated quality flags. Small and GLM both preserved the negation and numbers. GLM exactly matched the prepared reference on the synthetic-data sentence; Small conveyed the meaning but changed the singular model to plural. Their numerical captions were equivalent.
 
-In these two cases, Small took 698 and 592 ms with 38 completion tokens total; GLM took 686 and 835 ms with 336 completion tokens, including thinking. Across the eight public text cases now tested, median API latency was 658 ms for Small and 1,012.5 ms for GLM, with 86 versus 1,491 completion tokens. These small, selected samples do not measure live readability or establish a reliable quality advantage. GLM's earlier mistranslation of “synthetic model” remains relevant, so Small stays the default while GLM remains an optional preview.
+In these two cases, Small took 698 and 592 ms with 38 completion tokens total; GLM took 686 and 835 ms with 336 completion tokens, including thinking. Across the eight public text cases now tested, median API latency was 658 ms for Small and 1,012.5 ms for GLM, with 86 versus 1,491 completion tokens. These small, selected samples do not measure live readability or establish a reliable quality advantage. GLM's earlier mistranslation of “synthetic model” remains relevant. Small was still the default at this checkpoint; the later owner decision below changes the draft default.
 
 The follow-up sent only these public synthetic sentences from GCP. It used no microphone, TTS, or personal caption content.
 
 <!-- two-case-quality-check-20260929 -->
+
+
+### Owner-selected draft default (2026-09-29)
+
+The owner directed the draft to start new sessions with Mistral-hosted GLM 5.3, using Provider default thinking and the existing 1024-token output limit. Small and Medium 3.5 remain selectable before Start and during a session. This is an explicit product preference, not a finding that GLM consistently translates live captions better: eight selected public-text pairs and two public recorded-audio clips showed mixed wording, higher median latency, and much higher reported completion-token use. The draft still needs real-session readability and spoken-output judgment, representative quality and usage review, and release approval.
+
+An existing `MISTRAL_TRANSLATE_MODEL` setting in an operator's `.env` continues to override the code default. The new example configuration selects GLM; rollout must check any existing environment override rather than silently replacing a deliberate model choice. The selected and provider-reported model IDs, thinking level, output cap, and usage remain in each private caption record for later analysis. This default change used no additional provider calls.
+
+Mistral's [Vibe model configuration](https://docs.mistral.ai/vibe/code/cli/configuration) currently recommends Medium 3.5 for that separate product and lists GLM 5.3 as another model. Mistral describes [GLM 5.3](https://docs.mistral.ai/models/zai-glm-5-3) as a third-party public preview. Caption Bridge's choice does not assert that GLM is Mistral's official default.

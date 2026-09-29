@@ -5,9 +5,9 @@ from __future__ import annotations
 from app.config import AppConfig
 
 _CHOICES = (
+    ("zai-glm-5-3", "Z.ai GLM 5.3 (preview)"),
     ("mistral-small-latest", "Mistral Small (latest)"),
     ("mistral-medium-latest", "Mistral Medium (latest)"),
-    ("zai-glm-5-3", "Z.ai GLM 5.3 (preview)"),
 )
 ERROR_MESSAGE = "Choose a listed translation model."
 EFFORT_ERROR_MESSAGE = "Choose an available translation thinking level."

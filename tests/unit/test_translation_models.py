@@ -33,6 +33,8 @@ def config_at(path: Path) -> AppConfig:
 
 def test_model_list_accepts_only_explicit_ids(tmp_path: Path) -> None:
     config = config_at(tmp_path)
+    assert config.translate_model == "zai-glm-5-3"
+    assert available_translation_models(config)[0]["id"] == "zai-glm-5-3"
     ids = {item["id"] for item in available_translation_models(config)}
     assert ids == {"mistral-small-latest", "mistral-medium-latest", "zai-glm-5-3"}
     assert validate_translation_model("zai-glm-5-3", config) == "zai-glm-5-3"
@@ -77,7 +79,7 @@ def test_invalid_live_model_preserves_selected_model(
             {"type": "set_translation_model", "model": "unknown"},
             queue, _OutboundObsState(),
         )
-        assert manager.session.translation_model == "mistral-small-latest"
+        assert manager.session.translation_model == "zai-glm-5-3"
         assert manager.session.translation_model_revision == 0
         assert manager.session.translation_model_changes == []
         assert queue.get_nowait()[0]["message"] == "Choose a listed translation model."
@@ -111,13 +113,13 @@ def test_switch_keeps_in_flight_segments_on_their_original_model(tmp_path: Path)
         manager.session.status = "listening"
         manager.session.started_at = datetime.now(timezone.utc)
         manager.finalize_segment("이 결과는 추가 검증이 필요합니다.")
-        manager.set_translation_model("zai-glm-5-3")
+        manager.set_translation_model("mistral-small-latest")
         manager.finalize_segment("다음 결과도 검증해야 합니다.")
         await dispatcher.drain()
-        assert provider.calls == ["mistral-small-latest", "zai-glm-5-3"]
+        assert provider.calls == ["zai-glm-5-3", "mistral-small-latest"]
         assert [(seg.translation_model, seg.translation_model_revision)
                 for seg in manager.session.segments] == [
-                    ("mistral-small-latest", 0), ("zai-glm-5-3", 1)
+                    ("zai-glm-5-3", 0), ("mistral-small-latest", 1)
                 ]
         assert manager.session.translation_model_changes[0].applies_from_seq == 2
         assert [seg.translation_model_resolved for seg in manager.session.segments] == provider.calls
@@ -155,7 +157,7 @@ def test_empty_provider_answer_fails_without_another_request(tmp_path: Path) -> 
         assert provider.calls == 1
         assert segment.translation_status == "failed"
         assert segment.failure_reason == "provider_no_text"
-        assert segment.translation_model_resolved == "mistral-small-latest"
+        assert segment.translation_model_resolved == "zai-glm-5-3"
         assert segment.translation_completion_tokens == 200
 
     asyncio.run(scenario())

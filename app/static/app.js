@@ -49,7 +49,7 @@
         captionProfileId: "current",
         availableCaptionProfiles: [],
         availableTargetLanguages: [],
-        translationModel: "mistral-small-latest",
+        translationModel: "zai-glm-5-3",
         translationReasoningEffort: "default",
         availableTranslationModels: [],
         drawerOpen: false,
@@ -311,7 +311,7 @@
         appState.availableTranslationModels = msg.available_translation_models || [];
         appState.translationModel = msg.translation_model ||
             (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
-            "mistral-small-latest";
+            "zai-glm-5-3";
         appState.translationReasoningEffort = msg.translation_reasoning_effort || "default";
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
