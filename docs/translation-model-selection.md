@@ -80,3 +80,10 @@ Content-free evidence from that session: seven finalized segments; six GLM trans
 
 The draft now allows up to 2048 output tokens for GLM, including Provider default and High, while Small/Medium limits remain unchanged. This is a mitigation for the observed thinking-only truncation, **not** proof that GLM always returns an answer or meets live latency/cost expectations. Any GLM response without answer text still fails that caption without an automatic retry. Re-run bounded public-audio and human acceptance on the new exact candidate before promotion, with unrelated Mac audio stopped.
 <!-- glm-live-preflight-20260929 -->
+
+### Public API check of the 2048-token cap (2026-09-29)
+
+The GCP one-case comparator ran at code head f2f41b8 with its production prompt and current output limits: 200 for Small/Medium and 2048 for GLM. Three sequential public Korean-to-English requests completed with answer text, valid reported usage, and no automated quality flags. Small took 585 ms and 11 completion tokens; Medium took 568 ms and 11; GLM took 711 ms and 81. This short example did not approach 1024 tokens, so it verifies that the Mistral API accepts the new request setting but does not establish that the earlier thinking-only failure is fixed for difficult live fragments.
+
+The owner-only GCP ledger reserved $0.0317117 at twice published rates, bringing the conservative project usage-equivalent upper to $1.3433498 under the approved $1.50 ceiling. This is not an invoice. No microphone, personal caption text, or TTS was used in this follow-up. Live Korean and human readback acceptance remain open.
+<!-- glm-2048-public-api-check-20260929 -->
