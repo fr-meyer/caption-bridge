@@ -1339,7 +1339,7 @@
             appState.translationReasoningEffort = effort;
             els.idleThinkingSelect.value = effort;
         } else {
-            send({ type: "set_translation_model", model: appState.translationModel,
+            send({ type: "set_translation_model", model: els.drawerModelSelect.value,
                 reasoning_effort: effort });
         }
     }
