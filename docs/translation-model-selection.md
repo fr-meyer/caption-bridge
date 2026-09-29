@@ -51,3 +51,13 @@ Two Korean [FLEURS](https://huggingface.co/datasets/google/fleurs) test clips (1
 The first ASR transcript fused a Korean phrase meaning “under the bridge” into a different word. Both translators recovered the bridge-clearance sense; GLM phrased it more naturally. On the second clip, their translations were equivalent. GLM took longer and used more output tokens on both clips. Combined with the six mixed public-text cases above, this does not establish enough quality benefit to change the translation default from Small. High reasoning was not used in this audio check.
 
 This tested recorded public audio, the real ASR adapter, and the production translation prompt. It did not exercise microphone hardware, browser rendering, spoken output, live model switching, or human readability. The added conservative usage-equivalent reservation was $0.0615488, bringing the cumulative upper to $1.2096252 under the owner's $1.25 ceiling. It is not an invoice.
+
+### Targeted public-text follow-up (2026-09-29)
+
+Two new synthetic Korean academic captions tested “synthetic data” with negation and an estimate falling from 0.15 to 0.08 while its confidence interval still included zero. On GCP, the production translation prompt with Provider-default thinking produced four answer texts without retries, truncation, or automated quality flags. Small and GLM both preserved the negation and numbers. GLM exactly matched the prepared reference on the synthetic-data sentence; Small conveyed the meaning but changed the singular model to plural. Their numerical captions were equivalent.
+
+In these two cases, Small took 698 and 592 ms with 38 completion tokens total; GLM took 686 and 835 ms with 336 completion tokens, including thinking. Across the eight public text cases now tested, median API latency was 658 ms for Small and 1,012.5 ms for GLM, with 86 versus 1,491 completion tokens. These small, selected samples do not measure live readability or establish a reliable quality advantage. GLM's earlier mistranslation of “synthetic model” remains relevant, so Small stays the default while GLM remains an optional preview.
+
+The follow-up sent only these public synthetic sentences from GCP. It used no microphone, TTS, or personal caption content.
+
+<!-- two-case-quality-check-20260929 -->
