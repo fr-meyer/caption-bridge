@@ -221,7 +221,7 @@ def main() -> int:
     parser.add_argument("--key-stdin", action="store_true")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--prior-cost-upper-usd")
-    parser.add_argument("--max-spend-usd", default="0.03")
+    parser.add_argument("--max-spend-usd", default="0.04")
     parser.add_argument("--project-ceiling-usd", default="1")
     args = parser.parse_args()
     try:

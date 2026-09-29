@@ -31,8 +31,8 @@ def config_at(path: Path) -> AppConfig:
 
 
 def test_glm_default_has_room_for_answer_after_thinking() -> None:
-    assert translation_output_limit("zai-glm-5-3", "default") == 1024
-    assert translation_output_limit("zai-glm-5-3", "high") == 1024
+    assert translation_output_limit("zai-glm-5-3", "default") == 2048
+    assert translation_output_limit("zai-glm-5-3", "high") == 2048
     assert translation_output_limit("mistral-small-latest", "default") == 200
     assert translation_output_limit("mistral-medium-latest", "default") == 200
     assert translation_output_limit("mistral-small-latest", "high") == 1024
@@ -98,14 +98,14 @@ def test_effort_switch_applies_to_future_segments_and_export(tmp_path: Path) -> 
         manager.set_translation_settings("zai-glm-5-3", "default")
         manager.finalize_segment("이 결과는 통계적으로 유의미하지만 추가 검증이 필요합니다.")
         await dispatcher.drain()
-        assert [call["max_tokens"] for call in provider.calls] == [1024, 200, 1024]
+        assert [call["max_tokens"] for call in provider.calls] == [2048, 200, 2048]
         assert provider.calls[0]["reasoning_effort"] == "high"
         assert "reasoning_effort" not in provider.calls[1]
         assert "reasoning_effort" not in provider.calls[2]
         assert [seg.translation_reasoning_effort for seg in manager.session.segments] == [
             "high", "default", "default"
         ]
-        assert [seg.translation_max_tokens for seg in manager.session.segments] == [1024, 200, 1024]
+        assert [seg.translation_max_tokens for seg in manager.session.segments] == [2048, 200, 2048]
         assert manager.session.translation_model_changes[0].reasoning_effort == "default"
         manager.set_status("session_ended")
         exported = Path(export_session(manager.session, config))
@@ -113,7 +113,7 @@ def test_effort_switch_applies_to_future_segments_and_export(tmp_path: Path) -> 
         assert [seg["translation_reasoning_effort"] for seg in data["segments"]] == [
             "high", "default", "default"
         ]
-        assert [seg["translation_max_tokens"] for seg in data["segments"]] == [1024, 200, 1024]
+        assert [seg["translation_max_tokens"] for seg in data["segments"]] == [2048, 200, 2048]
         records = [json.loads(line) for line in next((tmp_path / "journal").glob("*.jsonl")).read_text().splitlines()]
         assert next(rec for rec in records if rec["type"] == "session_translation_model")["reasoning_effort"] == "high"
 

@@ -22,12 +22,12 @@ PRIOR = Decimal("0.9779064")
 def test_three_model_plan_fits_remaining_project_ceiling() -> None:
     plan = build_plan()
     assert tuple(item["model"] for item in plan) == MODELS
-    assert [item["max_tokens"] for item in plan] == [200, 200, 1024]
-    total = validate_budget(plan, PRIOR, Decimal("0.03"), Decimal("1.25"))
-    assert total <= Decimal("0.03")
+    assert [item["max_tokens"] for item in plan] == [200, 200, 2048]
+    total = validate_budget(plan, PRIOR, Decimal("0.04"), Decimal("1.25"))
+    assert total <= Decimal("0.04")
     assert PRIOR + total <= Decimal("1.25")
     with pytest.raises(EvaluationError, match="insufficient_project_allowance"):
-        validate_budget(plan, Decimal("0.995"), Decimal("0.03"))
+        validate_budget(plan, Decimal("0.995"), Decimal("0.04"))
 
 
 def test_reservations_are_durable_and_never_replayed(tmp_path) -> None:
@@ -46,7 +46,7 @@ def test_reservations_are_durable_and_never_replayed(tmp_path) -> None:
         }
 
     state = run_live(
-        plan, "test-key", ledger, PRIOR, Decimal("0.03"), request,
+        plan, "test-key", ledger, PRIOR, Decimal("0.04"), request,
         ceiling=Decimal("1.25"),
     )
     saved = json.loads(ledger.read_text())
@@ -58,7 +58,7 @@ def test_reservations_are_durable_and_never_replayed(tmp_path) -> None:
     assert ledger.stat().st_mode & 0o077 == 0
     with pytest.raises(EvaluationError, match="ledger_exists_no_automatic_replay"):
         run_live(
-            plan, "test-key", ledger, PRIOR, Decimal("0.03"), request,
+            plan, "test-key", ledger, PRIOR, Decimal("0.04"), request,
             ceiling=Decimal("1.25"),
         )
     assert calls == list(MODELS[:2])
@@ -106,7 +106,7 @@ def test_chunked_public_response_uses_text_and_rejects_thinking_only() -> None:
     assert larger_usage["completion_tokens"] == 372
     with pytest.raises(EvaluationError, match="provider_usage_invalid_no_retry"):
         request_translation(
-            Client([{"type": "text", "text": "Too long."}], 1025),
+            Client([{"type": "text", "text": "Too long."}], 2049),
             "test-key", item,
         )
     with pytest.raises(EvaluationError, match="provider_no_answer_text_no_retry"):
