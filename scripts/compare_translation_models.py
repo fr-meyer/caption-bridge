@@ -24,6 +24,7 @@ from app.config import AppConfig
 from app.providers import extract_translation_text
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
+from app.translation_models import translation_output_limit
 from app.translation_quality import check
 from scripts.evaluate_glossary import EvaluationError, write_ledger
 
@@ -44,9 +45,8 @@ PRICING_SOURCE = "https://docs.mistral.ai/inference/pricing"
 ENDPOINT = "https://api.mistral.ai/v1/chat/completions"
 MAX_INPUT_BYTES = 2048
 ROLE_TOKEN_ALLOWANCE = 1024
-MAX_OUTPUT_TOKENS = 200
-MAX_ADDED_USD = Decimal("0.02")
-PROJECT_CEILING_USD = Decimal("1")
+MAX_ADDED_USD = Decimal("0.05")
+DEFAULT_PROJECT_CEILING_USD = Decimal("1")
 
 
 def build_plan() -> list[dict]:
@@ -64,30 +64,39 @@ def build_plan() -> list[dict]:
     plan = []
     for model in MODELS:
         in_rate, out_rate = RATES[model]
+        output_limit = translation_output_limit(model, "default")
         reserve = (
             Decimal(input_bound) * in_rate
-            + Decimal(MAX_OUTPUT_TOKENS) * out_rate
+            + Decimal(output_limit) * out_rate
         ) / Decimal(1_000_000)
         plan.append({
             "model": model,
             "messages": messages,
             "temperature": 0.2,
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": output_limit,
             "input_token_bound": input_bound,
             "reserved_usd": str(reserve),
         })
     return plan
 
 
-def validate_budget(plan: list[dict], prior: Decimal, added: Decimal) -> Decimal:
-    if not prior.is_finite() or not added.is_finite():
+def validate_budget(
+    plan: list[dict], prior: Decimal, added: Decimal,
+    ceiling: Decimal = DEFAULT_PROJECT_CEILING_USD,
+) -> Decimal:
+    if not prior.is_finite() or not added.is_finite() or not ceiling.is_finite():
         raise EvaluationError("finite_budget_required")
-    if prior < 0 or not 0 < added <= MAX_ADDED_USD:
+    if prior < 0 or ceiling <= 0 or not 0 < added <= MAX_ADDED_USD:
         raise EvaluationError("invalid_budget")
     if len(plan) != len(MODELS) or tuple(x["model"] for x in plan) != MODELS:
         raise EvaluationError("request_plan_changed")
+    if any(
+        item["max_tokens"] != translation_output_limit(item["model"], "default")
+        for item in plan
+    ):
+        raise EvaluationError("request_plan_changed")
     total = sum((Decimal(x["reserved_usd"]) for x in plan), Decimal(0))
-    if total > added or prior + total > PROJECT_CEILING_USD:
+    if total > added or prior + total > ceiling:
         raise EvaluationError("insufficient_project_allowance")
     return total
 
@@ -127,7 +136,7 @@ def request_translation(
             type(prompt) is not int
             or type(completion) is not int
             or not 0 <= prompt <= item["input_token_bound"]
-            or not 0 <= completion <= MAX_OUTPUT_TOKENS
+            or not 0 <= completion <= item["max_tokens"]
             or not isinstance(resolved, str)
         ):
             raise ValueError
@@ -143,10 +152,11 @@ def request_translation(
 def run_live(
     plan: list[dict], key: str, ledger: Path, prior: Decimal, added: Decimal,
     request: Callable[[dict], tuple[str, dict]],
+    ceiling: Decimal = DEFAULT_PROJECT_CEILING_USD,
 ) -> dict:
     if not key or len(key) >= 1024:
         raise EvaluationError("gcp_mistral_connection_missing")
-    total = validate_budget(plan, prior, added)
+    total = validate_budget(plan, prior, added, ceiling)
     if ledger.exists():
         raise EvaluationError("ledger_exists_no_automatic_replay")
     digest = hashlib.sha256(
@@ -158,6 +168,7 @@ def run_live(
         "public_fixture_sha256": digest,
         "pricing_source": PRICING_SOURCE,
         "prior_usage_equivalent_upper_usd": str(prior),
+        "project_ceiling_usd": str(ceiling),
         "planned_added_usage_equivalent_upper_usd": str(total),
         "reserved_added_usage_equivalent_usd": "0",
         "requests_reserved": 0,
@@ -210,7 +221,8 @@ def main() -> int:
     parser.add_argument("--key-stdin", action="store_true")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--prior-cost-upper-usd")
-    parser.add_argument("--max-spend-usd", default="0.02")
+    parser.add_argument("--max-spend-usd", default="0.03")
+    parser.add_argument("--project-ceiling-usd", default="1")
     args = parser.parse_args()
     try:
         plan = build_plan()
@@ -219,6 +231,9 @@ def main() -> int:
                 "mode": "offline",
                 "paid_requests": 0,
                 "models": list(MODELS),
+                "output_limits": {
+                    item["model"]: item["max_tokens"] for item in plan
+                },
                 "planned_requests": len(plan),
                 "planned_usage_equivalent_upper_usd": str(sum(
                     (Decimal(item["reserved_usd"]) for item in plan), Decimal(0)
@@ -229,7 +244,8 @@ def main() -> int:
             raise EvaluationError("ledger_and_prior_bound_required")
         prior = Decimal(args.prior_cost_upper_usd)
         added = Decimal(args.max_spend_usd)
-        validate_budget(plan, prior, added)
+        ceiling = Decimal(args.project_ceiling_usd)
+        validate_budget(plan, prior, added, ceiling)
         key = (
             sys.stdin.readline(1024).strip()
             if args.key_stdin else os.environ.get("MISTRAL_API_KEY", "")
@@ -238,6 +254,7 @@ def main() -> int:
             state = run_live(
                 plan, key, args.ledger, prior, added,
                 request=lambda item: request_translation(client, key, item),
+                ceiling=ceiling,
             )
         print(json.dumps({
             "phase": state["phase"],
