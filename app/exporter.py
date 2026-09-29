@@ -165,6 +165,7 @@ def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig
                 "translation_model_resolved": seg.translation_model_resolved,
                 "translation_prompt_tokens": seg.translation_prompt_tokens,
                 "translation_completion_tokens": seg.translation_completion_tokens,
+                "translation_finish_reason": seg.translation_finish_reason,
                 "translation_status": seg.translation_status,
                 "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
                 "failure_reason": seg.failure_reason,

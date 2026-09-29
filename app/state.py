@@ -107,6 +107,7 @@ class Segment(BaseModel):
     translation_model_resolved: str | None = None
     translation_prompt_tokens: int | None = None
     translation_completion_tokens: int | None = None
+    translation_finish_reason: str | None = None
     translation_status: TranslationStatus = "pending"
     translated_at: datetime | None = None
     quality: SegmentQuality | None = None

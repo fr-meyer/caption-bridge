@@ -14,6 +14,7 @@ class TranslationResponse:
     resolved_model: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    finish_reason: str | None = None
 
 
 def extract_translation_text(content: object) -> str:
@@ -73,9 +74,12 @@ class MistralTranslationProvider:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.complete_async(**request)
         usage = getattr(response, "usage", None)
+        choice = response.choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
         return TranslationResponse(
-            text=extract_translation_text(response.choices[0].message.content),
+            text=extract_translation_text(choice.message.content),
             resolved_model=getattr(response, "model", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
         )

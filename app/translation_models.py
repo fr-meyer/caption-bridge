@@ -19,7 +19,8 @@ TRANSLATION_PROMPT_VERSION = "academic-caption-v1"
 def translation_output_limit(model: str, effort: str) -> int:
     # A live draft check also exhausted 1024 tokens on thinking without an answer.
     if model == "zai-glm-5-3":
-        return 2048
+        # GLM may spend the entire completion allowance on thinking.
+        return 4096
     if effort == HIGH_REASONING_EFFORT:
         return 1024
     return 200

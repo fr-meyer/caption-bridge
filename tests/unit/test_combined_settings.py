@@ -116,7 +116,7 @@ def test_live_model_change_keeps_timing_profile_and_caption_provenance(
         assert [call["model"] for call in provider.calls] == [
             "mistral-small-latest", "zai-glm-5-3",
         ]
-        assert [call["max_tokens"] for call in provider.calls] == [200, 2048]
+        assert [call["max_tokens"] for call in provider.calls] == [200, 4096]
         assert "reasoning_effort" not in provider.calls[0]
         assert provider.calls[1]["reasoning_effort"] == "high"
         assert [segment.translation_status for segment in manager.session.segments] == [
@@ -133,7 +133,7 @@ def test_live_model_change_keeps_timing_profile_and_caption_provenance(
             "default", "high",
         ]
         assert [item["translation_max_tokens"] for item in data["segments"]] == [
-            200, 2048,
+            200, 4096,
         ]
         assert data["translation_model_changes"][0]["applies_from_seq"] == 2
         assert data["translation_model_changes"][0]["reasoning_effort"] == "high"

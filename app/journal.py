@@ -87,6 +87,7 @@ class SessionJournal:
             "translation_model_resolved": seg.translation_model_resolved,
             "translation_prompt_tokens": seg.translation_prompt_tokens,
             "translation_completion_tokens": seg.translation_completion_tokens,
+            "translation_finish_reason": seg.translation_finish_reason,
             "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
             "failure_reason": seg.failure_reason,
         })
@@ -208,6 +209,7 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     seg.translation_model_resolved = rec.get("translation_model_resolved")
                     seg.translation_prompt_tokens = rec.get("translation_prompt_tokens")
                     seg.translation_completion_tokens = rec.get("translation_completion_tokens")
+                    seg.translation_finish_reason = rec.get("translation_finish_reason")
                     quality_data = rec.get("quality")
                     if quality_data is not None and isinstance(quality_data, dict):
                         try:

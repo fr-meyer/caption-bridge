@@ -115,12 +115,18 @@ class TranslationDispatcher:
         logger.warning(
             "Translation timed out for segment #%d: budget=%dms, lang=%s, model=%s, provider=%s",
             seq,
-            self._config.translation_timeout_ms,
+            self._translation_timeout_ms(),
             target_language,
             self._request_model.get() or self._config.translate_model,
             self._provider.name,
         )
         self._session_manager.mark_translation_timed_out(seq, session_id)
+
+    def _translation_timeout_ms(self) -> int:
+        model = self._request_model.get() or self._config.translate_model
+        if model == "zai-glm-5-3":
+            return self._config.translation_glm_timeout_ms
+        return self._config.translation_timeout_ms
 
     async def _await_translation(self, messages: list[dict], timeout_s: float) -> str:
         async with self._provider_slots:
@@ -249,7 +255,7 @@ class TranslationDispatcher:
         segment_token = self._request_segment.set(segment)
         try:
             messages = self._build_messages(segment, context_segments, target_language, glossary)
-            timeout_s = self._config.translation_timeout_ms / 1000
+            timeout_s = self._translation_timeout_ms() / 1000
 
             try:
                 translated = await self._await_translation(messages, timeout_s)
@@ -338,6 +344,8 @@ class TranslationDispatcher:
                 segment.translation_completion_tokens = (
                     (segment.translation_completion_tokens or 0) + response.completion_tokens
                 )
+            if response.finish_reason is not None:
+                segment.translation_finish_reason = response.finish_reason
         return response.text
 
     async def _request_translation(
