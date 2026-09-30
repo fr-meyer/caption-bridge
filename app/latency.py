@@ -352,6 +352,14 @@ class LatencyTracker:
         )
         self._discard_stamps(seq, *_CAPTION_STAMPS)
 
+    def discard_tts(self, seq: int) -> None:
+        """Cancelled/skipped speech must not become a later replay latency sample."""
+        if not _valid_seq(seq):
+            return
+        self._discard_stamps(
+            seq, "tts_request", "tts_synth_start", "tts_first_audio", "tts_playback_start"
+        )
+
     def observe_tts_request(self, seq: int) -> None:
         if not _valid_seq(seq):
             return

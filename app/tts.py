@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -83,19 +84,82 @@ class TTSDispatcher:
         self._unlock_event: asyncio.Event = asyncio.Event()
         self._unmute_event.set()
         self._voice_invalid: bool = False
+        # Counts include synthesized clips until the browser acknowledges playback.
+        # Only sequence numbers/counts are retained here, never text or audio.
+        self._pending_speech: Counter[int] = Counter()
+        self._playing_seq: int | None = None
+
+    def get_speech_state(self) -> dict[str, Any]:
+        return {
+            "tts_epoch": self._tts_epoch,
+            "pending_count": self._pending_speech.total(),
+            "playing_seq": self._playing_seq,
+        }
+
+    def _emit_speech_state(self) -> None:
+        self._session_manager._emit("tts_queue", self.get_speech_state())
+
+    def acknowledge_playback(self, seq: int, epoch: int, *, complete: bool) -> bool:
+        if epoch != self._tts_epoch or self._pending_speech[seq] == 0:
+            return False
+        if complete:
+            self._forget_pending(seq)
+            if self._playing_seq == seq:
+                self._playing_seq = None
+        else:
+            self._playing_seq = seq
+        self._emit_speech_state()
+        return True
+
+    def _forget_pending(self, seq: int) -> None:
+        if self._pending_speech[seq] > 1:
+            self._pending_speech[seq] -= 1
+        else:
+            self._pending_speech.pop(seq, None)
+
+    def catch_up(self) -> None:
+        """An explicit user action stops current speech and skips all pending clips."""
+        previous_epoch = self._tts_epoch
+        self._tts_epoch += 1
+        pending = self._pending_speech.copy()
+        self._pending_speech.clear()
+        self._playing_seq = None
+        while not self._queue.empty():
+            self._queue.get_nowait()
+            self._queue.task_done()
+        task = self._synth_task
+        if task is not None and not task.done():
+            task.cancel()
+        for seq, count in pending.items():
+            self._session_manager._emit(
+                "tts_skipped",
+                {"seq": seq, "reason": "user_catch_up", "count": count,
+                 "tts_epoch": previous_epoch},
+            )
+        self._record_queue_depth()
+        self._session_manager._emit(
+            "tts_caught_up",
+            {**self.get_speech_state(), "skipped_count": pending.total()},
+        )
+
 
     def _record_queue_depth(self) -> None:
         callback = getattr(self._session_manager, "record_tts_queue", None)
         if callable(callback):
             callback(self._queue.qsize())
 
-    def _emit_queue_skip(self, job: TTSJob, reason: str) -> None:
+    def _emit_queue_skip(self, job: TTSJob, reason: str, *, pending: bool = True) -> None:
+        if pending and job.tts_epoch == self._tts_epoch:
+            self._forget_pending(job.seq)
         self._session_manager._emit(
             "tts_skipped",
             {
                 "seq": job.seq,
                 "kind": job.kind,
                 "reason": reason,
+                # A never-synthesized queue job cannot cancel a different clip
+                # for the same caption that is already buffered in the browser.
+                "audio_emitted": False,
                 "tts_epoch": job.tts_epoch,
             },
         )
@@ -162,7 +226,9 @@ class TTSDispatcher:
         )
         job.enqueued_mono = time.monotonic()
         self._queue.put_nowait(job)
+        self._pending_speech[job.seq] += 1
         self._record_queue_depth()
+        self._emit_speech_state()
 
     def enqueue_replay(self, seq: int, text: str, language: str) -> None:
         if self._muted:
@@ -207,13 +273,15 @@ class TTSDispatcher:
         if len(items) >= self._config.tts_queue_max:
             for queued in items:
                 self._queue.put_nowait(queued)
-            self._emit_queue_skip(job, "queue_full")
+            self._emit_queue_skip(job, "queue_full", pending=False)
             self._record_queue_depth()
             return
+        self._pending_speech[job.seq] += 1
         items.insert(0, job)
         for j in items:
             self._queue.put_nowait(j)
         self._record_queue_depth()
+        self._emit_speech_state()
 
     def set_muted(self, muted: bool) -> None:
         was_muted = self._muted
@@ -232,6 +300,9 @@ class TTSDispatcher:
             task = self._synth_task
             if task is not None and not task.done():
                 task.cancel()
+            self._pending_speech.clear()
+            self._playing_seq = None
+        self._emit_speech_state()
 
     def set_audio_unlocked(self, unlocked: bool) -> None:
         self._audio_unlocked = unlocked
@@ -300,6 +371,7 @@ class TTSDispatcher:
                     except asyncio.CancelledError:
                         pass
                     finally:
+                        self._emit_speech_state()
                         self._synth_task = None
                         self._active_synth_kind = None
                 finally:
@@ -326,6 +398,8 @@ class TTSDispatcher:
             except asyncio.CancelledError:
                 raise
             except _TTSAttemptError as failure:
+                if self._job_stale(job):
+                    return
                 info = failure.info
                 error_text = str(failure.cause)
                 invalid_voice = (
@@ -390,6 +464,8 @@ class TTSDispatcher:
                     attempt,
                     info.status_code if info is not None else None,
                 )
+                if job.tts_epoch == self._tts_epoch:
+                    self._forget_pending(job.seq)
                 self._session_manager._emit(
                     "tts_error",
                     {
@@ -409,7 +485,10 @@ class TTSDispatcher:
     async def _synthesise_once(self, job: TTSJob) -> bool:
         chunk_index = 0
         try:
+            if self._job_stale(job):
+                return False
             if self._voice_invalid:
+                self._forget_pending(job.seq)
                 self._session_manager._emit(
                     "tts_skipped",
                     {
@@ -440,6 +519,8 @@ class TTSDispatcher:
             )
             async with stream as events:
                 async for event in events:
+                    if self._job_stale(job):
+                        return False
                     audio_data = getattr(event, "audio_data", None)
                     if audio_data is None:
                         payload = getattr(event, "data", None)
@@ -482,6 +563,8 @@ class TTSDispatcher:
         except Exception as exc:
             _info = extract_provider_error_info(exc)
             if is_tts_guardrail_violation(_info):
+                if job.tts_epoch == self._tts_epoch:
+                    self._forget_pending(job.seq)
                 logger.warning(
                     "TTS guardrail rejection seq=%s type=%s code=%s status=%s",
                     job.seq,
@@ -514,6 +597,9 @@ class TTSDispatcher:
             self._queue.task_done()
         was_muted = self._muted
         self._tts_epoch += 1
+        self._pending_speech.clear()
+        self._playing_seq = None
+        self._emit_speech_state()
         # Unlock is scoped to the browser/WebSocket connection: drain() runs on
         # stop/reset/new_session within the same connection, so we do not clear
         # _unlock_event or _audio_unlocked here. Re-gating happens only in ws.py

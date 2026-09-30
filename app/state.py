@@ -573,6 +573,8 @@ class SessionManager:
         return {
             "status": s.status,
             "checks": [c.model_dump(mode="json") for c in self.checks],
+            "tts_epoch": self._tts_dispatcher._tts_epoch if self._tts_dispatcher else 0,
+            "tts_queue": self._tts_dispatcher.get_speech_state() if self._tts_dispatcher else None,
             "source_partial": s.source_partial,
             "segments": [seg.model_dump(mode="json") for seg in s.segments],
             "exported": s.exported,

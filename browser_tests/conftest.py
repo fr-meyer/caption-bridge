@@ -245,6 +245,12 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                             }
                         )
                     )
+                elif message_type == "tts_catch_up":
+                    await websocket.send_bytes(orjson.dumps({
+                        "type": "tts_caught_up",
+                        "tts_epoch": message["tts_epoch"] + 1,
+                        "pending_count": 0, "playing_seq": None, "skipped_count": 3,
+                    }))
                 elif message_type == "stop":
                     await websocket.send_bytes(
                         orjson.dumps(

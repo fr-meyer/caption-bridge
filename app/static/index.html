@@ -47,6 +47,14 @@
         <button id="enable-audio-btn" class="btn-primary" style="font-size:13px;padding:6px 12px">Enable audio</button>
     </div>
 
+    <div id="speech-backlog" class="speech-backlog hidden">
+        <span id="speech-backlog-status" role="status" aria-live="polite"></span>
+        <button id="catch-up-btn" class="btn-secondary" type="button"
+                aria-describedby="catch-up-help">Catch up</button>
+        <small id="catch-up-help">Stop current speech and skip pending clips. Captions stay available.</small>
+    </div>
+    <p id="catch-up-notice" class="speech-catch-up-notice" role="status" aria-live="polite"></p>
+
     <div id="provider-notice" class="provider-notice hidden" role="status">
         <div class="provider-notice-content">
             <strong id="provider-notice-title"></strong>

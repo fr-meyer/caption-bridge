@@ -42,6 +42,8 @@ _CRITICAL_EVENT_TYPES = frozenset(
         "status",
         "tts_error",
         "tts_skipped",
+        "tts_caught_up",
+        "tts_queue",
     }
 )
 
@@ -340,6 +342,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_tts_audio_enabled()
             elif msg_type == "tts_mute":
                 await _handle_tts_mute(msg, outbound_queue, obs)
+            elif msg_type == "tts_catch_up":
+                _handle_tts_catch_up(msg)
             elif msg_type == "tts_replay":
                 await _handle_tts_replay(msg, outbound_queue, obs)
             elif msg_type == "render_ack":
@@ -396,6 +400,23 @@ async def _handle_tts_mute(
     if manager._tts_dispatcher is None:
         return
     manager._tts_dispatcher.set_muted(muted)
+
+
+def _handle_tts_catch_up(msg: dict) -> None:
+    assert manager is not None
+    dispatcher = manager._tts_dispatcher
+    epoch = msg.get("tts_epoch")
+    if dispatcher is None or manager.session.status not in {
+        "listening", "reconnecting", "session_ended"
+    }:
+        return
+    if not isinstance(epoch, int) or isinstance(epoch, bool):
+        return
+    if epoch != dispatcher._tts_epoch:
+        # A duplicate/stale request must not skip newly queued speech.
+        manager._emit("tts_queue", dispatcher.get_speech_state())
+        return
+    dispatcher.catch_up()
 
 
 async def _handle_tts_replay(
@@ -683,7 +704,15 @@ def _handle_latency_ack(msg: dict, kind: str) -> None:
         return
     if kind == "render":
         manager.observe_render_ack(seq)
-    elif kind == "tts_start":
-        manager.observe_tts_playback_start(seq)
-    elif kind == "tts_complete":
-        manager.observe_tts_playback_complete(seq)
+    elif kind in {"tts_start", "tts_complete"}:
+        dispatcher = getattr(manager, "_tts_dispatcher", None)
+        if dispatcher is not None:
+            epoch = msg.get("tts_epoch")
+            if not isinstance(epoch, int) or isinstance(epoch, bool):
+                return
+            if not dispatcher.acknowledge_playback(seq, epoch, complete=kind == "tts_complete"):
+                return
+        if kind == "tts_start":
+            manager.observe_tts_playback_start(seq)
+        else:
+            manager.observe_tts_playback_complete(seq)

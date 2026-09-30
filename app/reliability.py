@@ -16,7 +16,8 @@ from app.latency import LatencyTracker, validate_latency_snapshot
 if TYPE_CHECKING:
     from app.state import Session
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+SCHEMA_VERSION_V2 = 2
 SCHEMA_VERSION_V1 = 1
 ExportOutcome = Literal["not_requested", "succeeded", "failed", "discarded"]
 ReconnectOutcome = Literal["none", "recovered", "exhausted", "permanent", "cancelled"]
@@ -73,7 +74,8 @@ _AUDIO_KEYS = frozenset({"peak_depth", "dropped"})
 _WEBSOCKET_KEYS = frozenset(
     {"peak_depth", "dropped", "coalesced", "critical_drops"}
 )
-_TTS_KEYS = frozenset({"peak_depth", "retries", "skipped", "failures"})
+_TTS_KEYS_V2 = frozenset({"peak_depth", "retries", "skipped", "failures"})
+_TTS_KEYS = _TTS_KEYS_V2 | {"catch_up_actions", "catch_up_skipped"}
 _EXPORT_KEYS = frozenset({"outcome"})
 _SOAK_KEYS = frozenset(
     {
@@ -144,6 +146,8 @@ class ReliabilityTracker:
     tts_retries: int = 0
     tts_skipped: int = 0
     tts_failures: int = 0
+    tts_catch_up_actions: int = 0
+    tts_catch_up_skipped: int = 0
     latency: LatencyTracker = field(default_factory=LatencyTracker)
 
     def observe_event(self, event: dict[str, Any]) -> None:
@@ -164,8 +168,16 @@ class ReliabilityTracker:
         elif event_type == "tts_retrying":
             self.tts_retries += 1
         elif event_type == "tts_skipped":
-            self.tts_skipped += 1
+            self.latency.discard_tts(event.get("seq"))
+            count = event.get("count", 1)
+            count = count if _nonnegative_int(count) else 1
+            self.tts_skipped += count
+            if event.get("reason") == "user_catch_up":
+                self.tts_catch_up_skipped += count
+        elif event_type == "tts_caught_up":
+            self.tts_catch_up_actions += 1
         elif event_type == "tts_error":
+            self.latency.discard_tts(event.get("seq"))
             self.tts_failures += 1
 
     def _observe_reconnect_terminal(
@@ -237,6 +249,8 @@ class ReliabilityTracker:
                     "retries": self.tts_retries,
                     "skipped": self.tts_skipped,
                     "failures": self.tts_failures,
+                    "catch_up_actions": self.tts_catch_up_actions,
+                    "catch_up_skipped": self.tts_catch_up_skipped,
                 },
             },
             "export": {"outcome": self.export_outcome},
@@ -297,7 +311,7 @@ def validate_session_record(record: object) -> bool:
     if version == SCHEMA_VERSION_V1:
         if not _exact_keys(record, _SESSION_KEYS_V1):
             return False
-    elif version == SCHEMA_VERSION:
+    elif version in {SCHEMA_VERSION_V2, SCHEMA_VERSION}:
         if not _exact_keys(record, _SESSION_KEYS):
             return False
         if not validate_latency_snapshot(record.get("latency")):
@@ -342,7 +356,7 @@ def validate_session_record(record: object) -> bool:
     queue_specs = (
         (queues["audio"], _AUDIO_KEYS),
         (queues["websocket"], _WEBSOCKET_KEYS),
-        (queues["tts"], _TTS_KEYS),
+        (queues["tts"], _TTS_KEYS if version == SCHEMA_VERSION else _TTS_KEYS_V2),
     )
     if any(
         not _exact_keys(queue, keys)
@@ -362,7 +376,7 @@ def validate_soak_record(record: object) -> bool:
     assert isinstance(record, dict)
     return all(
         (
-            record["schema_version"] in {SCHEMA_VERSION, SCHEMA_VERSION_V1},
+            record["schema_version"] in {SCHEMA_VERSION, SCHEMA_VERSION_V2, SCHEMA_VERSION_V1},
             record["record_type"] == "soak",
             isinstance(record["run_id"], str),
             bool(_SAFE_ID.fullmatch(record["run_id"])),

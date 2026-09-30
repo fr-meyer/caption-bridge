@@ -19,6 +19,7 @@
     let ttsPlaybackQueue = [];
     let ttsActiveSourceNode = null;
     let ttsPlaybackStarting = false;
+    let ttsPlaybackGeneration = 0;
 
     const appState = {
         status: "idle_blocked",
@@ -51,6 +52,8 @@
         ttsSpeakingSeq: null,
         currentTtsEpoch: 0,
         ttsMuted: false,
+        ttsPendingCount: 0,
+        ttsCatchUpPending: false,
         captionsOnly: false,
         providerCapacityWarning: null,
     };
@@ -132,6 +135,10 @@
         els.enableAudioBtn = $("enable-audio-btn");
         els.ttsToggleBtn = $("tts-toggle-btn");
         els.ttsDrawerToggle = $("tts-drawer-toggle");
+        els.speechBacklog = $("speech-backlog");
+        els.speechBacklogStatus = $("speech-backlog-status");
+        els.catchUpBtn = $("catch-up-btn");
+        els.catchUpNotice = $("catch-up-notice");
         els.captionsOnlyIdle = $("captions-only-idle");
         els.captionsOnlyDrawer = $("captions-only-drawer");
         els.buildIdentity = $("build-identity");
@@ -185,6 +192,7 @@
         };
 
         ws.onclose = function () {
+            renderTtsControls();
             scheduleReconnect();
         };
 
@@ -238,6 +246,12 @@
             case "elapsed":
                 handleElapsed(msg);
                 break;
+            case "tts_queue":
+                handleTtsQueue(msg);
+                break;
+            case "tts_caught_up":
+                handleTtsCaughtUp(msg);
+                break;
             case "tts_speaking":
                 handleTtsSpeaking(msg);
                 break;
@@ -274,6 +288,9 @@
         }
         ttsChunkBuffers = {};
         appState.ttsSpeakingSeq = null;
+        appState.ttsCatchUpPending = false;
+        appState.ttsPendingCount = msg.tts_queue ? msg.tts_queue.pending_count : 0;
+        if (els.catchUpNotice) els.catchUpNotice.textContent = "";
         clearTtsPlaybackState();
 
         appState.checks = msg.checks || [];
@@ -543,20 +560,55 @@
         }
     }
 
+    function handleTtsQueue(msg) {
+        if (!Number.isInteger(msg.tts_epoch) || msg.tts_epoch < appState.currentTtsEpoch) return;
+        if (appState.ttsCatchUpPending && msg.tts_epoch <= appState.currentTtsEpoch) return;
+        if (msg.tts_epoch !== appState.currentTtsEpoch) {
+            clearTtsPlaybackState();
+            ttsChunkBuffers = {};
+            appState.ttsSpeakingSeq = null;
+            appState.ttsCatchUpPending = false;
+            appState.currentTtsEpoch = msg.tts_epoch;
+            renderSpeakingHighlight();
+        }
+        appState.ttsPendingCount = Number.isInteger(msg.pending_count) ? Math.max(0, msg.pending_count) : 0;
+        renderTtsControls();
+    }
+
+    function handleTtsCaughtUp(msg) {
+        if (msg.tts_epoch < appState.currentTtsEpoch) return;
+        handleTtsQueue(msg);
+        appState.ttsCatchUpPending = false;
+        els.catchUpNotice.textContent = "Speech caught up. Current clip stopped; " +
+            msg.skipped_count + " pending clip(s) skipped. All captions kept and replayable.";
+        renderTtsControls();
+    }
+
+    function catchUpSpeech() {
+        if (!ws || ws.readyState !== WebSocket.OPEN || appState.ttsCatchUpPending) return;
+        appState.ttsCatchUpPending = true;
+        clearTtsPlaybackState();
+        ttsChunkBuffers = {};
+        appState.ttsSpeakingSeq = null;
+        renderSpeakingHighlight();
+        send({ type: "tts_catch_up", tts_epoch: appState.currentTtsEpoch });
+        renderTtsControls();
+    }
+
     function handleTtsSpeaking(msg) {
-        if (appState.ttsMuted || msg.tts_epoch == null || msg.seq == null) return;
+        if (appState.ttsMuted || appState.ttsCatchUpPending || msg.tts_epoch == null ||
+            msg.tts_epoch < appState.currentTtsEpoch || msg.seq == null) return;
         var incomingEpoch = msg.tts_epoch;
         if (incomingEpoch !== appState.currentTtsEpoch) {
             clearTtsPlaybackState();
             purgeTtsChunkBuffersNotEpoch(incomingEpoch);
         }
         appState.currentTtsEpoch = incomingEpoch;
-        appState.ttsSpeakingSeq = msg.seq;
         renderSpeakingHighlight();
     }
 
     function handleTtsAudio(msg) {
-        if (appState.ttsMuted || msg.tts_epoch !== appState.currentTtsEpoch) return;
+        if (appState.ttsMuted || appState.ttsCatchUpPending || msg.tts_epoch !== appState.currentTtsEpoch) return;
         var key = msg.seq + ":" + msg.tts_epoch;
         if (!ttsChunkBuffers[key]) {
             ttsChunkBuffers[key] = { chunks: [], done: false };
@@ -581,6 +633,7 @@
     }
 
     function handleTtsSkipped(msg) {
+        if (msg.audio_emitted === false) return;
         handleTtsError(msg);
     }
 
@@ -629,6 +682,7 @@
     }
 
     function clearTtsPlaybackState() {
+        ttsPlaybackGeneration++;
         ttsPlaybackQueue.length = 0;
         ttsPlaybackStarting = false;
         if (ttsActiveSourceNode) {
@@ -700,6 +754,7 @@
                 appState.ttsSpeakingSeq = null;
                 renderSpeakingHighlight();
             }
+            send({ type: "tts_playback_complete", seq: item.seq, tts_epoch: item.epoch });
             tryStartTtsPlayback();
             return;
         }
@@ -716,7 +771,7 @@
         if (ttsActiveSourceNode || ttsPlaybackStarting || ttsPlaybackQueue.length === 0) {
             return;
         }
-        if (appState.ttsMuted) {
+        if (appState.ttsMuted || !appState.ttsAudioUnlocked || appState.ttsCatchUpPending) {
             return;
         }
         if (!audioContext) {
@@ -729,14 +784,16 @@
         var ab = queued.audioBuffer;
 
         ttsPlaybackStarting = true;
+        var generation = ttsPlaybackGeneration;
         audioContext.resume().then(function () {
+            if (generation !== ttsPlaybackGeneration) return;
             ttsPlaybackStarting = false;
             if (ttsActiveSourceNode) {
                 ttsPlaybackQueue.unshift(queued);
                 tryStartTtsPlayback();
                 return;
             }
-            if (appState.ttsMuted || epoch !== appState.currentTtsEpoch) {
+            if (appState.ttsMuted || appState.ttsCatchUpPending || epoch !== appState.currentTtsEpoch) {
                 tryStartTtsPlayback();
                 return;
             }
@@ -755,17 +812,25 @@
                     renderSpeakingHighlight();
                 }
                 if (!srcNode._cbCancelled && appState.currentTtsEpoch === epoch) {
-                    send({ type: "tts_playback_complete", seq: seq });
+                    send({ type: "tts_playback_complete", seq: seq, tts_epoch: epoch });
                 }
                 tryStartTtsPlayback();
             };
             try {
                 srcNode.start();
-                send({ type: "tts_playback_start", seq: seq });
+                appState.ttsSpeakingSeq = seq;
+                renderSpeakingHighlight();
+                send({ type: "tts_playback_start", seq: seq, tts_epoch: epoch });
             } catch (_) {
                 ttsActiveSourceNode = null;
                 tryStartTtsPlayback();
             }
+        }).catch(function () {
+            if (generation !== ttsPlaybackGeneration) return;
+            ttsPlaybackStarting = false;
+            ttsPlaybackQueue.unshift(queued);
+            appState.ttsAudioUnlocked = false;
+            renderTtsControls();
         });
     }
 
@@ -829,6 +894,18 @@
 
     function renderTtsControls() {
         var s = appState.status;
+        var hasSession = s === "listening" || s === "reconnecting" || s === "session_ended";
+        if (els.speechBacklog) els.speechBacklog.classList.toggle("hidden", !hasSession);
+        if (els.speechBacklogStatus) {
+            els.speechBacklogStatus.textContent = appState.ttsCatchUpPending
+                ? "Catching up speech…"
+                : (appState.ttsMuted ? "Speech muted." :
+                    "Speech: " + appState.ttsPendingCount + " clip(s) pending, including the current clip.");
+        }
+        if (els.catchUpBtn) {
+            els.catchUpBtn.disabled = appState.ttsCatchUpPending || appState.ttsMuted ||
+                appState.ttsPendingCount === 0 || !ws || ws.readyState !== WebSocket.OPEN;
+        }
         var banner = els.audioEnableBanner;
         if (banner) {
             if ((s === "listening" || s === "reconnecting" || s === "session_ended") && !appState.ttsAudioUnlocked && !appState.ttsMuted) {
@@ -1388,8 +1465,11 @@
                 appState.ttsAudioUnlocked = true;
                 send({ type: "tts_audio_enabled" });
                 renderTtsControls();
+                tryStartTtsPlayback();
             });
         });
+
+        els.catchUpBtn.addEventListener("click", catchUpSpeech);
 
         [els.ttsToggleBtn, els.ttsDrawerToggle].forEach(function (button) {
             button.addEventListener("click", toggleTtsMute);

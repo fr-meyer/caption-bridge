@@ -863,3 +863,18 @@ select:focus-visible {
 .glossary-remember { display: block; margin: 12px 0; }
 .glossary-session-note { margin: 8px 24px; color: var(--text-muted); font-size: 13px; }
 textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
+/* Speech backlog reports clips, not an estimated delay. */
+.speech-backlog {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+.speech-backlog small { flex-basis: 100%; color: var(--text-secondary); }
+.speech-catch-up-notice { margin: 0; padding: 0 16px; font-size: 14px; }
+.speech-catch-up-notice:empty { display: none; }
