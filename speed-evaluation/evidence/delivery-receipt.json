@@ -1,0 +1,21 @@
+{
+  "patch": "speed-evaluation.patch",
+  "patch_sha256": "d999df88e7c018053d95df787356eb063d05a14502f060b17849c9361aa9bb04",
+  "files": [
+    "README.md",
+    "pytest.ini",
+    "run-offline.sh",
+    "browser_tests/conftest.py",
+    "browser_tests/test_speed_evaluation.py",
+    "browser_tests/speed_harness.js",
+    "evidence/final-measurements.json"
+  ],
+  "gcp_harness": "/tmp/caption-bridge-speed-evaluation-20260930-review",
+  "tests_passed": 11,
+  "tests_skipped": 3,
+  "provider_requests": 0,
+  "audible_output": false,
+  "production_edits": 0,
+  "github_writes": 0,
+  "remaining": "Attended actual Safari/Chromium listening and playback-mechanism decision"
+}
