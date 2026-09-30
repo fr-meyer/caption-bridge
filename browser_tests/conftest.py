@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.config import AppConfig
 from app.profiles import available_profiles, resolve_profile
+from app.translation_models import available_translation_models
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
 _STARTED_AT = "2026-01-01T00:00:00+00:00"
@@ -47,6 +48,10 @@ def _segment(
 
 
 def _snapshot(scenario: str) -> dict[str, Any]:
+    config = AppConfig(_env_file=None, **(
+        {"MISTRAL_TRANSLATE_MODEL": "mistral-small-latest"}
+        if scenario == "model_override" else {}
+    ))
     snapshot: dict[str, Any] = {
         "type": "session_snapshot",
         "status": "idle_ready",
@@ -68,13 +73,9 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "target_language": "en",
         "caption_profile": resolve_profile("current", AppConfig(_env_file=None)).model_dump(mode="json"),
         "available_caption_profiles": available_profiles(AppConfig(_env_file=None)),
-        "translation_model": "zai-glm-5-3",
+        "translation_model": config.translate_model,
         "translation_reasoning_effort": "default",
-        "available_translation_models": [
-            {"id": "zai-glm-5-3", "label": "Z.ai GLM 5.3 (preview)"},
-            {"id": "mistral-small-latest", "label": "Mistral Small (latest)"},
-            {"id": "mistral-medium-latest", "label": "Mistral Medium (latest)"},
-        ],
+        "available_translation_models": available_translation_models(config),
         "available_target_languages": [{"code": "en", "label": "English"}],
         "started_at": None,
         "ended_at": None,
@@ -137,7 +138,7 @@ def _snapshot(scenario: str) -> dict[str, Any]:
                         caption_profile=resolve_profile("longer", AppConfig(_env_file=None)).model_dump(mode="json"))
     elif scenario == "glossary_idle":
         snapshot["available_target_languages"].append({"code": "fr", "label": "French"})
-    elif scenario != "idle_ready":
+    elif scenario not in {"idle_ready", "model_override"}:
         raise ValueError(f"unsupported browser scenario: {scenario}")
     return snapshot
 
@@ -148,6 +149,7 @@ class BrowserHarness:
     scenario: str = "idle_ready"
     messages: list[dict[str, Any]] = field(default_factory=list)
     connections: int = 0
+    _settings: dict[str, Any] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def configure(self, scenario: str) -> None:
@@ -156,11 +158,20 @@ class BrowserHarness:
             self.scenario = scenario
             self.messages.clear()
             self.connections = 0
+            self._settings.clear()
+
+    def reset_session_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._settings.clear()
+            if self.scenario != "model_override":
+                self.scenario = "idle_ready"
+            return _snapshot(self.scenario)
 
     def on_connect(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with self._lock:
             self.connections += 1
             scenario = self.scenario
+            settings = dict(self._settings)
         events: list[dict[str, Any]] = []
         if scenario == "degraded":
             events = [
@@ -178,11 +189,26 @@ class BrowserHarness:
                     "max_attempts": 3,
                 },
             ]
-        return _snapshot(scenario), events
+        snapshot = _snapshot(scenario)
+        snapshot.update(settings)
+        return snapshot, events
 
     def record(self, message: dict[str, Any]) -> None:
         with self._lock:
             self.messages.append(message)
+            if message.get("type") == "start":
+                self._settings.update(
+                    status="listening", started_at=_STARTED_AT,
+                    translation_model=message["translation_model"],
+                    translation_reasoning_effort=message["translation_reasoning_effort"],
+                )
+            elif message.get("type") == "set_translation_model":
+                self._settings.update(
+                    translation_model=message["model"],
+                    translation_reasoning_effort=message["reasoning_effort"],
+                )
+            elif message.get("type") == "stop":
+                self._settings.update(status="session_ended", ended_at=_ENDED_AT)
 
     def message_count(self, message_type: str) -> int:
         with self._lock:
@@ -264,6 +290,7 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                     await websocket.send_bytes(orjson.dumps({
                         "type": "translation_model_changed",
                         "model": message["model"],
+                        "reasoning_effort": message["reasoning_effort"],
                         "revision": 1,
                         "applies_from_seq": 2,
                     }))
@@ -285,7 +312,7 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                         )
                     )
                 elif message_type == "new_session":
-                    await websocket.send_bytes(orjson.dumps(_snapshot("idle_ready")))
+                    await websocket.send_bytes(orjson.dumps(harness.reset_session_snapshot()))
         except WebSocketDisconnect:
             return
 

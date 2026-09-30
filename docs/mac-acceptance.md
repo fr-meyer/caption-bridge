@@ -117,3 +117,71 @@ by adding time from a later session.
 Physical VoiceOver and second-operator onboarding are follow-up audits under
 the [CLI support scope](mac-cli.md). Record them as unperformed when they have
 not occurred; do not claim screen-reader certification or new-operator evidence.
+
+
+## Draft integration #64 and startup choice #68
+
+This is the remaining physical gate for the combined profile/model/thinking
+candidate. Passing GCP CI or the earlier native Safari synthetic fixture does
+not complete it. Use the exact candidate commit and the identity reported by
+the isolated app; the published v0.4.0 result cannot be reused for changed code.
+
+Current decision: the draft starts on Medium unless an explicit
+`MISTRAL_TRANSLATE_MODEL` override selects another model. GLM remains
+experimental. Issue #68 is implemented in the draft but remains open for the
+device judgment and reviewed release. No Windows run is required to establish
+Mac CLI support; any Windows acceptance requires its own device authorization.
+
+### Operator and device prerequisites
+
+An attended operator must provide the physical Mac, its already-authorized
+microphone, intended browser and output device, and a quiet public-fixture
+source. Stop unrelated playback so background speech cannot invalidate the
+run again. Make an isolated exact-candidate checkout on a separate loopback
+port with separate journal/export/reliability directories. Preserve the
+canonical checkout, production configuration and service state.
+
+A live run sends its captured audio and translations to configured providers.
+Obtain the owner's live-public-audio authorization and the remaining provider
+allowance from the cost owner before starting; this checklist adds no spend,
+permission-change or deployment authorization. Never use private seminar
+audio or a private export as a test fixture. Keep the raw local export private;
+record only counts, model IDs, timing bands and pass/fail outcomes.
+
+### Candidate-specific checks
+
+1. Record exact commit, app identity, effective model override by model ID,
+   browser, input/output device and public fixture case IDs.
+2. Verify first Start selects Medium when no override exists. Verify a
+   deliberate override or pre-Start GLM choice is honored. GLM shows the
+   experimental/missed-or-delayed-caption note.
+3. In a short controlled Korean session, check complete endings, the public
+   connective-pause case in section 3, negation, numbers and representative
+   terminology. Judge source responsiveness, target readability and latency
+   separately. Record any missing/failed/timed-out captions; an unexplained
+   failure blocks claiming GLM reliable.
+4. Change model and thinking live; verify the status names the selected model
+   and only future finalized segments change. Keep the chosen caption timing
+   profile. Inspect private export metadata locally for per-caption requested
+   and reported model, thinking level, cap, profile and usage.
+5. Refresh while listening. Confirm the selected model restores from the
+   session, capture does not duplicate, and spoken readback waits for the
+   replacement browser's Enable audio gesture.
+6. Listen to translated speech on the intended output device. Judge
+   intelligibility/order and check mute, unmute and replay while captions
+   continue. A translation failure is a missing translation, not evidence of
+   a speech backlog.
+7. Stop and export, then New Session. Confirm it restores the effective
+   configured startup model and Provider default thinking. Check shutdown
+   and loopback ownership using the existing lifecycle steps.
+8. Record GLM quality, failures, latency and usage against the existing public
+   evidence. Easy GCP compatibility cases are insufficient. Keep GLM
+   experimental until this representative result and owner judgment support
+   changing the startup decision.
+
+The operator must mark unperformed checks explicitly. Physical VoiceOver,
+visual contrast and second-operator onboarding remain follow-up judgments
+under the CLI support scope; automated WebKit/axe results do not stand in for
+them. A version/release decision, environment-override review and rollout/
+rollback approval remain separate after acceptance. Do not promote, merge or
+deploy as part of this record.

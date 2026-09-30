@@ -219,6 +219,7 @@ def test_glm_gets_its_own_timeout_without_changing_medium(tmp_path: Path) -> Non
         manager = SessionManager(config)
         dispatcher = TranslationDispatcher(manager, config, DelayedProvider())
         manager.set_dispatcher(dispatcher)
+        manager.set_translation_model("zai-glm-5-3")
         manager.session.status = "listening"
         manager.finalize_segment("이 결과는 추가 검증이 필요합니다.")
         manager.set_translation_model("mistral-medium-latest")
@@ -252,6 +253,7 @@ def test_glm_empty_response_preserves_finish_reason_in_export_and_recovery(
         manager.set_journal(SessionJournal(manager.session.id, config))
         dispatcher = TranslationDispatcher(manager, config, ExhaustedProvider())
         manager.set_dispatcher(dispatcher)
+        manager.set_translation_model("zai-glm-5-3")
         manager.session.status = "listening"
         manager.finalize_segment("이 결과는 추가 검증이 필요합니다.")
         await dispatcher.drain()

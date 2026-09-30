@@ -22,6 +22,7 @@
             </span>
         </div>
     </header>
+    <div id="translation-model-status" class="session-model-status hidden" role="status"></div>
 
     <div id="recovery-notice" class="recovery-notice hidden">
         <div class="recovery-content">
@@ -71,8 +72,9 @@
         </div>
         <div class="idle-lang-row">
             <label class="idle-lang-label" for="idle-model-select">Translation model</label>
-            <select id="idle-model-select" class="drawer-select" aria-label="Translation model"></select>
+            <select id="idle-model-select" class="drawer-select" aria-label="Translation model" aria-describedby="idle-model-help"></select>
         </div>
+        <small id="idle-model-help" class="model-help hidden"></small>
         <div class="idle-lang-row">
             <label class="idle-lang-label" for="idle-thinking-select">Translation thinking</label>
             <select id="idle-thinking-select" class="drawer-select" aria-label="Translation thinking"></select>

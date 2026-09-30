@@ -49,7 +49,7 @@
         captionProfileId: "current",
         availableCaptionProfiles: [],
         availableTargetLanguages: [],
-        translationModel: "zai-glm-5-3",
+        translationModel: "mistral-medium-latest",
         translationReasoningEffort: "default",
         availableTranslationModels: [],
         drawerOpen: false,
@@ -137,6 +137,9 @@
         els.sourceToggle = $("source-toggle");
         els.idleTargetSelect = $("idle-target-select");
         els.headerLang = $("header-lang");
+        els.translationModelStatus = $("translation-model-status");
+        els.idleModelHelp = $("idle-model-help");
+        els.drawerModelHelp = $("drawer-model-help");
         els.providerNotice = $("provider-notice");
         els.providerNoticeTitle = $("provider-notice-title");
         els.providerNoticeDetail = $("provider-notice-detail");
@@ -311,7 +314,7 @@
         appState.availableTranslationModels = msg.available_translation_models || [];
         appState.translationModel = msg.translation_model ||
             (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
-            "zai-glm-5-3";
+            "mistral-medium-latest";
         appState.translationReasoningEffort = msg.translation_reasoning_effort || "default";
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
@@ -1290,6 +1293,7 @@
             });
             sel.value = appState.translationModel;
         });
+        renderModelSelectors();
     }
 
     function supportsHighReasoning(model) {
@@ -1313,6 +1317,19 @@
     }
 
     function renderModelSelectors() {
+        var experimental = appState.translationModel === "zai-glm-5-3";
+        var note = "GLM is experimental and may miss or delay captions. Medium is recommended for now.";
+        els.idleModelHelp.textContent = note;
+        els.idleModelHelp.classList.toggle("hidden", !experimental);
+        els.drawerModelHelp.textContent = "Changes apply to future captions. Requests already underway keep their model." +
+            (experimental ? " " + note : "");
+        var selected = appState.availableTranslationModels.find(function (model) {
+            return model.id === appState.translationModel;
+        });
+        els.translationModelStatus.textContent = "Translation: " +
+            (selected ? selected.label : appState.translationModel);
+        els.translationModelStatus.classList.toggle("hidden",
+            !["listening", "reconnecting", "stopping", "session_ended"].includes(appState.status));
         if (els.drawerModelSelect) {
             els.drawerModelSelect.disabled = appState.status === "session_ended";
             els.drawerThinkingSelect.disabled = appState.status === "session_ended";
@@ -1328,6 +1345,7 @@
             appState.translationReasoningEffort = effort;
             els.idleModelSelect.value = model;
             populateThinkingDropdowns();
+            renderModelSelectors();
         } else {
             send({ type: "set_translation_model", model: model, reasoning_effort: effort });
         }
@@ -1476,6 +1494,7 @@
         els.drawerThinkingSelect.addEventListener("change", handleDrawerThinkingChange);
         els.idleModelSelect.addEventListener("change", function (e) {
             appState.translationModel = e.target.value;
+            renderModelSelectors();
             if (!supportsHighReasoning(appState.translationModel)) {
                 appState.translationReasoningEffort = "default";
             }

@@ -300,6 +300,13 @@ class TranslationDispatcher:
                 )
                 return
 
+            if getattr(segment, "translation_finish_reason", None) == "length":
+                logger.warning("Translation output limit reached for segment #%d", seq)
+                self._session_manager.mark_translation_failed(
+                    seq, session_id, reason="provider_output_limit"
+                )
+                return
+
             translated, quality = await self._check_and_repair(
                 translated, segment, target_language, glossary
             )
@@ -419,6 +426,10 @@ class TranslationDispatcher:
                     self._call_repair_api(repair_messages),
                     timeout=repair_timeout_s,
                 )
+                if getattr(segment, "translation_finish_reason", None) == "length":
+                    # A fluent partial repair can omit a qualification or negation.
+                    # Keep the original flagged answer instead of accepting it.
+                    raise ValueError("translation_repair_output_limit")
         except Exception:
             return raw_text, SegmentQuality(
                 flagged=True,

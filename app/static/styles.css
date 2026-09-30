@@ -863,3 +863,18 @@ select:focus-visible {
 .glossary-remember { display: block; margin: 12px 0; }
 .glossary-session-note { margin: 8px 24px; color: var(--text-muted); font-size: 13px; }
 textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
+/* Translation choice remains visible independently of spoken-readback state. */
+.session-model-status {
+    padding: 8px 24px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+}
+.model-help {
+    display: block;
+    max-width: 420px;
+    margin: 0 auto 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}

@@ -13,7 +13,7 @@ class AppConfig(BaseSettings):
         validation_alias="MISTRAL_TRANSCRIBE_MODEL",
     )
     translate_model: str = Field(
-        default="zai-glm-5-3",
+        default="mistral-medium-latest",
         validation_alias="MISTRAL_TRANSLATE_MODEL",
     )
     target_streaming_delay_ms: int = 1000
