@@ -862,4 +862,17 @@ select:focus-visible {
 .glossary-editor small { display: block; color: var(--text-muted); line-height: 1.5; }
 .glossary-remember { display: block; margin: 12px 0; }
 .glossary-session-note { margin: 8px 24px; color: var(--text-muted); font-size: 13px; }
+.caption-terms-version { color: var(--text-muted); margin-right: 12px; font-size: 12px; }
+.term-correction-btn { margin-top: 8px; font-size: 12px; padding: 5px 9px; }
+#term-dialog { color: var(--text-primary); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; width: min(560px, 90vw); max-height: 85vh; overflow: auto; }
+#term-dialog::backdrop { background: rgba(0, 0, 0, .65); }
+#term-dialog label { display: block; margin-top: 12px; }
+#term-dialog input, #term-dialog select { width: 100%; box-sizing: border-box; padding: 8px;
+    color: var(--text-primary); background: var(--bg); border: 1px solid var(--border); }
+#term-help, #term-version, .term-caption { font-size: 13px; line-height: 1.5; }
+.term-caption { white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; }
+.term-row span { flex: 1; overflow-wrap: anywhere; }
+#term-dialog .modal-actions { flex-wrap: wrap; margin-top: 16px; }
 textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }

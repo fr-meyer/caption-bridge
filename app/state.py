@@ -13,7 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
-from app.glossary import Glossary
+from app.glossary import Glossary, TerminologyRevision
 from app.languages import is_valid_target_language
 from app.reliability import ReliabilityTracker, write_session_record
 
@@ -95,6 +95,10 @@ class Segment(BaseModel):
     translated_at: datetime | None = None
     quality: SegmentQuality | None = None
     failure_reason: str | None = None
+    effective_source_text: str | None = None
+    terminology_version: int = Field(default=0, ge=0, le=101, strict=True)
+    terminology: Glossary | None = None
+    terminology_status: Literal["active", "empty", "paused"] = "empty"
 
 
 class ReadinessCheck(BaseModel):
@@ -141,6 +145,9 @@ class Session(BaseModel):
     source_language: str = "auto"
     target_language: str = "en"
     glossary: Glossary | None = None
+    terminology_version: int = Field(default=0, ge=0, le=101, strict=True)
+    terminology_history: list[TerminologyRevision] = Field(default_factory=list, max_length=101)
+    terminology_undo_versions: list[int] = Field(default_factory=list, max_length=100)
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
 
@@ -453,6 +460,8 @@ class SessionManager:
                     "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
                     "segment_kind": seg.segment_kind,
+                    "terminology_version": seg.terminology_version,
+                    "terminology_status": seg.terminology_status,
                 },
             )
             self._reliability.latency.observe_render_dispatch(seg.seq)
@@ -486,6 +495,8 @@ class SessionManager:
                 self._journal.record_session_started()
                 if self.session.glossary is not None:
                     self._journal.record_glossary(self.session.glossary)
+                for revision in self.session.terminology_history:
+                    self._journal.record_terminology(revision, [])
 
         if status == "listening":
             self._start_elapsed_ticker()
@@ -571,6 +582,7 @@ class SessionManager:
 
         s = self.session
         return {
+            "session_id": s.id,
             "status": s.status,
             "checks": [c.model_dump(mode="json") for c in self.checks],
             "source_partial": s.source_partial,
@@ -590,6 +602,9 @@ class SessionManager:
             "source_language": s.source_language,
             "target_language": s.target_language,
             "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
+            "terminology_version": s.terminology_version,
+            "terminology_can_undo": bool(s.terminology_undo_versions),
+            "terminology_changes": max(0, len(s.terminology_history) - 1),
             "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "runtime_metrics": {

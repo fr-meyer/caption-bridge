@@ -10,7 +10,7 @@ import time
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
-from app.glossary import Glossary, add_to_messages
+from app.glossary import Glossary, add_to_messages, effective_source
 from app.languages import get_language_label
 from app.providers import MistralTranslationProvider, TranslationProvider
 from app.state import SegmentQuality
@@ -72,6 +72,17 @@ class TranslationDispatcher:
         glossary = getattr(session, "glossary", None)
         if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
             glossary = None
+        if glossary is not None and glossary.target_language != target_language:
+            segment.terminology_status = "paused"
+            glossary = None
+        else:
+            segment.terminology_status = "active" if glossary else "empty"
+        version = getattr(session, "terminology_version", 0) if session.id == session_id else 0
+        segment.terminology_version = version if type(version) is int else 0
+        segment.terminology = glossary
+        segment.effective_source_text = effective_source(segment.source_text, glossary, target_language)
+        if session.id == session_id and self._session_manager._journal is not None:
+            self._session_manager._journal.record_translation_requested(segment)
         task = asyncio.ensure_future(
             self._translate_task(
                 segment, context_segments, session_id, target_language, glossary
@@ -313,8 +324,9 @@ class TranslationDispatcher:
         self, raw_text: str, segment, target_language: str,
         glossary: Glossary | None = None,
     ) -> tuple[str, SegmentQuality]:
+        source_text = getattr(segment, "effective_source_text", None) or segment.source_text
         result = translation_quality.check(
-            raw_text, segment.source_text, target_language
+            raw_text, source_text, target_language
         )
         if not result.flagged:
             return raw_text, SegmentQuality(
@@ -343,11 +355,11 @@ class TranslationDispatcher:
 
         label = get_language_label(target_language)
         repair_messages = translation_quality.build_repair_prompt(
-            segment.source_text, label, initial_reasons
+            source_text, label, initial_reasons
         )
         repair_messages = add_to_messages(
             repair_messages, glossary, target_language,
-            source_text=segment.source_text,
+            source_text=source_text,
         )
         repair_timeout_s = min(
             self._config.translation_timeout_ms / 2, 5000
@@ -375,7 +387,7 @@ class TranslationDispatcher:
             )
 
         repair_result = translation_quality.check(
-            repair_text, segment.source_text, target_language
+            repair_text, source_text, target_language
         )
         if not repair_result.flagged:
             return repair_text, SegmentQuality(
@@ -392,10 +404,10 @@ class TranslationDispatcher:
             )
 
         best_text = translation_quality.choose_better_translation(
-            raw_text, repair_text, segment.source_text, target_language
+            raw_text, repair_text, source_text, target_language
         )
         final_result = translation_quality.check(
-            best_text, segment.source_text, target_language
+            best_text, source_text, target_language
         )
         return best_text, SegmentQuality(
             flagged=True,
@@ -414,6 +426,7 @@ class TranslationDispatcher:
         self, segment, context_segments: list, target_language: str,
         glossary: Glossary | None = None,
     ) -> list[dict]:
+        source_text = getattr(segment, "effective_source_text", None) or segment.source_text
         system_content = _build_system_prompt(target_language)
         if segment.segment_kind == "reconnect_fragment":
             system_content += _RECONNECT_ADDENDUM
@@ -428,17 +441,17 @@ class TranslationDispatcher:
                 f"{context_lines}\n"
                 f"</context_do_not_translate>\n\n"
                 f"<segment_to_translate>\n"
-                f"{segment.source_text}\n"
+                f"{source_text}\n"
                 f"</segment_to_translate>"
             )
         else:
             user_content = (
                 f"<segment_to_translate>\n"
-                f"{segment.source_text}\n"
+                f"{source_text}\n"
                 f"</segment_to_translate>"
             )
 
         return add_to_messages([
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
-        ], glossary, target_language, source_text=segment.source_text)
+        ], glossary, target_language, source_text=source_text)

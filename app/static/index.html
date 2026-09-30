@@ -132,6 +132,10 @@
             <span class="drawer-label">Source Text</span>
             <button id="source-toggle" class="btn-icon active" title="Toggle source text" aria-label="Toggle source text">Src</button>
         </div>
+        <div class="drawer-section">
+            <button id="session-terms" class="btn-secondary" type="button">Session terminology</button>
+            <small>Inspect, edit, remove or undo terms while listening.</small>
+        </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:0">
         <div class="drawer-section">
             <span class="drawer-label">Audio Readback</span>
@@ -168,6 +172,27 @@
         </div>
     </div>
 
+    <dialog id="term-dialog" aria-labelledby="term-title" aria-describedby="term-help">
+        <h2 id="term-title">Correct a term</h2>
+        <p id="term-help">Save for future captions. Original captions stay unchanged. Changes and original results remain in your private export.</p>
+        <p id="term-caption" class="term-caption"></p>
+        <p id="term-version" role="status"></p>
+        <div id="term-list"></div>
+        <form id="term-form">
+            <label for="term-kind">Correction type</label>
+            <select id="term-kind"><option value="target">Preferred translation</option><option value="source">Misheard source term</option></select>
+            <label for="term-source">Source term</label>
+            <input id="term-source" maxlength="160" required autocomplete="off">
+            <label for="term-preferred">Correct term or preferred rendering</label>
+            <input id="term-preferred" maxlength="160" required autocomplete="off">
+            <p id="term-error" class="export-error hidden" role="alert"></p>
+            <div class="modal-actions">
+                <button id="term-save" class="btn-primary" type="submit">Save for future captions</button>
+                <button id="term-undo" class="btn-secondary" type="button">Undo last change</button>
+                <button id="term-close" class="btn-secondary" type="button">Close</button>
+            </div>
+        </form>
+    </dialog>
     <script src="/app.js" defer></script>
 </body>
 </html>

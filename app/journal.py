@@ -11,8 +11,9 @@ import orjson
 
 from app.config import AppConfig
 from app.exporter import export_session
-from app.glossary import Glossary, parse_glossary
+from app.glossary import Glossary, TerminologyRevision, parse_glossary
 from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
+from app.terminology import restore_revision
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class SessionJournal:
         self._write({"type": "session_started"})
 
     def record_glossary(self, glossary: Glossary) -> None:
-        self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json")})
+        self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json", exclude_defaults=True)})
 
     def record_segment_created(self, seg: Segment) -> None:
         self._write({
@@ -47,6 +48,17 @@ class SessionJournal:
             "created_at": seg.created_at.isoformat(),
             "target_language": seg.target_language,
         })
+
+    def record_terminology(self, revision: TerminologyRevision, undo_versions: list[int]) -> None:
+        self._write({"type": "terminology_revision",
+                     "revision": revision.model_dump(mode="json"), "undo_versions": undo_versions})
+
+    def record_translation_requested(self, seg: Segment) -> None:
+        self._write({"type": "translation_requested", "seq": seg.seq,
+                     "effective_source_text": seg.effective_source_text,
+                     "terminology_version": seg.terminology_version,
+                     "terminology_status": seg.terminology_status,
+                     "terminology": seg.terminology.model_dump(mode="json") if seg.terminology else None})
 
     def record_translation_updated(self, seg: Segment) -> None:
         self._write({
@@ -121,6 +133,30 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     )
                 except (ValueError, TypeError):
                     logger.warning("Invalid recovery glossary metadata — ignored")
+
+            elif rec_type == "terminology_revision":
+                try:
+                    restore_revision(session, rec.get("revision"), rec.get("undo_versions"))
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery terminology metadata — ignored")
+
+            elif rec_type == "translation_requested":
+                seg = segments_by_seq.get(rec.get("seq"))
+                if seg is not None:
+                    try:
+                        metadata = Segment.model_validate({
+                            **seg.model_dump(),
+                            "effective_source_text": rec.get("effective_source_text"),
+                            "terminology_version": rec.get("terminology_version", 0),
+                            "terminology_status": rec.get("terminology_status", "empty"),
+                            "terminology": rec.get("terminology"),
+                        })
+                        seg.effective_source_text = metadata.effective_source_text
+                        seg.terminology_version = metadata.terminology_version
+                        seg.terminology_status = metadata.terminology_status
+                        seg.terminology = metadata.terminology
+                    except (ValueError, TypeError):
+                        logger.warning("Invalid recovery translation terminology — ignored")
 
             elif rec_type == "session_stopped":
                 session.ended_at = datetime.fromisoformat(rec["ts"])

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 
+from app import terminology
 from app.config import settings
 from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
@@ -32,6 +33,8 @@ _COALESCIBLE_EVENT_TYPES = frozenset({"source_partial", "elapsed", "readiness"})
 _CRITICAL_EVENT_TYPES = frozenset(
     {
         "caption",
+        "terminology_updated",
+        "terminology_error",
         "error",
         "export_result",
         "provider_temporarily_unavailable",
@@ -326,6 +329,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_start(msg, outbound_queue, obs)
             elif msg_type == "set_target_language":
                 await _handle_set_target_language(msg, outbound_queue, obs)
+            elif msg_type in {"update_terminology", "undo_terminology"}:
+                _handle_terminology(msg, outbound_queue, obs)
             elif msg_type == "stop":
                 await _handle_stop()
             elif msg_type == "export":
@@ -561,13 +566,14 @@ async def _handle_start(
         )
         return
     manager.set_target_language(language)
-    manager.session.glossary = glossary
+    terminology.initialize(manager.session, glossary)
 
     if start_pipeline is not None:
         try:
             if manager._tts_dispatcher is not None:
                 manager._tts_dispatcher.set_muted(tts_muted)
             await start_pipeline()
+            manager._emit("terminology_updated", terminology.state(manager.session))
         except Exception as exc:
             logger.error("Pipeline startup failed: error_type=%s", type(exc).__name__)
             _enqueue_outbound(
@@ -578,6 +584,22 @@ async def _handle_start(
                 },
                 obs,
             )
+
+
+def _handle_terminology(msg: dict, outbound_queue: asyncio.Queue, obs: _OutboundObsState) -> None:
+    assert manager is not None
+    try:
+        terminology.change(manager, msg, undo=msg.get("type") == "undo_terminology")
+    except ValueError as exc:
+        _enqueue_outbound(outbound_queue, {
+            "type": "terminology_error", "message": str(exc),
+            **terminology.state(manager.session),
+        }, obs)
+    except OSError:
+        _enqueue_outbound(outbound_queue, {
+            "type": "terminology_error", "message": "Terminology could not be saved. Try again.",
+            **terminology.state(manager.session),
+        }, obs)
 
 
 async def _handle_stop() -> None:

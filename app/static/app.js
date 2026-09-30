@@ -9,6 +9,9 @@
     const GLOSSARY_KEY = "captionBridge.glossary";
     const glossaryDrafts = Object.create(null);
     let activeGlossary = null;
+    let terminologyState = { sessionId: null, version: 0, canUndo: false, changes: 0 };
+    let termContext = null;
+    let termPending = false;
 
     const TTS_SUPPORTED_LANGUAGES = new Set([
         "en", "fr", "de", "es", "nl", "pt", "it", "hi", "ar",
@@ -141,6 +144,11 @@
         els.glossaryError = $("glossary-error");
         els.glossaryLanguage = $("glossary-language");
         els.glossarySessionNote = $("glossary-session-note");
+        ["dialog", "caption", "version", "list", "form", "kind", "source", "preferred",
+            "error", "save", "undo", "close"].forEach(function (name) {
+            els["term" + name[0].toUpperCase() + name.slice(1)] = $("term-" + name);
+        });
+        els.sessionTerms = $("session-terms");
     }
 
     // ===== 3.2 WebSocket Connection =====
@@ -229,6 +237,10 @@
             case "caption":
                 handleCaption(msg);
                 break;
+            case "terminology_updated":
+            case "terminology_error":
+                handleTerminology(msg);
+                break;
             case "export_result":
                 handleExportResult(msg);
                 break;
@@ -287,6 +299,7 @@
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
         activeGlossary = msg.glossary || null;
+        restoreTerminologyState(msg);
 
         appState.exportFailure = msg.export_failure || null;
         if (appState.exportFailure && msg.status === "session_ended") {
@@ -321,6 +334,8 @@
                 translationStatus: seg.translation_status,
                 createdAt: seg.created_at,
                 targetLanguage: seg.target_language,
+                terminologyVersion: seg.terminology_version || 0,
+                terminologyStatus: seg.terminology_status || "empty",
             });
         }
         appState.captions.reverse();
@@ -411,6 +426,8 @@
             translationStatus: msg.translation_status,
             createdAt: msg.created_at,
             targetLanguage: msg.target_language,
+            terminologyVersion: msg.terminology_version || 0,
+            terminologyStatus: msg.terminology_status || "empty",
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);
@@ -1053,6 +1070,19 @@
         src.textContent = entry.sourceText || "";
         div.appendChild(src);
 
+        const termsLabel = document.createElement("small");
+        termsLabel.className = "caption-terms-version";
+        termsLabel.textContent = "Terms v" + (entry.terminologyVersion || 0) +
+            (entry.terminologyStatus === "paused" ? " (paused)" : "");
+        div.appendChild(termsLabel);
+        const correctBtn = document.createElement("button");
+        correctBtn.className = "term-correction-btn btn-secondary";
+        correctBtn.textContent = "Correct term";
+        correctBtn.setAttribute("aria-label", "Correct term in caption " + entry.seq);
+        correctBtn.disabled = !canEditTerms();
+        correctBtn.addEventListener("click", function () { openTermEditor(entry); });
+        div.appendChild(correctBtn);
+
         const replayBtn = document.createElement("button");
         replayBtn.className = "replay-btn";
         replayBtn.textContent = "▶";
@@ -1260,6 +1290,13 @@
     // ===== 3.6 Controls & Event Listeners =====
 
     function setupControls() {
+        els.sessionTerms.addEventListener("click", function () { openTermEditor(null); });
+        els.termClose.addEventListener("click", function () { els.termDialog.close(); });
+        els.termForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            saveCaptionTerm();
+        });
+        els.termUndo.addEventListener("click", function () { sendTermChange(null, true); });
         els.glossaryTerms.addEventListener("input", function () {
             glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
             els.glossaryError.classList.add("hidden");
@@ -1444,6 +1481,7 @@
 
     function setupKeyboard() {
         document.addEventListener("keydown", function (e) {
+            if (els.termDialog.open) return; // native dialog traps focus and handles Escape
             const modal = els.discardModal.classList.contains("visible")
                 ? els.discardModal
                 : (els.exportFailureModal.classList.contains("visible") ? els.exportFailureModal : null);
@@ -1511,6 +1549,152 @@
 
     // ===== Terminology preferences =====
 
+    function canEditTerms() {
+        return canOpenTerms() && terminologyState.changes < 100;
+    }
+
+    function canOpenTerms() {
+        return !!terminologyState.sessionId && !termPending &&
+            (appState.status === "listening" || appState.status === "reconnecting");
+    }
+
+    function currentTerms() {
+        return activeGlossary && activeGlossary.target_language === appState.targetLanguage
+            ? activeGlossary.entries.slice() : [];
+    }
+
+    function restoreTerminologyState(msg) {
+        const previousId = terminologyState.sessionId;
+        terminologyState = { sessionId: msg.session_id || null,
+            version: msg.terminology_version || 0, canUndo: !!msg.terminology_can_undo,
+            changes: msg.terminology_changes || 0 };
+        termPending = false;
+        if (termContext && previousId !== terminologyState.sessionId) {
+            els.termDialog.close();
+            termContext = null;
+        }
+        renderTermEditor();
+    }
+
+    function handleTerminology(msg) {
+        activeGlossary = msg.glossary || null;
+        restoreTerminologyState(msg);
+        if (termContext) termContext.version = terminologyState.version;
+        if (msg.type === "terminology_error") {
+            els.termError.textContent = msg.message;
+            els.termError.classList.remove("hidden");
+        } else {
+            els.termError.classList.add("hidden");
+            els.termSource.value = "";
+            els.termPreferred.value = "";
+            if (termContext) termContext.editSource = null;
+        }
+        renderGlossary();
+    }
+
+    function openTermEditor(entry) {
+        if (!canOpenTerms()) return;
+        termContext = { captionSeq: entry ? entry.seq : null, editSource: null,
+            version: terminologyState.version, language: appState.targetLanguage };
+        const selection = window.getSelection();
+        const selected = selection && selection.anchorNode &&
+            els.captionLog.contains(selection.anchorNode) ? selection.toString().trim() : "";
+        els.termSource.value = entry && entry.sourceText.includes(selected) &&
+            Array.from(selected).length <= 80 ? selected : "";
+        els.termPreferred.value = "";
+        els.termKind.value = "target";
+        els.termCaption.textContent = entry ? "Original: " + entry.sourceText +
+            "\nTranslation: " + (entry.translatedText || "unavailable") : "";
+        els.termError.classList.add("hidden");
+        renderTermEditor();
+        els.termDialog.showModal();
+        els.termSource.focus();
+    }
+
+    function renderTermEditor() {
+        if (!els.termList) return;
+        els.termVersion.textContent = "Session terms v" + terminologyState.version +
+            " · " + currentTerms().length + "/20 pairs" +
+            (terminologyState.changes >= 100 ? " · 100-change limit reached" : "") +
+            (activeGlossary && activeGlossary.target_language !== appState.targetLanguage
+                ? " · Previous language terms are paused. Saving replaces that list; Undo restores it." : "");
+        els.termList.replaceChildren();
+        currentTerms().forEach(function (term) {
+            const row = document.createElement("div");
+            row.className = "term-row";
+            const label = document.createElement("span");
+            label.textContent = term.source + " → " + term.preferred +
+                (term.kind === "source" ? " (source correction)" : " (translation)");
+            row.appendChild(label);
+            const edit = document.createElement("button");
+            edit.type = "button";
+            edit.textContent = "Edit";
+            edit.disabled = !canEditTerms();
+            edit.addEventListener("click", function () {
+                termContext.captionSeq = null;
+                termContext.editSource = term.source;
+                els.termSource.value = term.source;
+                els.termPreferred.value = term.preferred;
+                els.termKind.value = term.kind || "target";
+                els.termSource.focus();
+            });
+            row.appendChild(edit);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "Remove";
+            remove.disabled = !canEditTerms();
+            remove.addEventListener("click", function () {
+                termContext.captionSeq = null;
+                sendTermChange(currentTerms().filter(function (item) { return item.source !== term.source; }));
+            });
+            row.appendChild(remove);
+            els.termList.appendChild(row);
+        });
+        els.termSave.disabled = !canEditTerms();
+        els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
+    }
+
+    function sendTermChange(entries, undo) {
+        if (!canEditTerms() || !termContext) return;
+        if (termContext.language !== appState.targetLanguage) {
+            els.termError.textContent = "Target language changed. Close and reopen the terminology editor.";
+            els.termError.classList.remove("hidden");
+            return;
+        }
+        const message = { type: undo ? "undo_terminology" : "update_terminology",
+            session_id: terminologyState.sessionId, expected_version: termContext.version,
+            target_language: termContext.language };
+        if (!undo) {
+            message.glossary = entries;
+            if (termContext.captionSeq != null) message.caption_seq = termContext.captionSeq;
+        }
+        send(message);
+        termPending = true;
+        renderTermEditor();
+    }
+
+    function saveCaptionTerm() {
+        try {
+            const source = els.termSource.value.trim().normalize("NFC");
+            const preferred = els.termPreferred.value.trim().normalize("NFC");
+            if ([source, preferred].some(function (value) {
+                return !value || Array.from(value).length > 80 || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(value);
+            })) throw new Error("Each term needs 1–80 characters without control characters.");
+            const pair = { source: source, preferred: preferred };
+            pair.kind = els.termKind.value;
+            const entries = currentTerms().filter(function (item) {
+                return item.source !== termContext.editSource &&
+                    item.source.toLowerCase() !== pair.source.toLowerCase();
+            });
+            entries.push(pair);
+            if (entries.length > 20) throw new Error("Use at most 20 terminology pairs.");
+            sendTermChange(entries);
+        } catch (error) {
+            els.termError.textContent = error.message;
+            els.termError.classList.remove("hidden");
+        }
+    }
+
     function parseGlossaryText(text) {
         const lines = text.split("\n").map(function (line) { return line.trim(); }).filter(Boolean);
         if (lines.length > 20) throw new Error("Use at most 20 terminology pairs.");
@@ -1570,13 +1754,20 @@
         els.glossaryError.classList.add("hidden");
         const active = activeGlossary && Array.isArray(activeGlossary.entries) &&
             activeGlossary.entries.length > 0;
-        els.glossarySessionNote.classList.toggle("hidden", !active ||
+        els.glossarySessionNote.classList.toggle("hidden", (!active && !terminologyState.version) ||
             appState.status === "idle_ready" || appState.status === "idle_blocked");
         if (active) {
             els.glossarySessionNote.textContent = activeGlossary.target_language === appState.targetLanguage
-                ? "Session terminology is fixed until New Session."
+                ? "Session terminology v" + terminologyState.version + " applies to future captions."
                 : "Session terminology is paused for this target language.";
+        } else if (terminologyState.version) {
+            els.glossarySessionNote.textContent = "Session terminology v" + terminologyState.version + " is empty.";
         }
+        els.sessionTerms.disabled = !canOpenTerms();
+        els.captionLog.querySelectorAll(".term-correction-btn").forEach(function (button) {
+            button.disabled = !canEditTerms();
+        });
+        renderTermEditor();
     }
 
     function startWithGlossary() {

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -11,6 +13,7 @@ from app.languages import is_valid_target_language
 
 MAX_TERMS = 20
 MAX_TERM_CHARS = 80
+MAX_TERMINOLOGY_CHANGES = 100
 ERROR_MESSAGE = (
     "Terminology must contain at most 20 unique source/preferred pairs, "
     "each 1–80 characters, without control characters."
@@ -22,6 +25,7 @@ class GlossaryEntry(BaseModel):
 
     source: str
     preferred: str
+    kind: Literal["target", "source"] = "target"
 
     @field_validator("source", "preferred")
     @classmethod
@@ -78,7 +82,7 @@ def add_to_messages(
     normalized_source = unicodedata.normalize("NFC", source_text).casefold()
     relevant = [
         entry for entry in glossary.entries
-        if entry.source.casefold() in normalized_source
+        if entry.kind == "target" and entry.source.casefold() in normalized_source
     ]
     if not relevant:
         return messages
@@ -90,7 +94,7 @@ def add_to_messages(
         "Do not translate or echo the terminology list, or add absent terms."
     )
     data = json.dumps(
-        [entry.model_dump() for entry in relevant],
+        [entry.model_dump(exclude_defaults=True) for entry in relevant],
         ensure_ascii=False,
         separators=(",", ":"),
     ).replace("<", "\\u003c").replace(">", "\\u003e")
@@ -99,3 +103,30 @@ def add_to_messages(
         + result[-1]["content"]
     )
     return result
+
+
+class TerminologyRevision(BaseModel):
+    """Private, bounded history; a revision never changes an earlier caption."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    version: int = Field(ge=0, le=MAX_TERMINOLOGY_CHANGES + 1)
+    glossary: Glossary | None
+    action: Literal["initial", "save", "undo"]
+    caption_seq: int | None = Field(default=None, ge=1)
+    undo_of: int | None = Field(default=None, ge=1)
+
+
+def effective_source(source_text: str, glossary: Glossary | None, language: str) -> str:
+    """Replace confirmed ASR terms once, without cascading or changing the ASR record."""
+    if glossary is None or glossary.target_language != language:
+        return source_text
+    entries = [entry for entry in glossary.entries if entry.kind == "source"]
+    if not entries:
+        return source_text
+    # Longest match wins for overlapping terms; replacement text is never scanned again.
+    entries.sort(key=lambda entry: len(entry.source), reverse=True)
+    pattern = re.compile("|".join(f"(?P<term{i}>{re.escape(entry.source)})"
+                                 for i, entry in enumerate(entries)), re.IGNORECASE)
+    replacements = {f"term{i}": entry.preferred for i, entry in enumerate(entries)}
+    return pattern.sub(lambda match: replacements[match.lastgroup],
+                       unicodedata.normalize("NFC", source_text))
