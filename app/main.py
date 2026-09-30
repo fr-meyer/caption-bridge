@@ -317,7 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 
-BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/styles.css"})
+BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/styles.css"})
 
 
 @app.middleware("http")

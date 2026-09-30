@@ -15,11 +15,7 @@
     ]);
 
     let audioContext = null;
-    let ttsChunkBuffers = {};
-    let ttsPlaybackQueue = [];
-    let ttsActiveSourceNode = null;
-    let ttsPlaybackStarting = false;
-    let ttsPlaybackGeneration = 0;
+    let pcmPlayer = null;
 
     const appState = {
         status: "idle_blocked",
@@ -45,6 +41,7 @@
         availableTargetLanguages: [],
         drawerOpen: false,
         ttsEnabled: true,
+        ttsStreaming: false,
         // Audio permission is document-scoped: a browser replacement must
         // require a fresh user gesture before translated speech can play.
         ttsAudioUnlocked: false,
@@ -157,8 +154,13 @@
         const url = `${proto}//${location.host}/ws`;
 
         ws = new WebSocket(url);
+        // Synchronous decoding preserves frame order (Blob.text promises can race).
+        ws.binaryType = "arraybuffer";
+        const connection = ws;
+        let connectionClosed = false;
 
         ws.onopen = function () {
+            if (connectionClosed || connection !== ws) return;
             reconnectAttempt = 0;
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
@@ -171,8 +173,10 @@
         };
 
         ws.onmessage = function (event) {
+            if (connectionClosed || connection !== ws) return;
             if (event.data instanceof Blob) {
                 event.data.text().then(function (text) {
+                    if (connectionClosed || connection !== ws) return;
                     try {
                         handleMessage(JSON.parse(text));
                     } catch (_) { /* malformed JSON */ }
@@ -192,6 +196,11 @@
         };
 
         ws.onclose = function () {
+            connectionClosed = true;
+            if (connection !== ws) return;
+            clearTtsPlaybackState();
+            appState.ttsSpeakingSeq = null;
+            renderSpeakingHighlight();
             renderTtsControls();
             scheduleReconnect();
         };
@@ -286,12 +295,13 @@
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
         }
-        ttsChunkBuffers = {};
+        // Audio is scoped to this document/epoch.
         appState.ttsSpeakingSeq = null;
         appState.ttsCatchUpPending = false;
+        appState.ttsStreaming = msg.tts_streaming_playback === true;
         appState.ttsPendingCount = msg.tts_queue ? msg.tts_queue.pending_count : 0;
         if (els.catchUpNotice) els.catchUpNotice.textContent = "";
-        clearTtsPlaybackState();
+        clearTtsPlaybackState(true);
 
         appState.checks = msg.checks || [];
         appState.sourcePartial = msg.source_partial || "";
@@ -384,7 +394,7 @@
 
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
-            ttsChunkBuffers = {};
+            // Audio is scoped to this document/epoch.
             appState.ttsSpeakingSeq = null;
             clearTtsPlaybackState();
             renderSpeakingHighlight();
@@ -565,7 +575,7 @@
         if (appState.ttsCatchUpPending && msg.tts_epoch <= appState.currentTtsEpoch) return;
         if (msg.tts_epoch !== appState.currentTtsEpoch) {
             clearTtsPlaybackState();
-            ttsChunkBuffers = {};
+            // Audio is scoped to this document/epoch.
             appState.ttsSpeakingSeq = null;
             appState.ttsCatchUpPending = false;
             appState.currentTtsEpoch = msg.tts_epoch;
@@ -588,52 +598,82 @@
         if (!ws || ws.readyState !== WebSocket.OPEN || appState.ttsCatchUpPending) return;
         appState.ttsCatchUpPending = true;
         clearTtsPlaybackState();
-        ttsChunkBuffers = {};
+        // Audio is scoped to this document/epoch.
         appState.ttsSpeakingSeq = null;
         renderSpeakingHighlight();
         send({ type: "tts_catch_up", tts_epoch: appState.currentTtsEpoch });
         renderTtsControls();
     }
 
-    function handleTtsSpeaking(msg) {
-        if (appState.ttsMuted || appState.ttsCatchUpPending || msg.tts_epoch == null ||
-            msg.tts_epoch < appState.currentTtsEpoch || msg.seq == null) return;
-        var incomingEpoch = msg.tts_epoch;
-        if (incomingEpoch !== appState.currentTtsEpoch) {
-            clearTtsPlaybackState();
-            purgeTtsChunkBuffersNotEpoch(incomingEpoch);
+    function getPcmPlayer() {
+        if (pcmPlayer) return pcmPlayer;
+        function ack(type, msg, extra) {
+            send(Object.assign({ type: type, seq: msg.seq, tts_epoch: msg.tts_epoch,
+                clip_id: msg.clip_id }, extra || {}));
         }
-        appState.currentTtsEpoch = incomingEpoch;
-        renderSpeakingHighlight();
+        pcmPlayer = new window.CaptionPcmPlayer({
+            streaming: () => appState.ttsStreaming,
+            canPlay: () => !appState.ttsMuted && appState.ttsAudioUnlocked && !appState.ttsCatchUpPending,
+            context: () => {
+                if (!audioContext) audioContext = new AudioContext();
+                return audioContext;
+            },
+            onFirstChunk: msg => ack("tts_chunk_received", msg),
+            onStart: msg => {
+                appState.ttsSpeakingSeq = msg.seq;
+                renderSpeakingHighlight();
+                ack("tts_playback_start", msg);
+            },
+            onComplete: (msg, stats) => {
+                appState.ttsSpeakingSeq = null;
+                renderSpeakingHighlight();
+                ack("tts_playback_stats", msg, stats);
+                ack("tts_playback_complete", msg);
+            },
+            onError: (msg, reason) => {
+                appState.ttsSpeakingSeq = pcmPlayer.active && pcmPlayer.active.started
+                    ? pcmPlayer.active.msg.seq : null;
+                renderSpeakingHighlight();
+                els.catchUpNotice.textContent = "Spoken readback interrupted. Captions stay available for replay.";
+                ack("tts_playback_error", msg, {reason: reason});
+            },
+            onLocked: () => { appState.ttsAudioUnlocked = false; renderTtsControls(); },
+        });
+        return pcmPlayer;
+    }
+
+    function acceptTtsMessage(msg) {
+        return !appState.ttsMuted && !appState.ttsCatchUpPending &&
+            msg.tts_epoch === appState.currentTtsEpoch;
+    }
+
+    function handleTtsSpeaking(msg) {
+        if (appState.ttsMuted || appState.ttsCatchUpPending || !Number.isInteger(msg.tts_epoch) ||
+            msg.tts_epoch < appState.currentTtsEpoch || msg.seq == null) return;
+        if (msg.tts_epoch !== appState.currentTtsEpoch) {
+            clearTtsPlaybackState();
+            appState.currentTtsEpoch = msg.tts_epoch;
+        }
+        getPcmPlayer().begin(msg);
     }
 
     function handleTtsAudio(msg) {
-        if (appState.ttsMuted || appState.ttsCatchUpPending || msg.tts_epoch !== appState.currentTtsEpoch) return;
-        var key = msg.seq + ":" + msg.tts_epoch;
-        if (!ttsChunkBuffers[key]) {
-            ttsChunkBuffers[key] = { chunks: [], done: false };
-        }
-        if (msg.data) {
-            ttsChunkBuffers[key].chunks.push(msg.data);
-        }
-        if (msg.is_last === true) {
-            ttsChunkBuffers[key].done = true;
-            enqueueTtsPlaybackFromKey(key);
-        }
+        if (!acceptTtsMessage(msg)) return;
+        getPcmPlayer().receive(msg);
     }
 
     function handleTtsError(msg) {
         if (msg.tts_epoch !== appState.currentTtsEpoch) return;
-        removeFromTtsPlaybackQueue(msg.seq, msg.tts_epoch);
-        if (appState.ttsSpeakingSeq === msg.seq) {
-            appState.ttsSpeakingSeq = null;
-            renderSpeakingHighlight();
-        }
-        delete ttsChunkBuffers[msg.seq + ":" + msg.tts_epoch];
+        // Legacy never-emitted errors cannot refer to buffered audio for the same caption.
+        if (msg.clip_id == null && msg.audio_emitted === false) return;
+        getPcmPlayer().cancel(msg);
+        appState.ttsSpeakingSeq = pcmPlayer.active && pcmPlayer.active.started
+            ? pcmPlayer.active.msg.seq : null;
+        renderSpeakingHighlight();
     }
 
     function handleTtsSkipped(msg) {
-        if (msg.audio_emitted === false) return;
+        if (msg.clip_id == null && msg.audio_emitted === false) return;
         handleTtsError(msg);
     }
 
@@ -663,180 +703,20 @@
         }
     }
 
-    function purgeTtsChunkBuffersNotEpoch(epoch) {
-        var suf = ":" + String(epoch);
-        Object.keys(ttsChunkBuffers).forEach(function (k) {
-            if (!k.endsWith(suf)) {
-                delete ttsChunkBuffers[k];
-            }
-        });
-    }
-
-    function discardTtsChunkBuffersForEpoch(epoch) {
-        var suf = ":" + String(epoch);
-        Object.keys(ttsChunkBuffers).forEach(function (k) {
-            if (k.endsWith(suf)) {
-                delete ttsChunkBuffers[k];
-            }
-        });
-    }
-
-    function clearTtsPlaybackState() {
-        ttsPlaybackGeneration++;
-        ttsPlaybackQueue.length = 0;
-        ttsPlaybackStarting = false;
-        if (ttsActiveSourceNode) {
-            try {
-                ttsActiveSourceNode._cbCancelled = true;
-                ttsActiveSourceNode.onended = null;
-                ttsActiveSourceNode.stop(0);
-            } catch (_) { /* node may already be stopped */ }
-            ttsActiveSourceNode = null;
+    function clearTtsPlaybackState(reset) {
+        if (pcmPlayer) {
+            pcmPlayer.cancelAll();
+            if (reset) pcmPlayer.retired.clear();
         }
-    }
-
-    function removeFromTtsPlaybackQueue(seq, epoch) {
-        ttsPlaybackQueue = ttsPlaybackQueue.filter(function (item) {
-            return item.seq !== seq || item.epoch !== epoch;
-        });
-    }
-
-    function decodeTtsChunkEntryToItem(key) {
-        var buf = ttsChunkBuffers[key];
-        if (!buf || !buf.done) return null;
-        var colon = key.lastIndexOf(":");
-        var seq = parseInt(key.slice(0, colon), 10);
-        var epoch = parseInt(key.slice(colon + 1), 10);
-        if (Number.isNaN(seq) || Number.isNaN(epoch)) return null;
-
-        var totalLen = 0;
-        var i;
-        var decoded = [];
-        for (i = 0; i < buf.chunks.length; i++) {
-            var binStr = atob(buf.chunks[i]);
-            var u8 = new Uint8Array(binStr.length);
-            for (var j = 0; j < binStr.length; j++) {
-                u8[j] = binStr.charCodeAt(j);
-            }
-            decoded.push(u8);
-            totalLen += u8.length;
-        }
-        var pcm = new Uint8Array(totalLen);
-        var off = 0;
-        for (i = 0; i < decoded.length; i++) {
-            pcm.set(decoded[i], off);
-            off += decoded[i].length;
-        }
-
-        delete ttsChunkBuffers[key];
-
-        var numSamples = Math.floor(pcm.length / 4);
-        var view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-        var float32 = new Float32Array(numSamples);
-        for (i = 0; i < numSamples; i++) {
-            float32[i] = view.getFloat32(i * 4, true);
-        }
-
-        if (!audioContext) {
-            audioContext = new AudioContext();
-        }
-        var ab = audioContext.createBuffer(1, float32.length, 24000);
-        ab.getChannelData(0).set(float32);
-        return { seq: seq, epoch: epoch, audioBuffer: ab, numSamples: numSamples };
-    }
-
-    function enqueueTtsPlaybackFromKey(key) {
-        var item = decodeTtsChunkEntryToItem(key);
-        if (!item) return;
-
-        if (item.numSamples === 0) {
-            if (appState.ttsSpeakingSeq === item.seq && appState.currentTtsEpoch === item.epoch) {
-                appState.ttsSpeakingSeq = null;
-                renderSpeakingHighlight();
-            }
-            send({ type: "tts_playback_complete", seq: item.seq, tts_epoch: item.epoch });
-            tryStartTtsPlayback();
-            return;
-        }
-
-        ttsPlaybackQueue.push({
-            seq: item.seq,
-            epoch: item.epoch,
-            audioBuffer: item.audioBuffer,
-        });
-        tryStartTtsPlayback();
     }
 
     function tryStartTtsPlayback() {
-        if (ttsActiveSourceNode || ttsPlaybackStarting || ttsPlaybackQueue.length === 0) {
-            return;
-        }
-        if (appState.ttsMuted || !appState.ttsAudioUnlocked || appState.ttsCatchUpPending) {
-            return;
-        }
-        if (!audioContext) {
-            audioContext = new AudioContext();
-        }
-
-        var queued = ttsPlaybackQueue.shift();
-        var seq = queued.seq;
-        var epoch = queued.epoch;
-        var ab = queued.audioBuffer;
-
-        ttsPlaybackStarting = true;
-        var generation = ttsPlaybackGeneration;
-        audioContext.resume().then(function () {
-            if (generation !== ttsPlaybackGeneration) return;
-            ttsPlaybackStarting = false;
-            if (ttsActiveSourceNode) {
-                ttsPlaybackQueue.unshift(queued);
-                tryStartTtsPlayback();
-                return;
-            }
-            if (appState.ttsMuted || appState.ttsCatchUpPending || epoch !== appState.currentTtsEpoch) {
-                tryStartTtsPlayback();
-                return;
-            }
-
-            var srcNode = audioContext.createBufferSource();
-            ttsActiveSourceNode = srcNode;
-            srcNode.buffer = ab;
-            srcNode.connect(audioContext.destination);
-            srcNode._cbCancelled = false;
-            srcNode.onended = function () {
-                if (ttsActiveSourceNode === srcNode) {
-                    ttsActiveSourceNode = null;
-                }
-                if (appState.ttsSpeakingSeq === seq && appState.currentTtsEpoch === epoch) {
-                    appState.ttsSpeakingSeq = null;
-                    renderSpeakingHighlight();
-                }
-                if (!srcNode._cbCancelled && appState.currentTtsEpoch === epoch) {
-                    send({ type: "tts_playback_complete", seq: seq, tts_epoch: epoch });
-                }
-                tryStartTtsPlayback();
-            };
-            try {
-                srcNode.start();
-                appState.ttsSpeakingSeq = seq;
-                renderSpeakingHighlight();
-                send({ type: "tts_playback_start", seq: seq, tts_epoch: epoch });
-            } catch (_) {
-                ttsActiveSourceNode = null;
-                tryStartTtsPlayback();
-            }
-        }).catch(function () {
-            if (generation !== ttsPlaybackGeneration) return;
-            ttsPlaybackStarting = false;
-            ttsPlaybackQueue.unshift(queued);
-            appState.ttsAudioUnlocked = false;
-            renderTtsControls();
-        });
+        if (pcmPlayer) pcmPlayer.pump();
     }
 
     function applyLocalTtsMuteEffects() {
         clearTtsPlaybackState();
-        discardTtsChunkBuffersForEpoch(appState.currentTtsEpoch);
+
         appState.ttsSpeakingSeq = null;
         renderSpeakingHighlight();
         renderReplayButtons();
@@ -1724,7 +1604,7 @@
         appState.sourceVisible = true;
         appState.ttsMuted = appState.captionsOnly;
         appState.ttsSpeakingSeq = null;
-        ttsChunkBuffers = {};
+        // Audio is scoped to this document/epoch.
         clearTtsPlaybackState();
         appState.drawerOpen = false;
         document.body.classList.remove("source-hidden");

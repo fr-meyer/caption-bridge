@@ -348,6 +348,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await _handle_tts_replay(msg, outbound_queue, obs)
             elif msg_type == "render_ack":
                 _handle_latency_ack(msg, "render")
+            elif msg_type == "tts_chunk_received":
+                _handle_tts_browser_ack(msg)
+            elif msg_type in {"tts_playback_error", "tts_playback_stats"}:
+                _handle_tts_browser_ack(msg)
             elif msg_type == "tts_playback_start":
                 _handle_latency_ack(msg, "tts_start")
             elif msg_type == "tts_playback_complete":
@@ -710,9 +714,27 @@ def _handle_latency_ack(msg: dict, kind: str) -> None:
             epoch = msg.get("tts_epoch")
             if not isinstance(epoch, int) or isinstance(epoch, bool):
                 return
-            if not dispatcher.acknowledge_playback(seq, epoch, complete=kind == "tts_complete"):
+            clip_id = msg.get("clip_id")
+            if clip_id is not None and (not isinstance(clip_id, int) or isinstance(clip_id, bool)):
+                return
+            if not dispatcher.acknowledge_playback(
+                seq, epoch, complete=kind == "tts_complete", clip_id=clip_id,
+            ):
                 return
         if kind == "tts_start":
             manager.observe_tts_playback_start(seq)
         else:
             manager.observe_tts_playback_complete(seq)
+
+
+def _handle_tts_browser_ack(msg: dict) -> None:
+    assert manager is not None
+    dispatcher = getattr(manager, "_tts_dispatcher", None)
+    if dispatcher is None:
+        return
+    if msg.get("type") == "tts_chunk_received":
+        values = [msg.get(key) for key in ("seq", "tts_epoch", "clip_id")]
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            dispatcher.acknowledge_first_chunk(*values)
+    else:
+        dispatcher.acknowledge_browser_result(msg)

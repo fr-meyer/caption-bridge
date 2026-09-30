@@ -107,6 +107,7 @@ def test_catch_up_reliability_is_content_free_and_accepts_old_history() -> None:
     for version in (1, 2):
         old = deepcopy(record)
         old["schema_version"] = version
+        old.pop("speech_playback")
         old["queues"]["tts"].pop("catch_up_actions")
         old["queues"]["tts"].pop("catch_up_skipped")
         if version == 1:

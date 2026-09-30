@@ -12,11 +12,13 @@ from uuid import uuid4
 import orjson
 
 from app.latency import LatencyTracker, validate_latency_snapshot
+from app.speech_metrics import SpeechPlaybackMetrics, validate_speech_snapshot
 
 if TYPE_CHECKING:
     from app.state import Session
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+SCHEMA_VERSION_V3 = 3
 SCHEMA_VERSION_V2 = 2
 SCHEMA_VERSION_V1 = 1
 ExportOutcome = Literal["not_requested", "succeeded", "failed", "discarded"]
@@ -41,6 +43,7 @@ _SESSION_KEYS = frozenset(
         "latency",
     }
 )
+_SESSION_KEYS_V4 = _SESSION_KEYS | {"speech_playback"}
 _SESSION_KEYS_V1 = _SESSION_KEYS - {"latency"}
 
 _TRANSLATION_KEYS = frozenset(
@@ -149,6 +152,7 @@ class ReliabilityTracker:
     tts_catch_up_actions: int = 0
     tts_catch_up_skipped: int = 0
     latency: LatencyTracker = field(default_factory=LatencyTracker)
+    speech_playback: SpeechPlaybackMetrics = field(default_factory=SpeechPlaybackMetrics)
 
     def observe_event(self, event: dict[str, Any]) -> None:
         """Reduce an application event to allow-listed counters only."""
@@ -255,6 +259,7 @@ class ReliabilityTracker:
             },
             "export": {"outcome": self.export_outcome},
             "latency": self.latency.snapshot(),
+            "speech_playback": self.speech_playback.snapshot(),
         }
 
     def build_session_record(self, session: Session) -> dict[str, Any]:
@@ -311,7 +316,14 @@ def validate_session_record(record: object) -> bool:
     if version == SCHEMA_VERSION_V1:
         if not _exact_keys(record, _SESSION_KEYS_V1):
             return False
-    elif version in {SCHEMA_VERSION_V2, SCHEMA_VERSION}:
+    elif version == SCHEMA_VERSION:
+        if not _exact_keys(record, _SESSION_KEYS_V4):
+            return False
+        if not validate_latency_snapshot(record.get("latency")):
+            return False
+        if not validate_speech_snapshot(record.get("speech_playback")):
+            return False
+    elif version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3}:
         if not _exact_keys(record, _SESSION_KEYS):
             return False
         if not validate_latency_snapshot(record.get("latency")):
@@ -356,7 +368,7 @@ def validate_session_record(record: object) -> bool:
     queue_specs = (
         (queues["audio"], _AUDIO_KEYS),
         (queues["websocket"], _WEBSOCKET_KEYS),
-        (queues["tts"], _TTS_KEYS if version == SCHEMA_VERSION else _TTS_KEYS_V2),
+        (queues["tts"], _TTS_KEYS if version in {SCHEMA_VERSION, SCHEMA_VERSION_V3} else _TTS_KEYS_V2),
     )
     if any(
         not _exact_keys(queue, keys)
@@ -376,7 +388,7 @@ def validate_soak_record(record: object) -> bool:
     assert isinstance(record, dict)
     return all(
         (
-            record["schema_version"] in {SCHEMA_VERSION, SCHEMA_VERSION_V2, SCHEMA_VERSION_V1},
+            record["schema_version"] in {SCHEMA_VERSION, SCHEMA_VERSION_V3, SCHEMA_VERSION_V2, SCHEMA_VERSION_V1},
             record["record_type"] == "soak",
             isinstance(record["run_id"], str),
             bool(_SAFE_ID.fullmatch(record["run_id"])),

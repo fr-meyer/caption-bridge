@@ -136,3 +136,80 @@ def test_queue_rejection_does_not_remove_a_different_buffered_clip_for_same_capt
                  "kind": "replay", "reason": "queue_full", "audio_emitted": False})
     page.evaluate("window.__nodes[0].onended()")
     page.wait_for_function("window.__nodes.length === 2 && window.__nodes[1].started")
+
+
+def test_failed_replay_id_keeps_successful_same_caption_clip(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness)
+    page.locator("#enable-audio-btn").click()
+    browser_harness.wait_for_message("tts_audio_enabled")
+    for clip_id in (10, 11):
+        _emit(page, {"type": "tts_speaking", "seq": 1, "clip_id": clip_id, "tts_epoch": 0})
+        _emit(page, {"type": "tts_audio", "seq": 1, "clip_id": clip_id, "tts_epoch": 0,
+                     "chunk_index": 0, "is_last": True, "data": "AAAAAA=="})
+    page.wait_for_function("window.__nodes.length === 1")
+    _emit(page, {"type": "tts_speaking", "seq": 1, "clip_id": 12, "tts_epoch": 0})
+    _emit(page, {"type": "tts_error", "seq": 1, "clip_id": 12, "tts_epoch": 0,
+                 "audio_emitted": False, "chunks_emitted": 0})
+    page.evaluate("window.__nodes[0].onended()")
+    page.wait_for_function("window.__nodes.length === 2 && window.__nodes[1].started")
+    assert browser_harness.wait_for_message("tts_playback_complete")["clip_id"] == 10
+
+
+def test_fresh_snapshot_can_restart_clip_ids_after_server_restart(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness)
+    page.locator("#enable-audio-btn").click()
+    browser_harness.wait_for_message("tts_audio_enabled")
+    def clip():
+        _emit(page, {"type": "tts_audio", "seq": 1, "clip_id": 10, "tts_epoch": 0,
+                     "chunk_index": 0, "is_last": True, "data": "AAAAAA=="})
+    clip()
+    page.wait_for_function("window.__nodes.length === 1")
+    page.evaluate("window.__nodes[0].onended()")
+    _emit(page, {"type": "session_snapshot", "status": "listening", "tts_epoch": 0,
+                 "segments": [], "target_language": "en"})
+    clip()
+    page.wait_for_function("window.__nodes.length === 2 && window.__nodes[1].started")
+
+
+def test_deferred_blob_from_closed_socket_cannot_restart_audio(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness)
+    page.locator("#enable-audio-btn").click()
+    browser_harness.wait_for_message("tts_audio_enabled")
+    count = page.evaluate("""async () => {
+        const text = JSON.stringify({type:'tts_audio',seq:1,clip_id:10,tts_epoch:0,
+            chunk_index:0,is_last:true,data:'AAAAAA=='});
+        const blob = new Blob([text]);
+        let resolve;
+        blob.text = () => new Promise(r=>resolve=r);
+        window.__socket.dispatchEvent(new MessageEvent('message',{data:blob}));
+        window.__socket.onclose();
+        resolve(text);
+        await Promise.resolve();
+        await Promise.resolve();
+        return window.__nodes.length;
+    }""")
+    assert count == 0
+
+
+def test_native_binary_frames_preserve_large_pcm_then_eos_order(
+    page: Page, browser_harness: BrowserHarness
+) -> None:
+    _open(page, browser_harness)
+    page.locator("#enable-audio-btn").click()
+    browser_harness.wait_for_message("tts_audio_enabled")
+    assert page.evaluate("window.__socket.binaryType") == "arraybuffer"
+    page.evaluate("""() => {
+        window.__binaryTypes = [];
+        window.__socket.addEventListener('message', e=>window.__binaryTypes.push(e.data instanceof ArrayBuffer));
+        window.__socket.send(JSON.stringify({type:'synthetic_tts_binary'}));
+    }""")
+    page.wait_for_function("window.__nodes.length === 1 && window.__nodes[0].started")
+    assert page.evaluate("window.__nodes[0].buffer.getChannelData(0).length") == 98304
+    assert page.evaluate("window.__binaryTypes") == [True, True, True]
+    assert browser_harness.wait_for_message("tts_playback_start")["clip_id"] == 90

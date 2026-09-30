@@ -215,6 +215,10 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/pcm-player.js")
+    async def pcm_player_js() -> FileResponse:
+        return FileResponse(STATIC_DIR / "pcm-player.js", media_type="text/javascript")
+
     @app.get("/app.js")
     async def app_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "app.js", media_type="text/javascript")
@@ -245,6 +249,19 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                             }
                         )
                     )
+                elif message_type == "synthetic_tts_binary":
+                    # A large PCM frame followed immediately by tiny EOS must stay ordered.
+                    await websocket.send_bytes(orjson.dumps({
+                        "type": "tts_speaking", "seq": 1, "clip_id": 90, "tts_epoch": 0,
+                    }))
+                    await websocket.send_bytes(orjson.dumps({
+                        "type": "tts_audio", "seq": 1, "clip_id": 90, "tts_epoch": 0,
+                        "chunk_index": 0, "is_last": False, "data": "AAAA" * 131072,
+                    }))
+                    await websocket.send_bytes(orjson.dumps({
+                        "type": "tts_audio", "seq": 1, "clip_id": 90, "tts_epoch": 0,
+                        "chunk_index": 1, "is_last": True, "data": "",
+                    }))
                 elif message_type == "tts_catch_up":
                     await websocket.send_bytes(orjson.dumps({
                         "type": "tts_caught_up",

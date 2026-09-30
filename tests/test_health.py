@@ -42,7 +42,7 @@ def test_browser_assets_are_not_cached() -> None:
         ) as client:
             return await client.get(path)
 
-    for path in ("/", "/app.js", "/styles.css"):
+    for path in ("/", "/app.js", "/pcm-player.js", "/styles.css"):
         response = asyncio.run(request(path))
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"

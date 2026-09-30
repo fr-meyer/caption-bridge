@@ -99,6 +99,9 @@ class AppConfig(BaseSettings):
         default=True,
         validation_alias="MISTRAL_TTS_ENABLED",
     )
+    tts_streaming_playback: bool = Field(
+        default=False, validation_alias="MISTRAL_TTS_STREAMING_PLAYBACK",
+    )
     tts_sample_rate: int = Field(
         default=24000,
         validation_alias="MISTRAL_TTS_SAMPLE_RATE",
