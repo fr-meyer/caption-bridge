@@ -129,7 +129,7 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     if not isinstance(value, dict) or set(value) != {"entries", "target_language"}:
                         raise ValueError("Invalid glossary record.")
                     session.glossary = parse_glossary(
-                        value["entries"], value["target_language"]
+                        value["entries"], value["target_language"], historical=True
                     )
                 except (ValueError, TypeError):
                     logger.warning("Invalid recovery glossary metadata — ignored")

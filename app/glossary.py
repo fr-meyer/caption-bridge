@@ -22,16 +22,27 @@ ERROR_MESSAGE = (
 def _matching_key(value: str) -> str:
     # Retain the existing IGNORECASE equivalence of I, i, İ and ı, while
     # full case folding also handles expansions such as Straße -> strasse.
-    return unicodedata.normalize("NFC", value).replace("İ", "i").replace("ı", "i").casefold()
+    return (unicodedata.normalize("NFC", value).replace("İ", "i").replace("ı", "i")
+            .casefold().replace("i\u0307", "i"))
 
 
-def _matching_text(value: str) -> tuple[str, str, list[int], dict[int, int]]:
+def _matching_text(value: str) -> tuple[list[str], str, list[int], dict[int, int]]:
     normalized = unicodedata.normalize("NFC", value)
-    chunks = [_matching_key(char) for char in normalized]
+    # Keep a dotted-I span together when its dot is absorbed by the compatible
+    # fold, including lowercase i + combining dot (which NFC does not compose).
+    units = []
+    index = 0
+    while index < len(normalized):
+        end = index + 1
+        if normalized[index] in {"I", "i", "İ", "ı"} and normalized[end:end + 1] == "\u0307":
+            end += 1
+        units.append(normalized[index:end])
+        index = end
+    chunks = [_matching_key(unit) for unit in units]
     offsets = [0]
     for chunk in chunks:
         offsets.append(offsets[-1] + len(chunk))
-    return normalized, "".join(chunks), offsets, {
+    return units, "".join(chunks), offsets, {
         offset: index for index, offset in enumerate(offsets)
     }
 
@@ -84,20 +95,28 @@ class Glossary(BaseModel):
 
     @model_validator(mode="after")
     def unique_sources(self) -> Glossary:
-        sources = [_matching_key(entry.source) for entry in self.entries]
+        # Preserve validation of already-recorded immutable snapshots. New
+        # browser rules additionally exclude compatible matching keys below.
+        sources = [entry.source.casefold() for entry in self.entries]
         if len(sources) != len(set(sources)):
             raise ValueError(ERROR_MESSAGE)
         return self
 
 
-def parse_glossary(raw: object, target_language: str) -> Glossary | None:
+def parse_glossary(
+    raw: object, target_language: str, *, historical: bool = False,
+) -> Glossary | None:
     """Validate browser/recovery input with a static, content-free error."""
     if not isinstance(raw, list) or len(raw) > MAX_TERMS:
         raise ValueError(ERROR_MESSAGE)
     if not raw:
         return None
     try:
-        return Glossary(target_language=target_language, entries=raw)
+        glossary = Glossary(target_language=target_language, entries=raw)
+        sources = [_matching_key(entry.source) for entry in glossary.entries]
+        if not historical and len(sources) != len(set(sources)):
+            raise ValueError(ERROR_MESSAGE)
+        return glossary
     except (ValueError, TypeError):
         raise ValueError(ERROR_MESSAGE) from None
 
@@ -155,14 +174,14 @@ def effective_source(source_text: str, glossary: Glossary | None, language: str)
     # Map folded offsets back to complete original characters. A match for "s"
     # inside "ß" cannot consume half a letter; an invalid longer overlap must
     # still allow a shorter complete match. Replacement text is never rescanned.
-    normalized, folded, offsets, boundaries = _matching_text(source_text)
+    units, folded, offsets, boundaries = _matching_text(source_text)
     candidates = sorted(
         [(_matching_key(entry.source), entry.preferred) for entry in entries],
         key=lambda item: len(item[0]), reverse=True,
     )
     result = []
     index = 0
-    while index < len(normalized):
+    while index < len(units):
         start = offsets[index]
         for key, preferred in candidates:
             end = start + len(key)
@@ -171,6 +190,6 @@ def effective_source(source_text: str, glossary: Glossary | None, language: str)
                 index = boundaries[end]
                 break
         else:
-            result.append(normalized[index])
+            result.append(units[index])
             index += 1
     return "".join(result)
