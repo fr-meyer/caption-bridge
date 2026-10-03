@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import unicodedata
-
-from app.glossary import MAX_TERMINOLOGY_CHANGES, TerminologyRevision, parse_glossary
+from app.glossary import (
+    MAX_TERMINOLOGY_CHANGES,
+    TerminologyRevision,
+    contains_term,
+    parse_glossary,
+)
 
 STALE_ERROR = "Terminology changed. Review the current terms and try again."
 LIMIT_ERROR = "This session reached 100 terminology changes. Start a new session to add more."
@@ -60,8 +63,7 @@ def change(manager, message: dict, *, undo: bool = False) -> None:
                 raise ValueError("Choose a displayed caption to correct.")
             old_entries = session.glossary.entries if session.glossary else ()
             changed = [entry for entry in glossary.entries if entry not in old_entries] if glossary else []
-            source_text = unicodedata.normalize("NFC", segment.source_text).casefold()
-            if any(entry.source.casefold() not in source_text for entry in changed):
+            if any(not contains_term(segment.source_text, entry.source) for entry in changed):
                 raise ValueError("Choose a source term that occurs in the displayed caption.")
         if glossary == session.glossary:
             raise ValueError("No terminology changes to save.")

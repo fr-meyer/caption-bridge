@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import unicodedata
 from typing import Literal
 
@@ -18,6 +17,37 @@ ERROR_MESSAGE = (
     "Terminology must contain at most 20 unique source/preferred pairs, "
     "each 1–80 characters, without control characters."
 )
+
+
+def _matching_key(value: str) -> str:
+    # Retain the existing IGNORECASE equivalence of I, i, İ and ı, while
+    # full case folding also handles expansions such as Straße -> strasse.
+    return unicodedata.normalize("NFC", value).replace("İ", "i").replace("ı", "i").casefold()
+
+
+def _matching_text(value: str) -> tuple[str, str, list[int], dict[int, int]]:
+    normalized = unicodedata.normalize("NFC", value)
+    chunks = [_matching_key(char) for char in normalized]
+    offsets = [0]
+    for chunk in chunks:
+        offsets.append(offsets[-1] + len(chunk))
+    return normalized, "".join(chunks), offsets, {
+        offset: index for index, offset in enumerate(offsets)
+    }
+
+
+def contains_term(source_text: str, term: str) -> bool:
+    """Match a whole folded span, never part of one expanded source character."""
+    _, folded, _, boundaries = _matching_text(source_text)
+    key = _matching_key(term)
+    if not key:
+        return False
+    start = folded.find(key)
+    while start >= 0:
+        if start in boundaries and start + len(key) in boundaries:
+            return True
+        start = folded.find(key, start + 1)
+    return False
 
 
 class GlossaryEntry(BaseModel):
@@ -54,7 +84,7 @@ class Glossary(BaseModel):
 
     @model_validator(mode="after")
     def unique_sources(self) -> Glossary:
-        sources = [entry.source.casefold() for entry in self.entries]
+        sources = [_matching_key(entry.source) for entry in self.entries]
         if len(sources) != len(set(sources)):
             raise ValueError(ERROR_MESSAGE)
         return self
@@ -79,10 +109,9 @@ def add_to_messages(
     """Copy prompts; send only terms present in the current source segment."""
     if glossary is None or glossary.target_language != target_language:
         return messages
-    normalized_source = unicodedata.normalize("NFC", source_text).casefold()
     relevant = [
         entry for entry in glossary.entries
-        if entry.kind == "target" and entry.source.casefold() in normalized_source
+        if entry.kind == "target" and contains_term(source_text, entry.source)
     ]
     if not relevant:
         return messages
@@ -123,10 +152,25 @@ def effective_source(source_text: str, glossary: Glossary | None, language: str)
     entries = [entry for entry in glossary.entries if entry.kind == "source"]
     if not entries:
         return source_text
-    # Longest match wins for overlapping terms; replacement text is never scanned again.
-    entries.sort(key=lambda entry: len(entry.source), reverse=True)
-    pattern = re.compile("|".join(f"(?P<term{i}>{re.escape(entry.source)})"
-                                 for i, entry in enumerate(entries)), re.IGNORECASE)
-    replacements = {f"term{i}": entry.preferred for i, entry in enumerate(entries)}
-    return pattern.sub(lambda match: replacements[match.lastgroup],
-                       unicodedata.normalize("NFC", source_text))
+    # Map folded offsets back to complete original characters. A match for "s"
+    # inside "ß" cannot consume half a letter; an invalid longer overlap must
+    # still allow a shorter complete match. Replacement text is never rescanned.
+    normalized, folded, offsets, boundaries = _matching_text(source_text)
+    candidates = sorted(
+        [(_matching_key(entry.source), entry.preferred) for entry in entries],
+        key=lambda item: len(item[0]), reverse=True,
+    )
+    result = []
+    index = 0
+    while index < len(normalized):
+        start = offsets[index]
+        for key, preferred in candidates:
+            end = start + len(key)
+            if end in boundaries and folded.startswith(key, start):
+                result.append(preferred)
+                index = boundaries[end]
+                break
+        else:
+            result.append(normalized[index])
+            index += 1
+    return "".join(result)
