@@ -31,6 +31,9 @@ from tests.unit.test_glossary import config_at
     ("ﬃ", "ffi"), ("FFI", "ﬃ"), ("Σςσ", "σσσ"),
     ("cafe\u0301", "CAFÉ"), ("İ", "i"), ("ı", "I"), ("I", "İ"),
     ("i\u0307", "İ"), ("İ", "i\u0307"), ("i\u0307", "i"), ("ı\u0307", "I"),
+    ("i\u0307\u0307", "İ\u0307"), ("İ\u0307", "i\u0307\u0307"),
+    ("i\u0307\u0307\u0307", "İ\u0307\u0307"),
+    ("ﬁ\u0307", "ﬁ\u0307"), ("ﬃ\u0307", "ﬃ\u0307"), ("ﬁ\u0307", "FI\u0307"),
     ("K", "k"), ("ſ", "S"), ("A+B", "a+b"),
 ])
 def test_saved_caption_correction_applies_to_whole_unicode_span(tmp_path, caption, term):

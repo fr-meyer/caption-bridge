@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from typing import Literal
 
@@ -22,20 +23,21 @@ ERROR_MESSAGE = (
 def _matching_key(value: str) -> str:
     # Retain the existing IGNORECASE equivalence of I, i, İ and ı, while
     # full case folding also handles expansions such as Straße -> strasse.
-    return (unicodedata.normalize("NFC", value).replace("İ", "i").replace("ı", "i")
-            .casefold().replace("i\u0307", "i"))
+    folded = unicodedata.normalize("NFC", value).casefold().replace("ı", "i")
+    return re.sub("i\u0307+", "i", folded)
 
 
 def _matching_text(value: str) -> tuple[list[str], str, list[int], dict[int, int]]:
     normalized = unicodedata.normalize("NFC", value)
-    # Keep a dotted-I span together when its dot is absorbed by the compatible
-    # fold, including lowercase i + combining dot (which NFC does not compose).
+    # Keep each absorbed dot run in the same source unit as its preceding
+    # folded i, including lowercase decompositions and ligatures ending in i.
     units = []
     index = 0
     while index < len(normalized):
         end = index + 1
-        if normalized[index] in {"I", "i", "İ", "ı"} and normalized[end:end + 1] == "\u0307":
-            end += 1
+        if _matching_key(normalized[index]).endswith("i"):
+            while normalized[end:end + 1] == "\u0307":
+                end += 1
         units.append(normalized[index:end])
         index = end
     chunks = [_matching_key(unit) for unit in units]
