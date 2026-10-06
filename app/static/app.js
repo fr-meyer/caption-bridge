@@ -19,6 +19,7 @@
 
     const appState = {
         status: "idle_blocked",
+        connectionState: "connecting",
         checks: [],
         sourcePartial: "",
         segments: [],
@@ -198,10 +199,10 @@
         ws.onclose = function () {
             connectionClosed = true;
             if (connection !== ws) return;
+            appState.connectionState = "reconnecting";
             clearTtsPlaybackState();
             appState.ttsSpeakingSeq = null;
-            renderSpeakingHighlight();
-            renderTtsControls();
+            render();
             scheduleReconnect();
         };
 
@@ -288,6 +289,7 @@
     }
 
     function handleSnapshot(msg) {
+        appState.connectionState = "connected";
         appState.status = msg.status;
         if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
             appState.providerOutage = null;
@@ -861,7 +863,8 @@
         const s = appState.status;
 
         els.statusDot.className = "status-dot";
-        if (s === "idle_ready" || s === "listening") {
+        if (appState.connectionState === "connected" &&
+            (s === "idle_ready" || s === "listening")) {
             els.statusDot.classList.add("green");
         } else {
             els.statusDot.classList.add("yellow");
@@ -874,7 +877,10 @@
             reconnecting: "Reconnecting…",
             session_ended: "Session ended",
         };
-        els.statusLabel.textContent = labels[s] || s;
+        els.statusLabel.textContent = appState.connectionState === "connected"
+            ? (labels[s] || s)
+            : (appState.connectionState === "connecting"
+                ? "Connecting…" : "Connection lost · reconnecting…");
 
         if (s === "session_ended") {
             els.elapsed.textContent = formatTime(appState.elapsed) + " total";
@@ -918,9 +924,12 @@
             els.checklist.appendChild(row);
         }
 
-        els.startBtn.disabled = appState.status !== "idle_ready" || appState.recoveryFailure !== null;
+        els.startBtn.disabled = appState.connectionState !== "connected" ||
+            appState.status !== "idle_ready" || appState.recoveryFailure !== null;
 
-        if (appState.recoveryFailure !== null) {
+        if (appState.connectionState !== "connected") {
+            els.idleHint.textContent = "Waiting for the server to restore the session.";
+        } else if (appState.recoveryFailure !== null) {
             els.idleHint.textContent = "Resolve the failed recovery above to enable Start.";
         } else if (appState.status === "idle_blocked") {
             els.idleHint.textContent = "Resolve checklist blockers to enable Start.";
@@ -1540,6 +1549,7 @@
     }
 
     function startWithGlossary() {
+        if (appState.connectionState !== "connected") return;
         let entries;
         try {
             entries = parseGlossaryText(els.glossaryTerms.value);
@@ -1651,6 +1661,8 @@
         setupAutoScroll();
         setupControls();
         setupKeyboard();
+        renderHeader();
+        renderIdlePanel();
         connectWebSocket();
     });
 })();
