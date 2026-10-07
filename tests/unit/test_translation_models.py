@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,10 +14,14 @@ import pytest
 import app.ws as ws_mod
 from app.config import AppConfig
 from app.journal import SessionJournal, run_recovery
-from app.providers import TranslationResponse
+from app.providers import MistralTranslationProvider, TranslationResponse
 from app.state import Segment, SessionManager, TranslationModelChange
 from app.translate import TranslationDispatcher
-from app.translation_models import available_translation_models, validate_translation_model
+from app.translation_models import (
+    available_translation_models,
+    validate_reasoning_effort,
+    validate_translation_model,
+)
 from app.ws import _handle_set_translation_model, _handle_start, _OutboundObsState
 
 
@@ -36,7 +41,9 @@ def test_model_list_accepts_only_explicit_ids(tmp_path: Path) -> None:
     assert config.translate_model == "mistral-medium-latest"
     assert available_translation_models(config)[0]["id"] == "mistral-medium-latest"
     ids = {item["id"] for item in available_translation_models(config)}
-    assert ids == {"mistral-small-latest", "mistral-medium-latest", "zai-glm-5-3"}
+    assert ids == {"mistral-small-latest", "mistral-medium-latest", "mistral-large-4", "zai-glm-5-3"}
+    assert "mistral-large-latest" not in ids
+    assert validate_translation_model("mistral-large-4", config) == "mistral-large-4"
     assert validate_translation_model("zai-glm-5-3", config) == "zai-glm-5-3"
     for value in (None, "", {}, "voxtral-mini-transcribe-realtime-2602", "arbitrary"):
         with pytest.raises(ValueError):
@@ -103,7 +110,10 @@ class _RecordingProvider:
         )
 
 
-def test_switch_keeps_in_flight_segments_on_their_original_model(tmp_path: Path) -> None:
+@pytest.mark.parametrize("second_model", ["mistral-small-latest", "mistral-large-4"])
+def test_switch_keeps_in_flight_segments_on_their_original_model(
+    tmp_path: Path, second_model: str,
+) -> None:
     async def scenario() -> None:
         config = config_at(tmp_path)
         manager = SessionManager(config)
@@ -113,13 +123,13 @@ def test_switch_keeps_in_flight_segments_on_their_original_model(tmp_path: Path)
         manager.session.status = "listening"
         manager.session.started_at = datetime.now(timezone.utc)
         manager.finalize_segment("이 결과는 추가 검증이 필요합니다.")
-        manager.set_translation_model("mistral-small-latest")
+        manager.set_translation_model(second_model)
         manager.finalize_segment("다음 결과도 검증해야 합니다.")
         await dispatcher.drain()
-        assert provider.calls == ["mistral-medium-latest", "mistral-small-latest"]
+        assert provider.calls == ["mistral-medium-latest", second_model]
         assert [(seg.translation_model, seg.translation_model_revision)
                 for seg in manager.session.segments] == [
-                    ("mistral-medium-latest", 0), ("mistral-small-latest", 1)
+                    ("mistral-medium-latest", 0), (second_model, 1)
                 ]
         assert manager.session.translation_model_changes[0].applies_from_seq == 2
         assert [seg.translation_model_resolved for seg in manager.session.segments] == provider.calls
@@ -163,7 +173,10 @@ def test_empty_provider_answer_fails_without_another_request(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
-def test_recovery_preserves_each_model_and_old_unknown_metadata(tmp_path: Path) -> None:
+@pytest.mark.parametrize("second_model", ["zai-glm-5-3", "mistral-large-4"])
+def test_recovery_preserves_each_model_and_old_unknown_metadata(
+    tmp_path: Path, second_model: str,
+) -> None:
     config = config_at(tmp_path)
     journal = SessionJournal("model-session", config)
     journal.record_session_started()
@@ -173,13 +186,13 @@ def test_recovery_preserves_each_model_and_old_unknown_metadata(tmp_path: Path) 
         translation_model="mistral-small-latest", translation_model_revision=0,
     ))
     change = TranslationModelChange(
-        model="zai-glm-5-3", revision=1, applies_from_seq=2
+        model=second_model, revision=1, applies_from_seq=2
     )
     journal.record_translation_model_change(change)
     second = Segment(
         seq=2, source_text="둘째 문장", segment_kind="complete",
-        translation_model="zai-glm-5-3", translation_model_revision=1,
-        translation_model_resolved="zai-glm-5-3",
+        translation_model=second_model, translation_model_revision=1,
+        translation_model_resolved=second_model,
         translation_prompt_tokens=21, translation_completion_tokens=9,
         translated_text="Second sentence", translation_status="done",
     )
@@ -189,10 +202,10 @@ def test_recovery_preserves_each_model_and_old_unknown_metadata(tmp_path: Path) 
     assert result.notice is not None and result.notice.status == "success"
     data = json.loads((Path(result.notice.export_path) / "transcript.json").read_text())
     assert [item["translation_model"] for item in data["segments"]] == [
-        "mistral-small-latest", "zai-glm-5-3"
+        "mistral-small-latest", second_model
     ]
     assert data["translation_model_changes"][0]["applies_from_seq"] == 2
-    assert data["segments"][1]["translation_model_resolved"] == "zai-glm-5-3"
+    assert data["segments"][1]["translation_model_resolved"] == second_model
     assert data["segments"][1]["translation_prompt_tokens"] == 21
     assert data["segments"][1]["translation_completion_tokens"] == 9
 
@@ -209,3 +222,38 @@ def test_recovery_preserves_each_model_and_old_unknown_metadata(tmp_path: Path) 
     assert result.notice is not None and result.notice.status == "success"
     legacy = json.loads((Path(result.notice.export_path) / "transcript.json").read_text())
     assert legacy["segments"][0]["translation_model"] is None
+
+
+
+def test_large4_preview_label_and_configured_choice_keep_default_reasoning(tmp_path: Path) -> None:
+    config = config_at(tmp_path)
+    choices = {item["id"]: item["label"] for item in available_translation_models(config)}
+    assert choices["mistral-large-4"] == "Mistral Large 4 (preview)"
+    assert config.translate_model == "mistral-medium-latest"
+    configured = config.model_copy(update={"translate_model": "mistral-large-4"})
+    assert validate_translation_model(configured.translate_model, configured) == "mistral-large-4"
+    assert validate_reasoning_effort("default", "mistral-large-4") == "default"
+    # Preview selection must not implicitly enable an unverified thinking level.
+    with pytest.raises(ValueError):
+        validate_reasoning_effort("high", "mistral-large-4")
+
+
+def test_large4_routes_exact_preview_id_through_mistral_without_alias_rewrite(monkeypatch):
+    response = SimpleNamespace(
+        model="mistral-large-4", usage=SimpleNamespace(prompt_tokens=21, completion_tokens=9),
+        choices=[SimpleNamespace(message=SimpleNamespace(content="Synthetic translated result."),
+                                 finish_reason="stop")],
+    )
+    complete = AsyncMock(return_value=response)
+    client = SimpleNamespace(chat=SimpleNamespace(complete_async=complete))
+    monkeypatch.setattr("app.providers.Mistral", lambda **kwargs: client)
+    provider = MistralTranslationProvider(api_key="")
+    result = asyncio.run(provider.translate(
+        model="mistral-large-4", messages=[{"role": "user", "content": "Synthetic source."}],
+        temperature=0, max_tokens=200,
+    ))
+    assert complete.await_args.kwargs["model"] == "mistral-large-4"
+    assert "reasoning_effort" not in complete.await_args.kwargs
+    assert result.resolved_model == "mistral-large-4"
+    assert result.prompt_tokens == 21 and result.completion_tokens == 9
+    assert result.finish_reason == "stop"

@@ -7,8 +7,12 @@ from app.config import AppConfig
 _CHOICES = (
     ("mistral-medium-latest", "Mistral Medium (latest)"),
     ("mistral-small-latest", "Mistral Small (latest)"),
+    ("mistral-large-4", "Mistral Large 4 (preview)"),
     ("zai-glm-5-3", "Z.ai GLM 5.3 (experimental preview)"),
 )
+_HIGH_REASONING_MODELS = frozenset({
+    "mistral-medium-latest", "mistral-small-latest", "zai-glm-5-3",
+})
 ERROR_MESSAGE = "Choose a listed translation model."
 EFFORT_ERROR_MESSAGE = "Choose an available translation thinking level."
 DEFAULT_REASONING_EFFORT = "default"
@@ -39,7 +43,7 @@ def available_translation_models(config: AppConfig) -> list[dict[str, str]]:
 def validate_reasoning_effort(raw: object, model: str) -> str:
     """Only expose the Mistral request value used by its Vibe adapter."""
     allowed = {DEFAULT_REASONING_EFFORT}
-    if model in {item[0] for item in _CHOICES}:
+    if model in _HIGH_REASONING_MODELS:
         allowed.add(HIGH_REASONING_EFFORT)
     if not isinstance(raw, str) or raw not in allowed:
         raise ValueError(EFFORT_ERROR_MESSAGE)
