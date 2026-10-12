@@ -88,3 +88,70 @@ test("chooser cancellation retains route and never exposes exception contents", 
     assert.match(devices.notice, /not granted/);
     assert.doesNotMatch(devices.notice, /PRIVATE/);
 });
+
+const deferred = () => {
+    let resolve, reject;
+    const promise = new Promise((yes, no) => {resolve = yes; reject = no;});
+    return {promise, resolve, reject};
+};
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test("successful older sink stays truthful when the later New Session reset fails", async () => {
+    const first = deferred();
+    const context = {sinkId: "", async setSinkId(id) {
+        if (!id) throw Error("PRIVATE_RESET_FAILURE");
+        await first.promise;
+        this.sinkId = id;
+    }};
+    const devices = new AudioDevices({media: {}, canRoute: () => true,
+        context: () => context, send() {}, unavailable() {}});
+    devices.snapshot({available: [], selected: "default"}, "listening", "older");
+    const old = devices.setOutput("synthetic-sink", "Synthetic chosen output");
+    await flush();
+    devices.snapshot({available: [], selected: "default"}, "idle_ready", "newer");
+    first.resolve();
+    await old;
+    await devices.sinkQueue.catch(() => {});
+    await flush();
+    assert.equal(devices.output, context.sinkId);
+    assert.equal(devices.outputLabel, "Synthetic chosen output");
+    assert.match(devices.notice, /Output change failed/);
+    assert.doesNotMatch(devices.notice, /PRIVATE/);
+});
+
+test("pre-chooser empty inventory cannot mute a newly granted connected sink", async () => {
+    const stale = deferred();
+    const permitted = {kind: "audiooutput", deviceId: "granted", label: "Synthetic permitted output"};
+    let enumerations = 0, muteCalls = 0;
+    const devices = new AudioDevices({media: {
+        enumerateDevices: () => ++enumerations === 1 ? stale.promise : Promise.resolve([permitted]),
+        selectAudioOutput: async () => permitted,
+    }, canRoute: () => true, context: () => ({setSinkId: async () => {}}),
+    send() {}, unavailable() {muteCalls++;}});
+    const older = devices.refreshOutputs();
+    await devices.chooseOutput();
+    stale.resolve([]);
+    await older;
+    await flush();
+    assert.equal(devices.output, "granted");
+    assert.equal(devices.outputUnavailable, false);
+    assert.equal(muteCalls, 0);
+    assert.ok(enumerations >= 2, "Transition must request fresh post-permission inventory");
+});
+
+test("removal during a pending sink change is checked again after the transition", async () => {
+    const pending = deferred();
+    let muteCalls = 0, enumerations = 0;
+    const devices = new AudioDevices({media: {enumerateDevices: async () => {enumerations++; return []; }},
+        canRoute: () => true, context: () => ({setSinkId: () => pending.promise}),
+        send() {}, unavailable() {muteCalls++;}});
+    const change = devices.setOutput("removed", "Synthetic removed output");
+    await devices.refreshOutputs(); // Device-change notification while switching.
+    assert.equal(enumerations, 0);
+    pending.resolve();
+    await change;
+    await flush();
+    assert.equal(enumerations, 1);
+    assert.equal(muteCalls, 1);
+    assert.equal(devices.outputUnavailable, true);
+});

@@ -17,6 +17,8 @@
             this.session = null;
             this.revision = 0;
             this.outputBusy = false;
+            this.choosingOutput = false;
+            this.refreshPending = false;
             this.refreshRevision = 0;
         }
         mount(document) {
@@ -69,9 +71,13 @@
             this.render();
         }
         async refreshOutputs() {
+            if (this.outputBusy || this.choosingOutput) {
+                this.refreshPending = true;
+                return;
+            }
             const revision = ++this.refreshRevision;
             if (!this.media?.enumerateDevices) {
-                this.notice = "Output list unavailable. Use system/browser audio settings.";
+                if (!this.notice) this.notice = "Output list unavailable. Use system/browser audio settings.";
                 this.render();
                 return;
             }
@@ -92,8 +98,11 @@
             this.render();
         }
         async chooseOutput() {
-            if (!this.canRoute() || !this.media?.selectAudioOutput || this.outputBusy) return;
+            if (!this.canRoute() || !this.media?.selectAudioOutput || this.outputBusy || this.choosingOutput) return;
             const session = this.session;
+            this.choosingOutput = true;
+            ++this.refreshRevision;
+            this.render();
             try {
                 // This is invoked directly by the chooser button, with user activation.
                 const device = await this.media.selectAudioOutput();
@@ -103,7 +112,12 @@
                 await this.setOutput(device.deviceId, device.label);
             } catch (_) {
                 this.notice = "Output selection was not granted. Current route is unchanged.";
+            } finally {
+                this.choosingOutput = false;
+                ++this.refreshRevision;
+                this.refreshPending = false;
                 this.render();
+                this.refreshOutputs();
             }
         }
         async setOutput(id, label) {
@@ -115,24 +129,30 @@
             const context = this.options.context();
             if (!context?.setSinkId) return false;
             const revision = ++this.revision;
+            ++this.refreshRevision;
             this.outputBusy = true;
             this.render();
             try {
                 // Serialize changes so a slow older request cannot override a New Session reset.
                 this.sinkQueue = (this.sinkQueue || Promise.resolve()).catch(() => {}).then(() => context.setSinkId(id));
                 await this.sinkQueue;
-                if (revision !== this.revision) return false;
                 this.output = id;
                 this.outputUnavailable = false;
                 const device = this.outputs.find(item => item.deviceId === id);
                 this.outputLabel = id ? label || device?.label || "Selected browser output" : "System/browser default";
-                this.notice = "";
+                this.notice = revision === this.revision ? "" : "Changing speech output…";
                 return true;
             } catch (_) {
-                this.notice = "Output change failed. Current route is unchanged; check browser/system audio settings.";
+                if (revision === this.revision) {
+                    this.notice = "Output change failed. Current route is unchanged; check browser/system audio settings.";
+                }
                 return false;
             } finally {
-                if (revision === this.revision) this.outputBusy = false;
+                if (revision === this.revision) {
+                    this.outputBusy = false;
+                    this.refreshPending = false;
+                    this.refreshOutputs();
+                }
                 this.render();
             }
         }
@@ -164,7 +184,7 @@
                 const items = [{id: "", label: "System/browser default output"}, ...this.outputs.map((device, index) =>
                     ({id: device.deviceId, label: device.label || "Permitted audio output " + (index + 1)}))];
                 this.fill(select, items, this.output, "Selected output unavailable");
-                select.disabled = !this.canRoute() || this.outputBusy;
+                select.disabled = !this.canRoute() || this.outputBusy || this.choosingOutput;
             });
             this.document.querySelectorAll("[data-audio-device-status]").forEach(element => {
                 const input = this.activeInput ? "Capture input: " + this.activeInput + ". " :

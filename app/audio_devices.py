@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
+from threading import RLock
 from typing import Any
 
 SELECTION_ERROR = "Microphone selection is unavailable. Refresh devices and choose again."
@@ -14,6 +15,7 @@ class InputDevices:
 
     def __init__(self, query: Callable, default: Callable, check: Callable) -> None:
         self._query = query
+        self._lock = RLock()
         self._default = default
         self._check = check
         self._choices: dict[str, tuple[int, tuple, str]] = {}
@@ -27,6 +29,10 @@ class InputDevices:
                 device.get("max_input_channels"), device.get("default_samplerate"))
 
     def refresh(self) -> dict[str, Any]:
+        with self._lock:
+            return self._refresh()
+
+    def _refresh(self) -> dict[str, Any]:
         try:
             inventory = self._query()
             previous = {(value[0], value[1]): token for token, value in self._choices.items()}
@@ -45,6 +51,10 @@ class InputDevices:
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot()
+
+    def _snapshot(self) -> dict[str, Any]:
         return {
             "available": [{"id": token, "label": value[2]}
                           for token, value in self._choices.items()],
@@ -54,6 +64,10 @@ class InputDevices:
         }
 
     def choose(self, token: object) -> None:
+        with self._lock:
+            self._choose(token)
+
+    def _choose(self, token: object) -> None:
         if not isinstance(token, str) or len(token) > 128:
             raise ValueError(SELECTION_ERROR)
         self.refresh()
@@ -64,6 +78,10 @@ class InputDevices:
 
     def capture_device(self) -> int:
         """Revalidate immediately before opening; reconnect keeps the original input."""
+        with self._lock:
+            return self._capture_device()
+
+    def _capture_device(self) -> int:
         self.refresh()
         if self._unavailable:
             raise ValueError(SELECTION_ERROR)
@@ -91,8 +109,9 @@ class InputDevices:
         return selected[0]
 
     def reset(self) -> None:
-        self._selected = "default"
-        self._active = None
+        with self._lock:
+            self._selected = "default"
+            self._active = None
 
 
 def native_input_devices() -> InputDevices:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -178,3 +179,51 @@ def test_invalid_start_selection_cannot_start_pipeline_or_change_session(monkeyp
     assert manager.session.target_language == "en"
     assert manager.session.status == "idle_ready"
     assert "missing" not in json.dumps(event)
+
+
+@pytest.mark.parametrize("reconnect", [False, True])
+def test_old_refresh_cannot_overwrite_start_or_reconnect_validation(reconnect):
+    paused = threading.Event()
+    release = threading.Event()
+    capture_entered = threading.Event()
+    capture_done = threading.Event()
+
+    class PausedDevice(dict):
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == "name" and value == "Original" and threading.current_thread().name == "old-refresh":
+                paused.set()
+                assert release.wait(2)
+            return value
+
+    inventory = [device("Built-in"), PausedDevice(device("Original"))]
+    checks = []
+    selection = InputDevices(lambda: list(inventory), lambda: 0, lambda **kw: checks.append(kw))
+    selection.choose(selection.refresh()["available"][1]["id"])
+    if reconnect:
+        assert selection.capture_device() == 1
+    worker = threading.Thread(target=selection.refresh, name="old-refresh", daemon=True)
+    worker.start()
+    assert paused.wait(2)
+    inventory[1] = device("Replacement")
+    errors = []
+    def capture():
+        capture_entered.set()
+        try:
+            selection.capture_device()
+        except ValueError as exc:
+            errors.append(str(exc))
+        finally:
+            capture_done.set()
+    capture_thread = threading.Thread(target=capture, daemon=True)
+    capture_thread.start()
+    assert capture_entered.wait(1)
+    try:
+        assert not capture_done.wait(0.05), "Capture validation must serialize behind metadata refresh"
+    finally:
+        release.set()
+        worker.join(2)
+        capture_thread.join(2)
+    assert not worker.is_alive() and not capture_thread.is_alive()
+    assert errors == [SELECTION_ERROR]
+    assert len(checks) == int(reconnect), "Replacement must never reach the format/open path"

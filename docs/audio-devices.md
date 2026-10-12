@@ -27,6 +27,8 @@ and unmute deliberately. Captions remain available for replay.
 Browser device-change notifications refresh outputs when available. A removed,
 replaced or reindexed explicit native choice blocks Start instead of silently
 using a different microphone. Reconnect revalidates the input frozen at Start.
+Metadata refresh and Start/reconnect validation are serialized so an older device
+list cannot replace the inventory used to choose the input.
 Native device identity is limited to the current PortAudio index and reported
 metadata; identical device instances cannot be distinguished beyond that API.
 
@@ -37,6 +39,11 @@ New Session resets both transient choices to defaults. No choice, device label
 or identifier is saved to browser storage, transcript exports, recovery journals,
 or aggregate diagnostics. Device lists are displayed only in the local loopback
 UI. Physical routing and intelligibility require separate attended acceptance.
+
+Output transitions retain the last successfully applied route even if a later
+reset fails. Device lists from before a chooser or sink change are discarded;
+the app refreshes output exposure after the transition so a removed output is
+still detected without falsely muting a newly granted one.
 
 ## Integration with the combined PCM player
 
