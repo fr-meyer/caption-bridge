@@ -86,12 +86,58 @@ See [`mac-lifecycle.md`](mac-lifecycle.md) for recovery guidance.
 
 | Symptom | Expected behavior | Operator action |
 |---|---|---|
+| Initial transcription connection does not establish | Microphone activity is shown separately; the startup deadline stops capture and ends an exportable session without retrying | Export, then create a new session and retry manually |
 | Transcription close `1012` or transport interruption | Bounded reconnect with jitter and an in-browser notice | Wait for recovery; if exhausted, export and start a new session |
 | Reconnect ceiling exhausted | Capture stops and the session remains exportable | Export, verify readiness, then create a new session |
 | TTS `429` or `5xx` before playback | Bounded retry | No action unless retries exhaust |
 | TTS failure after audio has started | No retry, preventing duplicate speech | Replay the caption manually if needed |
 | TTS guardrail rejection | Caption remains visible; audio is skipped | Continue the session |
 | Browser becomes slow | Partial/noncritical events may be coalesced or dropped; final state is prioritized | Refresh the browser if lag persists |
+
+The header and ASR notice show connecting, ready, or failed independently from
+the session lifecycle. Wait for **transcription ready** before speaking or
+playing a test clip. `listening` in the lifecycle snapshot alone does not prove
+the provider handshake succeeded. Ready requires a typed `session.updated`
+acknowledgment with the requested model, PCM encoding, and sample rate. An
+explicitly supplied streaming delay must match; an omitted or null optional
+delay stays unknown. Stop remains available while connecting.
+`ASR_INITIAL_TIMEOUT_MS` defaults to 10000, accepts 100–60000, and bounds initial
+provider establishment only; an established session has no automatic duration
+limit. Ordinary bounded reconnect still applies after a verified handshake.
+On Stop during setup, capture ends immediately; the SDK setup task settles under
+its explicit transport/handshake timeouts, and any late connection is closed
+without sending audio or changing session readiness.
+
+Session snapshots expose `pipeline_diagnostics`, with aggregate capture chunks,
+bytes, samples, frames, invalid chunks, normalized PCM RMS/peak, capture activity,
+ASR connection state/reason, successful audio-append frames/bytes, and fixed event,
+text-character, and error counts. Schema 6 adds a strict `protocol` object with
+requested and acknowledged numeric/boolean settings, verification flags,
+terminal text length/handling, and optional provider audio-usage seconds.
+`input_flushed` and `input_ended` mean local SDK send completion; audio-append
+counters likewise do not prove provider receipt or transcription. Unknown
+acknowledged delay, terminal text length, and audio usage remain null. Reliability
+schema 6 persists the same object under `pipeline`; history loading continues
+to accept schemas 1–5 with their original exact fields. Counters never
+retain raw PCM, transcript text, provider bodies, secrets, request identifiers,
+or device identifiers. RMS/peak are null before any PCM samples arrive, numeric
+zero for observed silence; old records keep diagnostics absent. Transcript export
+and recovery provenance stay unchanged. Nonempty terminal-only text is admitted
+through a distinct final-text callback before the detector flush; it does not
+invent a provider delta. Once a nonempty delta was delivered, terminal aggregate
+text cannot duplicate or rewrite those captions. Terminal text without a final
+callback is classified `not_admitted`. Clean EOF without typed Done fails with
+`closed_before_done` rather than announcing successful completion.
+
+For explicitly controlled input validation, the `finish_input` WebSocket command
+requires a verified ready session. It stops microphone capture, shows ASR
+`draining`, and allows final source text, already admitted translations, and speech
+to finish. It never starts a retry. Once final source text is flushed,
+`finish_input_complete` emits only ASR state/reason, final `source_count`, and
+`translation_pending_count`. This admission count lets an operator wait for all
+captions and browser speech to complete before the ordinary Stop and Export.
+This command is manual and does not add an automatic session cutoff. Ordinary
+Stop retains its existing speech cancellation behavior.
 
 ## Semantic fragment boundaries
 
@@ -250,5 +296,29 @@ audit evidence.
 6. Reconcile issues whose fixes were previously merged only into `dev`.
 7. Promote or tag a candidate only after its required Mac acceptance gate passes
    at the exact commit.
-8. For the post-v1 P1 gate, complete [`mac-soak.md`](mac-soak.md) and record the
-   content-free result in issue #35 before checking roadmap item P1.4.
+8. P1.4 is already closed by the exact-candidate five-minute run in issue #35.
+   A two-hour run under [`mac-soak.md`](mac-soak.md) is optional, non-blocking
+   endurance evidence. Record its content-free result only when that run is chosen.
+
+## Browser connection ownership
+
+The first attached browser owns control of the local session, including while
+idle. New connections cannot replace it: they receive a `connection_lifecycle`
+event with `state=rejected`, `reason=owner_active`, and close code 4409. Rejection
+does not reset the owner's audio readiness, detach its listener, change session
+state, or run commands. A true owner disconnect releases control, so ordinary
+transport recovery can reconnect. Cleanup from an older connection cannot alter
+the next owner's readiness or subscription.
+
+The admitted browser receives `state=admitted`, `reason=owner_admitted`, and a
+generated process-local `connection_id` such as `conn-000001`. Its initial and
+later snapshots include the same descriptor under `connection_lifecycle`.
+IDs and fixed lifecycle reason labels appear only in transient connection events
+and content-free lifecycle logs; they never derive from client/device identifiers
+or enter session journals, transcript exports, or reliability history.
+
+A page closed with owner conflict 4409 or legacy code 1000/reason `replaced`
+stays disconnected with an ownership notice. It stops local playback and automatic
+reconnect; reload manually after the owning page disconnects to try again.
+Ordinary transport failure still uses reconnect backoff without automatic Start.
+Session commands and audio readiness restoration wait for an admitted snapshot.

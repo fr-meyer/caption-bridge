@@ -617,6 +617,10 @@ body[data-state="session_ended"] #controls-footer {
 
 /* ===== Settings drawer ===== */
 #settings-drawer {
+    max-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     position: fixed;
     top: 0;
     right: 0;
@@ -631,6 +635,10 @@ body[data-state="session_ended"] #controls-footer {
     flex-direction: column;
     padding: 20px;
     gap: 20px;
+}
+
+#settings-drawer > * {
+    flex-shrink: 0;
 }
 
 #settings-drawer.open {
@@ -862,4 +870,46 @@ select:focus-visible {
 .glossary-editor small { display: block; color: var(--text-muted); line-height: 1.5; }
 .glossary-remember { display: block; margin: 12px 0; }
 .glossary-session-note { margin: 8px 24px; color: var(--text-muted); font-size: 13px; }
+.caption-terms-version { color: var(--text-muted); margin-right: 12px; font-size: 12px; }
+.term-correction-btn { margin-top: 8px; font-size: 12px; padding: 5px 9px; }
+#term-dialog { color: var(--text-primary); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; width: min(560px, 90vw); max-height: 85vh; overflow: auto; }
+#term-dialog::backdrop { background: rgba(0, 0, 0, .65); }
+#term-dialog label { display: block; margin-top: 12px; }
+#term-dialog input, #term-dialog select { width: 100%; box-sizing: border-box; padding: 8px;
+    color: var(--text-primary); background: var(--bg); border: 1px solid var(--border); }
+#term-help, #term-version, .term-caption { font-size: 13px; line-height: 1.5; }
+.term-caption { white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; }
+.term-row span { flex: 1; overflow-wrap: anywhere; }
+#term-dialog .modal-actions { flex-wrap: wrap; margin-top: 16px; }
 textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
+/* Translation choice remains visible independently of spoken-readback state. */
+.session-model-status {
+    padding: 8px 24px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+}
+.model-help {
+    display: block;
+    max-width: 420px;
+    margin: 0 auto 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+/* Speech backlog reports clips, not an estimated delay. */
+.speech-backlog {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+.speech-backlog small { flex-basis: 100%; color: var(--text-secondary); }
+.speech-catch-up-notice { margin: 0; padding: 0 16px; font-size: 14px; }
+.speech-catch-up-notice:empty { display: none; }

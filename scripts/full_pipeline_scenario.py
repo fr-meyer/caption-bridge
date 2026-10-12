@@ -330,6 +330,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 MISTRAL_TTS_RETRY_MAX_DELAY_MS=1,
                 MISTRAL_TTS_RETRY_JITTER_FACTOR=0.0,
                 TRANSLATION_TIMEOUT_MS=100,
+                TRANSLATION_GLM_TIMEOUT_MS=100,
                 TRANSLATION_DRAIN_TIMEOUT_MS=5000,
                 TRANSLATION_MAX_CONCURRENCY=4,
                 TRANSLATION_REPAIR_MAX_ATTEMPTS=0,

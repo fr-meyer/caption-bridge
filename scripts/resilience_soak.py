@@ -125,6 +125,7 @@ async def run_soak(segments: int = 1000) -> SoakReport:
         _env_file=None,
         MISTRAL_TTS_ENABLED=False,
         TRANSLATION_TIMEOUT_MS=100,
+        TRANSLATION_GLM_TIMEOUT_MS=100,
         TRANSLATION_DRAIN_TIMEOUT_MS=30000,
         TRANSLATION_MAX_CONCURRENCY=8,
         TRANSLATION_REPAIR_MAX_ATTEMPTS=0,

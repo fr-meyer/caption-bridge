@@ -6,14 +6,16 @@ import asyncio
 import logging
 import random
 import time
+from contextvars import ContextVar
 
 from app import translation_quality
 from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
-from app.glossary import Glossary, add_to_messages
+from app.glossary import Glossary, add_to_messages, effective_source
 from app.languages import get_language_label
-from app.providers import MistralTranslationProvider, TranslationProvider
+from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
+from app.translation_models import translation_output_limit
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,16 @@ class TranslationDispatcher:
             max_concurrency = 8
         self._provider_slots = asyncio.Semaphore(max_concurrency)
         self._in_flight: set[asyncio.Task] = set()
+        # Each task keeps its dispatch-time model through retries and repair.
+        self._request_model: ContextVar[str | None] = ContextVar(
+            "caption_translation_model", default=None
+        )
+        self._request_effort: ContextVar[str] = ContextVar(
+            "caption_translation_reasoning_effort", default="default"
+        )
+        self._request_segment: ContextVar[object | None] = ContextVar(
+            "caption_translation_segment", default=None
+        )
 
     # -- public API ---------------------------------------------------------
 
@@ -72,9 +84,22 @@ class TranslationDispatcher:
         glossary = getattr(session, "glossary", None)
         if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
             glossary = None
+        model = getattr(segment, "translation_model", None) or self._config.translate_model
+        if glossary is not None and glossary.target_language != target_language:
+            segment.terminology_status = "paused"
+            glossary = None
+        else:
+            segment.terminology_status = "active" if glossary else "empty"
+        version = getattr(session, "terminology_version", 0) if session.id == session_id else 0
+        segment.terminology_version = version if type(version) is int else 0
+        segment.terminology = glossary
+        segment.effective_source_text = effective_source(segment.source_text, glossary, target_language)
+        if session.id == session_id and self._session_manager._journal is not None:
+            self._session_manager._journal.record_translation_requested(segment)
         task = asyncio.ensure_future(
             self._translate_task(
-                segment, context_segments, session_id, target_language, glossary
+                segment, context_segments, session_id, target_language, glossary,
+                model, getattr(segment, "translation_reasoning_effort", None) or "default",
             )
         )
         self._in_flight.add(task)
@@ -101,12 +126,18 @@ class TranslationDispatcher:
         logger.warning(
             "Translation timed out for segment #%d: budget=%dms, lang=%s, model=%s, provider=%s",
             seq,
-            self._config.translation_timeout_ms,
+            self._translation_timeout_ms(),
             target_language,
-            self._config.translate_model,
+            self._request_model.get() or self._config.translate_model,
             self._provider.name,
         )
         self._session_manager.mark_translation_timed_out(seq, session_id)
+
+    def _translation_timeout_ms(self) -> int:
+        model = self._request_model.get() or self._config.translate_model
+        if model == "zai-glm-5-3":
+            return self._config.translation_glm_timeout_ms
+        return self._config.translation_timeout_ms
 
     async def _await_translation(self, messages: list[dict], timeout_s: float) -> str:
         async with self._provider_slots:
@@ -213,7 +244,7 @@ class TranslationDispatcher:
                 "provider_capacity_warning",
                 {
                     "provider": self._provider.name,
-                    "model": self._config.translate_model,
+                    "model": self._request_model.get() or self._config.translate_model,
                     "reason": "service_tier_capacity_exceeded",
                     "status_code": 429,
                     "segment_seq": seq,
@@ -226,11 +257,16 @@ class TranslationDispatcher:
     async def _translate_task(
         self, segment, context_segments: list, session_id: str, target_language: str,
         glossary: Glossary | None = None,
+        model: str | None = None,
+        effort: str = "default",
     ) -> None:
         seq = segment.seq
+        token = self._request_model.set(model or self._config.translate_model)
+        effort_token = self._request_effort.set(effort)
+        segment_token = self._request_segment.set(segment)
         try:
             messages = self._build_messages(segment, context_segments, target_language, glossary)
-            timeout_s = self._config.translation_timeout_ms / 1000
+            timeout_s = self._translation_timeout_ms() / 1000
 
             try:
                 translated = await self._await_translation(messages, timeout_s)
@@ -268,6 +304,20 @@ class TranslationDispatcher:
                     if translated is None:
                         return
 
+            if not translated or not translated.strip():
+                logger.warning("Translation provider returned no answer text for segment #%d", seq)
+                self._session_manager.mark_translation_failed(
+                    seq, session_id, reason="provider_no_text"
+                )
+                return
+
+            if getattr(segment, "translation_finish_reason", None) == "length":
+                logger.warning("Translation output limit reached for segment #%d", seq)
+                self._session_manager.mark_translation_failed(
+                    seq, session_id, reason="provider_output_limit"
+                )
+                return
+
             translated, quality = await self._check_and_repair(
                 translated, segment, target_language, glossary
             )
@@ -292,29 +342,57 @@ class TranslationDispatcher:
                 type(exc).__name__,
             )
             self._session_manager.mark_translation_failed(seq, session_id)
+        finally:
+            self._request_segment.reset(segment_token)
+            self._request_effort.reset(effort_token)
+            self._request_model.reset(token)
+
+    def _record_response(self, response: str | TranslationResponse) -> str:
+        if isinstance(response, str):
+            return response
+        segment = self._request_segment.get()
+        if segment is not None:
+            if response.resolved_model:
+                segment.translation_model_resolved = response.resolved_model
+            if response.prompt_tokens is not None:
+                segment.translation_prompt_tokens = (
+                    (segment.translation_prompt_tokens or 0) + response.prompt_tokens
+                )
+            if response.completion_tokens is not None:
+                segment.translation_completion_tokens = (
+                    (segment.translation_completion_tokens or 0) + response.completion_tokens
+                )
+            if response.finish_reason is not None:
+                segment.translation_finish_reason = response.finish_reason
+        return response.text
+
+    async def _request_translation(
+        self, messages: list[dict], temperature: float
+    ) -> str:
+        effort = self._request_effort.get()
+        model = self._request_model.get() or self._config.translate_model
+        request = dict(
+            model=model, messages=messages, temperature=temperature,
+            max_tokens=translation_output_limit(model, effort),
+        )
+        if effort == "high":
+            request["reasoning_effort"] = "high"
+        response = await self._provider.translate(**request)
+        return self._record_response(response)
 
     async def _call_api(self, messages: list[dict]) -> str:
-        return await self._provider.translate(
-            model=self._config.translate_model,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=200,
-        )
+        return await self._request_translation(messages, 0.2)
 
     async def _call_repair_api(self, messages: list[dict]) -> str:
-        return await self._provider.translate(
-            model=self._config.translate_model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=200,
-        )
+        return await self._request_translation(messages, 0.0)
 
     async def _check_and_repair(
         self, raw_text: str, segment, target_language: str,
         glossary: Glossary | None = None,
     ) -> tuple[str, SegmentQuality]:
+        source_text = getattr(segment, "effective_source_text", None) or segment.source_text
         result = translation_quality.check(
-            raw_text, segment.source_text, target_language
+            raw_text, source_text, target_language
         )
         if not result.flagged:
             return raw_text, SegmentQuality(
@@ -343,11 +421,11 @@ class TranslationDispatcher:
 
         label = get_language_label(target_language)
         repair_messages = translation_quality.build_repair_prompt(
-            segment.source_text, label, initial_reasons
+            source_text, label, initial_reasons
         )
         repair_messages = add_to_messages(
             repair_messages, glossary, target_language,
-            source_text=segment.source_text,
+            source_text=source_text,
         )
         repair_timeout_s = min(
             self._config.translation_timeout_ms / 2, 5000
@@ -360,6 +438,10 @@ class TranslationDispatcher:
                     self._call_repair_api(repair_messages),
                     timeout=repair_timeout_s,
                 )
+                if getattr(segment, "translation_finish_reason", None) == "length":
+                    # A fluent partial repair can omit a qualification or negation.
+                    # Keep the original flagged answer instead of accepting it.
+                    raise ValueError("translation_repair_output_limit")
         except Exception:
             return raw_text, SegmentQuality(
                 flagged=True,
@@ -375,7 +457,7 @@ class TranslationDispatcher:
             )
 
         repair_result = translation_quality.check(
-            repair_text, segment.source_text, target_language
+            repair_text, source_text, target_language
         )
         if not repair_result.flagged:
             return repair_text, SegmentQuality(
@@ -392,10 +474,10 @@ class TranslationDispatcher:
             )
 
         best_text = translation_quality.choose_better_translation(
-            raw_text, repair_text, segment.source_text, target_language
+            raw_text, repair_text, source_text, target_language
         )
         final_result = translation_quality.check(
-            best_text, segment.source_text, target_language
+            best_text, source_text, target_language
         )
         return best_text, SegmentQuality(
             flagged=True,
@@ -414,6 +496,7 @@ class TranslationDispatcher:
         self, segment, context_segments: list, target_language: str,
         glossary: Glossary | None = None,
     ) -> list[dict]:
+        source_text = getattr(segment, "effective_source_text", None) or segment.source_text
         system_content = _build_system_prompt(target_language)
         if segment.segment_kind == "reconnect_fragment":
             system_content += _RECONNECT_ADDENDUM
@@ -428,17 +511,17 @@ class TranslationDispatcher:
                 f"{context_lines}\n"
                 f"</context_do_not_translate>\n\n"
                 f"<segment_to_translate>\n"
-                f"{segment.source_text}\n"
+                f"{source_text}\n"
                 f"</segment_to_translate>"
             )
         else:
             user_content = (
                 f"<segment_to_translate>\n"
-                f"{segment.source_text}\n"
+                f"{source_text}\n"
                 f"</segment_to_translate>"
             )
 
         return add_to_messages([
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
-        ], glossary, target_language, source_text=segment.source_text)
+        ], glossary, target_language, source_text=source_text)

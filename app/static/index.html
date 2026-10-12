@@ -22,6 +22,9 @@
             </span>
         </div>
     </header>
+    <div id="translation-model-status" class="session-model-status hidden" role="status"></div>
+    <div id="asr-notice" class="provider-notice hidden" role="status" aria-live="polite"></div>
+    <div id="connection-ownership-notice" class="provider-notice hidden" role="status" aria-live="polite"></div>
 
     <div id="recovery-notice" class="recovery-notice hidden">
         <div class="recovery-content">
@@ -47,6 +50,14 @@
         <button id="enable-audio-btn" class="btn-primary" style="font-size:13px;padding:6px 12px">Enable audio</button>
     </div>
 
+    <div id="speech-backlog" class="speech-backlog hidden">
+        <span id="speech-backlog-status" role="status" aria-live="polite"></span>
+        <button id="catch-up-btn" class="btn-secondary" type="button"
+                aria-describedby="catch-up-help">Catch up</button>
+        <small id="catch-up-help">Stop current speech and skip pending clips. Captions stay available.</small>
+    </div>
+    <p id="catch-up-notice" class="speech-catch-up-notice" role="status" aria-live="polite"></p>
+
     <div id="provider-notice" class="provider-notice hidden" role="status">
         <div class="provider-notice-content">
             <strong id="provider-notice-title"></strong>
@@ -69,10 +80,27 @@
             <span class="idle-lang-label">Target language</span>
             <select id="idle-target-select" class="drawer-select" aria-label="Target language"></select>
         </div>
+        <div class="idle-lang-row">
+            <label class="idle-lang-label" for="idle-model-select">Translation model</label>
+            <select id="idle-model-select" class="drawer-select" aria-label="Translation model" aria-describedby="idle-model-help"></select>
+        </div>
+        <small id="idle-model-help" class="model-help hidden"></small>
+        <div class="idle-lang-row">
+            <label class="idle-lang-label" for="idle-thinking-select">Translation thinking</label>
+            <select id="idle-thinking-select" class="drawer-select" aria-label="Translation thinking"></select>
+        </div>
         <label class="captions-only-option" for="captions-only-idle">
             <input id="captions-only-idle" type="checkbox">
             <span><strong>Captions only</strong><small>Keep spoken readback off. Remember this choice on this browser.</small></span>
         </label>
+        <details id="caption-profile-editor" class="glossary-editor hidden">
+            <summary>Session profile (optional)</summary>
+            <label for="caption-timing">Caption timing</label>
+            <select id="caption-timing" class="drawer-select" aria-describedby="caption-profile-help"></select>
+            <small id="caption-profile-help" role="status"></small>
+            <label class="glossary-remember"><input id="caption-profile-remember" type="checkbox"> Remember language and timing on this browser</label>
+            <button id="caption-profile-clear" class="btn-secondary" type="button">Forget saved profile</button>
+        </details>
         <details id="glossary-editor" class="glossary-editor">
             <summary>Terminology (optional)</summary>
             <label for="glossary-terms">Preferred terms for <span id="glossary-language">English</span></label>
@@ -86,6 +114,7 @@
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
 
+    <p id="caption-profile-session-note" class="glossary-session-note hidden" role="status"></p>
     <p id="glossary-session-note" class="glossary-session-note hidden" role="status"></p>
     <div id="source-partial" class="source-partial"></div>
 
@@ -129,8 +158,23 @@
             <span id="drawer-lang-error" class="export-error hidden"></span>
         </div>
         <div class="drawer-section">
+            <label class="drawer-label" for="drawer-model-select">Translation model</label>
+            <select id="drawer-model-select" class="drawer-select" aria-describedby="drawer-model-help drawer-model-error"></select>
+            <small id="drawer-model-help">Changes apply to future captions. Requests already underway keep their model.</small>
+            <span id="drawer-model-error" class="export-error hidden" role="alert"></span>
+        </div>
+        <div class="drawer-section">
+            <label class="drawer-label" for="drawer-thinking-select">Translation thinking</label>
+            <select id="drawer-thinking-select" class="drawer-select" aria-describedby="drawer-thinking-help drawer-model-error"></select>
+            <small id="drawer-thinking-help">Mistral Vibe calls this Max and sends High to the API. Experimental: it may delay captions or use more tokens. Changes apply to future captions.</small>
+        </div>
+        <div class="drawer-section">
             <span class="drawer-label">Source Text</span>
             <button id="source-toggle" class="btn-icon active" title="Toggle source text" aria-label="Toggle source text">Src</button>
+        </div>
+        <div class="drawer-section">
+            <button id="session-terms" class="btn-secondary" type="button">Session terminology</button>
+            <small>Inspect, edit, remove or undo terms while listening.</small>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:0">
         <div class="drawer-section">
@@ -168,6 +212,28 @@
         </div>
     </div>
 
+    <dialog id="term-dialog" aria-labelledby="term-title" aria-describedby="term-help">
+        <h2 id="term-title">Correct a term</h2>
+        <p id="term-help">Save for future captions. Original captions stay unchanged. Changes and original results remain in your private export.</p>
+        <p id="term-caption" class="term-caption"></p>
+        <p id="term-version" role="status"></p>
+        <div id="term-list"></div>
+        <form id="term-form">
+            <label for="term-kind">Correction type</label>
+            <select id="term-kind"><option value="target">Preferred translation</option><option value="source">Misheard source term</option></select>
+            <label for="term-source">Source term</label>
+            <input id="term-source" maxlength="160" required autocomplete="off">
+            <label for="term-preferred">Correct term or preferred rendering</label>
+            <input id="term-preferred" maxlength="160" required autocomplete="off">
+            <p id="term-error" class="export-error hidden" role="alert"></p>
+            <div class="modal-actions">
+                <button id="term-save" class="btn-primary" type="submit">Save for future captions</button>
+                <button id="term-undo" class="btn-secondary" type="button">Undo last change</button>
+                <button id="term-close" class="btn-secondary" type="button">Close</button>
+            </div>
+        </form>
+    </dialog>
+    <script src="/pcm-player.js"></script>
     <script src="/app.js" defer></script>
 </body>
 </html>

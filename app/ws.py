@@ -12,11 +12,17 @@ from typing import TYPE_CHECKING, Any
 import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 
+from app import terminology
 from app.config import settings
 from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
+from app.profiles import resolve_profile
 from app.state import RecoveryNotice, SessionManager
+from app.translation_models import (
+    validate_reasoning_effort,
+    validate_translation_model,
+)
 from app.tts import VOICE_MAP
 
 if TYPE_CHECKING:
@@ -32,6 +38,8 @@ _COALESCIBLE_EVENT_TYPES = frozenset({"source_partial", "elapsed", "readiness"})
 _CRITICAL_EVENT_TYPES = frozenset(
     {
         "caption",
+        "terminology_updated",
+        "terminology_error",
         "error",
         "export_result",
         "provider_temporarily_unavailable",
@@ -40,8 +48,14 @@ _CRITICAL_EVENT_TYPES = frozenset(
         "recovered",
         "session_snapshot",
         "status",
+        "asr_state",
+        "finish_input_complete",
+        "connection_lifecycle",
+        "translation_model_changed",
         "tts_error",
         "tts_skipped",
+        "tts_caught_up",
+        "tts_queue",
     }
 )
 
@@ -70,6 +84,9 @@ class _WsMetrics:
     dropped_events: int = 0
     coalesced_events: int = 0
     critical_drops: int = 0
+    connections_admitted: int = 0
+    connections_rejected: int = 0
+    connections_closed: int = 0
 
 
 _ws_metrics = _WsMetrics()
@@ -225,28 +242,87 @@ def _enqueue_outbound(
 manager: SessionManager | None = None
 start_pipeline: Callable[[], Any] | None = None
 stop_pipeline: Callable[[], Any] | None = None
+finish_input: Callable[[], Any] | None = None
 poller: ReadinessPoller | None = None
 
-_active_ws: WebSocket | None = None
+@dataclass(eq=False)
+class _ClientConnection:
+    websocket: WebSocket
+    connection_id: str
+    closed: bool = False
+    close_reason: str = "transport_closed"
+
+
+_active_connection: _ClientConnection | None = None
+_connection_counter: int = 0
+OWNER_CONFLICT_CODE = 4409
+OWNER_CONFLICT_REASON = "owner_active"
+_LIFECYCLE_STATES = frozenset({"admitted", "rejected", "closed"})
+_LIFECYCLE_REASONS = frozenset({
+    "owner_admitted", "owner_active", "transport_closed", "writer_failed",
+    "handler_failed", "cancelled", "ownership_lost",
+})
+
+
+def _lifecycle(connection: _ClientConnection, state: str, reason: str) -> dict[str, str]:
+    """Only generated connection IDs and fixed enums reach lifecycle telemetry."""
+    if state not in _LIFECYCLE_STATES or reason not in _LIFECYCLE_REASONS:
+        raise ValueError("invalid connection lifecycle")
+    data = {"connection_id": connection.connection_id, "state": state, "reason": reason}
+    logger.info("WebSocket lifecycle: connection_id=%s state=%s reason=%s",
+                connection.connection_id, state, reason)
+    return data
+
+
+def _owns_connection(connection: _ClientConnection) -> bool:
+    return _active_connection is connection and not connection.closed
 
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Main WebSocket handler at /ws."""
-    global _active_ws  # noqa: PLW0603
+    global _active_connection, _connection_counter  # noqa: PLW0603
 
     assert manager is not None, "SessionManager not wired"
 
     await websocket.accept()
+
+    _connection_counter += 1
+    connection = _ClientConnection(websocket, f"conn-{_connection_counter:06d}")
+    # Claim synchronously: there is no await between check and reservation.
+    # Attached owners are protected in idle as well as during active capture.
+    if _active_connection is not None:
+        _ws_metrics.connections_rejected += 1
+        lifecycle = _lifecycle(connection, "rejected", OWNER_CONFLICT_REASON)
+        try:
+            await websocket.send_bytes(orjson.dumps({"type": "connection_lifecycle", **lifecycle}))
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=OWNER_CONFLICT_CODE, reason=OWNER_CONFLICT_REASON)
+        except Exception:
+            pass
+        return
+    _active_connection = connection
+    _ws_metrics.connections_admitted += 1
 
     obs = _OutboundObsState()
     outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]] = asyncio.Queue(
         maxsize=settings.ws_outbound_queue_max
     )
 
+    # A broken send/close need not produce reader EOF. Supervise that failure
+    # separately so a dead transport cannot reserve ownership indefinitely.
+    writer_failed = asyncio.Event()
+    reader_task: asyncio.Task | None = None
+    failure_task: asyncio.Task | None = None
+
     async def _writer() -> None:
         try:
             while True:
                 event, enqueue_time = await outbound_queue.get()
+                if not _owns_connection(connection):
+                    outbound_queue.task_done()
+                    return
                 lag = time.monotonic() - enqueue_time
                 _ws_metrics.last_lag_secs = lag
                 now = time.monotonic()
@@ -278,7 +354,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 try:
                     await websocket.send_bytes(orjson.dumps(event))
                 except Exception:
-                    logger.debug("Failed to send event %s", event.get("type"))
+                    connection.closed = True
+                    connection.close_reason = "writer_failed"
+                    writer_failed.set()
+                    try:
+                        await websocket.close(code=1011, reason="writer_failed")
+                    except Exception:
+                        pass
+                    return
                 finally:
                     outbound_queue.task_done()
                     depth = outbound_queue.qsize()
@@ -289,86 +372,126 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     writer_task = asyncio.create_task(_writer())
 
-    # If there's already a connection, replace it silently
-    if _active_ws is not None:
-        manager.note_browser_replacement()
-        if manager._tts_dispatcher is not None:
-            manager._tts_dispatcher.set_audio_unlocked(False)
-        try:
-            await _active_ws.close(code=1000, reason="replaced")
-        except Exception:
-            pass
-
-    _active_ws = websocket
-
     def event_listener(event: dict[str, Any]) -> None:
-        _enqueue_outbound(outbound_queue, event, obs)
-
-    manager.on_client_connect()
-    manager.subscribe(event_listener)
+        if _owns_connection(connection):
+            if event.get("type") == "session_snapshot":
+                event = {**event, "connection_lifecycle": {
+                    "connection_id": connection.connection_id,
+                    "state": "admitted", "reason": "owner_admitted",
+                }}
+            _enqueue_outbound(outbound_queue, event, obs)
 
     try:
+        manager.on_client_connect()
+        manager.subscribe(event_listener)
+        lifecycle = _lifecycle(connection, "admitted", "owner_admitted")
+        _enqueue_outbound(outbound_queue, {"type": "connection_lifecycle", **lifecycle}, obs)
         snapshot = manager.get_snapshot()
         _enqueue_outbound(
-            outbound_queue, {"type": "session_snapshot", **snapshot}, obs
+            outbound_queue, {"type": "session_snapshot", **snapshot, "connection_lifecycle": lifecycle}, obs
         )
 
-        async for raw in websocket.iter_text():
-            try:
-                msg = orjson.loads(raw)
-            except Exception:
-                logger.warning("Invalid JSON from client: chars=%d", len(raw))
-                continue
+        async def _read_commands() -> None:
+            async for raw in websocket.iter_text():
+                if not _owns_connection(connection):
+                    connection.close_reason = "ownership_lost" if not connection.closed else connection.close_reason
+                    break
+                try:
+                    msg = orjson.loads(raw)
+                except Exception:
+                    logger.warning("Invalid JSON from client: chars=%d", len(raw))
+                    continue
 
-            msg_type = msg.get("type")
+                if not isinstance(msg, dict):
+                    logger.warning("Invalid WebSocket command shape")
+                    continue
 
-            if msg_type == "start":
-                await _handle_start(msg, outbound_queue, obs)
-            elif msg_type == "set_target_language":
-                await _handle_set_target_language(msg, outbound_queue, obs)
-            elif msg_type == "stop":
-                await _handle_stop()
-            elif msg_type == "export":
-                _handle_export()
-            elif msg_type == "new_session":
-                await _handle_new_session(msg, outbound_queue, obs)
-            elif msg_type == "retry_recovery":
-                await _handle_retry_recovery()
-            elif msg_type == "discard_recovery":
-                await _handle_discard_recovery()
-            elif msg_type == "tts_audio_enabled":
-                await _handle_tts_audio_enabled()
-            elif msg_type == "tts_mute":
-                await _handle_tts_mute(msg, outbound_queue, obs)
-            elif msg_type == "tts_replay":
-                await _handle_tts_replay(msg, outbound_queue, obs)
-            elif msg_type == "render_ack":
-                _handle_latency_ack(msg, "render")
-            elif msg_type == "tts_playback_start":
-                _handle_latency_ack(msg, "tts_start")
-            elif msg_type == "tts_playback_complete":
-                _handle_latency_ack(msg, "tts_complete")
-            else:
-                logger.debug("Unknown WS message type: %s", msg_type)
+                msg_type = msg.get("type")
+                if not isinstance(msg_type, str):
+                    logger.warning("Invalid WebSocket command type")
+                    continue
+
+                if msg_type == "start":
+                    await _handle_start(msg, outbound_queue, obs)
+                elif msg_type == "set_target_language":
+                    await _handle_set_target_language(msg, outbound_queue, obs)
+                elif msg_type == "set_translation_model":
+                    await _handle_set_translation_model(msg, outbound_queue, obs)
+                elif msg_type in {"update_terminology", "undo_terminology"}:
+                    _handle_terminology(msg, outbound_queue, obs)
+                elif msg_type == "stop":
+                    await _handle_stop()
+                elif msg_type == "finish_input":
+                    await _handle_finish_input(outbound_queue, obs)
+                elif msg_type == "export":
+                    _handle_export()
+                elif msg_type == "new_session":
+                    await _handle_new_session(msg, outbound_queue, obs)
+                elif msg_type == "retry_recovery":
+                    await _handle_retry_recovery()
+                elif msg_type == "discard_recovery":
+                    await _handle_discard_recovery()
+                elif msg_type == "tts_audio_enabled":
+                    await _handle_tts_audio_enabled()
+                elif msg_type == "tts_mute":
+                    await _handle_tts_mute(msg, outbound_queue, obs)
+                elif msg_type == "tts_catch_up":
+                    _handle_tts_catch_up(msg)
+                elif msg_type == "tts_replay":
+                    await _handle_tts_replay(msg, outbound_queue, obs)
+                elif msg_type == "render_ack":
+                    _handle_latency_ack(msg, "render")
+                elif msg_type == "tts_chunk_received":
+                    _handle_tts_browser_ack(msg)
+                elif msg_type in {"tts_playback_error", "tts_playback_stats"}:
+                    _handle_tts_browser_ack(msg)
+                elif msg_type == "tts_playback_start":
+                    _handle_latency_ack(msg, "tts_start")
+                elif msg_type == "tts_playback_complete":
+                    _handle_latency_ack(msg, "tts_complete")
+                else:
+                    logger.debug("Unknown WebSocket command")
+
+        reader_task = asyncio.create_task(_read_commands())
+        failure_task = asyncio.create_task(writer_failed.wait())
+        done, _pending = await asyncio.wait(
+            [reader_task, failure_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        if failure_task not in done and not writer_failed.is_set():
+            await reader_task
 
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
+        pass
+    except asyncio.CancelledError:
+        if not writer_failed.is_set():
+            connection.close_reason = "cancelled"
+        raise
     except RuntimeError as exc:
         if _is_expected_websocket_disconnect(exc):
-            logger.info("WebSocket client disconnected")
+            pass
         else:
-            logger.exception("WebSocket handler error")
-    except Exception:
-        logger.exception("WebSocket handler error")
+            connection.close_reason = "handler_failed"
+            logger.error("WebSocket handler failed: error_type=%s", type(exc).__name__)
+    except Exception as exc:
+        connection.close_reason = "handler_failed"
+        logger.error("WebSocket handler failed: error_type=%s", type(exc).__name__)
     finally:
-        writer_task.cancel()
-        await asyncio.gather(writer_task, return_exceptions=True)
+        connection.closed = True
         manager.unsubscribe(event_listener)
-        if _active_ws is websocket:
+        if _active_connection is connection:
             if manager._tts_dispatcher is not None:
                 manager._tts_dispatcher.set_audio_unlocked(False)
             manager.on_client_disconnect()
-            _active_ws = None
+            _active_connection = None
+            _ws_metrics.connections_closed += 1
+        _lifecycle(connection, "closed", connection.close_reason)
+        # All owner effects happen before this await. Old writer cleanup cannot
+        # relock TTS or disconnect a new owner admitted during cancellation.
+        tasks = [task for task in (reader_task, failure_task, writer_task) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _handle_tts_audio_enabled() -> None:
@@ -396,6 +519,23 @@ async def _handle_tts_mute(
     if manager._tts_dispatcher is None:
         return
     manager._tts_dispatcher.set_muted(muted)
+
+
+def _handle_tts_catch_up(msg: dict) -> None:
+    assert manager is not None
+    dispatcher = manager._tts_dispatcher
+    epoch = msg.get("tts_epoch")
+    if dispatcher is None or manager.session.status not in {
+        "listening", "reconnecting", "session_ended"
+    }:
+        return
+    if not isinstance(epoch, int) or isinstance(epoch, bool):
+        return
+    if epoch != dispatcher._tts_epoch:
+        # A duplicate/stale request must not skip newly queued speech.
+        manager._emit("tts_queue", dispatcher.get_speech_state())
+        return
+    dispatcher.catch_up()
 
 
 async def _handle_tts_replay(
@@ -501,6 +641,25 @@ async def _handle_set_target_language(
     manager.set_target_language(language)
 
 
+async def _handle_set_translation_model(
+    msg: dict,
+    outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
+    obs: _OutboundObsState,
+) -> None:
+    assert manager is not None
+    try:
+        model = validate_translation_model(msg.get("model"), manager.config)
+        effort = validate_reasoning_effort(
+            msg.get("reasoning_effort", manager.session.translation_reasoning_effort or "default"),
+            model,
+        )
+        manager.set_translation_settings(model, effort)
+    except ValueError as exc:
+        _enqueue_outbound(
+            outbound_queue, {"type": "error", "message": str(exc)}, obs
+        )
+
+
 async def _handle_start(
     msg: dict,
     outbound_queue: asyncio.Queue[tuple[dict[str, Any], float]],
@@ -555,19 +714,36 @@ async def _handle_start(
     language = target_language or manager.session.target_language
     try:
         glossary = parse_glossary(msg.get("glossary", []), language)
+        profile = resolve_profile(msg.get("caption_profile", "current"), manager.config)
+    except ValueError as exc:
+        _enqueue_outbound(
+            outbound_queue, {"type": "error", "message": str(exc)}, obs
+        )
+        return
+    try:
+        model = validate_translation_model(
+            msg.get("translation_model", manager.session.translation_model),
+            manager.config,
+        )
+        effort = validate_reasoning_effort(
+            msg.get("translation_reasoning_effort", "default"), model
+        )
     except ValueError as exc:
         _enqueue_outbound(
             outbound_queue, {"type": "error", "message": str(exc)}, obs
         )
         return
     manager.set_target_language(language)
-    manager.session.glossary = glossary
+    manager.set_translation_settings(model, effort)
+    manager.session.caption_profile = profile
+    terminology.initialize(manager.session, glossary)
 
     if start_pipeline is not None:
         try:
             if manager._tts_dispatcher is not None:
                 manager._tts_dispatcher.set_muted(tts_muted)
             await start_pipeline()
+            manager._emit("terminology_updated", terminology.state(manager.session))
         except Exception as exc:
             logger.error("Pipeline startup failed: error_type=%s", type(exc).__name__)
             _enqueue_outbound(
@@ -580,12 +756,38 @@ async def _handle_start(
             )
 
 
+def _handle_terminology(msg: dict, outbound_queue: asyncio.Queue, obs: _OutboundObsState) -> None:
+    assert manager is not None
+    try:
+        terminology.change(manager, msg, undo=msg.get("type") == "undo_terminology")
+    except ValueError as exc:
+        _enqueue_outbound(outbound_queue, {
+            "type": "terminology_error", "message": str(exc),
+            **terminology.state(manager.session),
+        }, obs)
+    except OSError:
+        _enqueue_outbound(outbound_queue, {
+            "type": "terminology_error", "message": "Terminology could not be saved. Try again.",
+            **terminology.state(manager.session),
+        }, obs)
+
+
 async def _handle_stop() -> None:
     assert manager is not None
     if stop_pipeline is not None:
         await stop_pipeline()
     if manager.session.status in ("listening", "reconnecting"):
         manager.set_status("session_ended")
+
+
+async def _handle_finish_input(outbound_queue: asyncio.Queue, obs: _OutboundObsState) -> None:
+    if finish_input is None:
+        _enqueue_outbound(outbound_queue, {"type": "error", "message": "Finishing input is unavailable"}, obs)
+        return
+    try:
+        await finish_input()
+    except ValueError:
+        _enqueue_outbound(outbound_queue, {"type": "error", "message": "Input can only finish after transcription is ready"}, obs)
 
 
 def _handle_export() -> None:
@@ -683,7 +885,33 @@ def _handle_latency_ack(msg: dict, kind: str) -> None:
         return
     if kind == "render":
         manager.observe_render_ack(seq)
-    elif kind == "tts_start":
-        manager.observe_tts_playback_start(seq)
-    elif kind == "tts_complete":
-        manager.observe_tts_playback_complete(seq)
+    elif kind in {"tts_start", "tts_complete"}:
+        dispatcher = getattr(manager, "_tts_dispatcher", None)
+        if dispatcher is not None:
+            epoch = msg.get("tts_epoch")
+            if not isinstance(epoch, int) or isinstance(epoch, bool):
+                return
+            clip_id = msg.get("clip_id")
+            if clip_id is not None and (not isinstance(clip_id, int) or isinstance(clip_id, bool)):
+                return
+            if not dispatcher.acknowledge_playback(
+                seq, epoch, complete=kind == "tts_complete", clip_id=clip_id,
+            ):
+                return
+        if kind == "tts_start":
+            manager.observe_tts_playback_start(seq)
+        else:
+            manager.observe_tts_playback_complete(seq)
+
+
+def _handle_tts_browser_ack(msg: dict) -> None:
+    assert manager is not None
+    dispatcher = getattr(manager, "_tts_dispatcher", None)
+    if dispatcher is None:
+        return
+    if msg.get("type") == "tts_chunk_received":
+        values = [msg.get(key) for key in ("seq", "tts_epoch", "clip_id")]
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            dispatcher.acknowledge_first_chunk(*values)
+    else:
+        dispatcher.acknowledge_browser_result(msg)
