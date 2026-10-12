@@ -324,6 +324,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if msg_type == "start":
                 await _handle_start(msg, outbound_queue, obs)
+            elif msg_type == "refresh_input_devices":
+                if manager.input_devices is not None:
+                    devices = await asyncio.to_thread(manager.input_devices.refresh)
+                    _enqueue_outbound(outbound_queue, {"type": "input_devices", **devices}, obs)
             elif msg_type == "set_target_language":
                 await _handle_set_target_language(msg, outbound_queue, obs)
             elif msg_type == "stop":
@@ -560,6 +564,13 @@ async def _handle_start(
             outbound_queue, {"type": "error", "message": str(exc)}, obs
         )
         return
+    if manager.input_devices is not None:
+        try:
+            manager.input_devices.choose(msg.get("input_device", "default"))
+            manager.input_devices.capture_device()
+        except ValueError as exc:
+            _enqueue_outbound(outbound_queue, {"type": "error", "message": str(exc)}, obs)
+            return
     manager.set_target_language(language)
     manager.session.glossary = glossary
 
@@ -568,6 +579,8 @@ async def _handle_start(
             if manager._tts_dispatcher is not None:
                 manager._tts_dispatcher.set_muted(tts_muted)
             await start_pipeline()
+            if manager.input_devices is not None:
+                manager._emit("input_devices", manager.input_devices.snapshot())
         except Exception as exc:
             logger.error("Pipeline startup failed: error_type=%s", type(exc).__name__)
             _enqueue_outbound(

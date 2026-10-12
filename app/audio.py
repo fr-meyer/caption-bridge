@@ -21,8 +21,10 @@ class AudioCapture:
         max_queue_chunks: int = 50,
         metrics_callback: Callable[[int, int], None] | None = None,
         onset_callback: Callable[[bytes], None] | None = None,
+        device: int | None = None,
     ) -> None:
         self._sample_rate = sample_rate
+        self._device = device
         self._loop = loop
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(
             maxsize=max_queue_chunks
@@ -88,6 +90,7 @@ class AudioCapture:
     def start(self) -> None:
         blocksize = self._sample_rate // 10  # ~100 ms chunks
         self._stream = sd.RawInputStream(
+            device=self._device,
             samplerate=self._sample_rate,
             channels=1,
             dtype="int16",

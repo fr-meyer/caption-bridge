@@ -110,6 +110,10 @@ sessions and page reloads. Turning it off allows spoken readback again; the brow
 still requires **Enable audio** before speech can play. The speaker button provides
 a temporary mute when captions-only mode is off.
 
+Choose native microphone input before Start and browser spoken output in the idle
+panel or Settings. Browser output selection depends on API/permission support;
+[the audio-device guide](docs/audio-devices.md) explains defaults and fallback.
+
 ## Development
 
 For auto-reload during development:

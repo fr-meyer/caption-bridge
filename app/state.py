@@ -182,6 +182,7 @@ class SessionManager:
         self.config = config
         self.session = self._new_session()
         self.checks: list[ReadinessCheck] = []
+        self.input_devices = None  # Runtime-only metadata; excluded from Session/journal/export.
         self.recovery_notice: RecoveryNotice | None = None
         self.recovery_state: RecoveryState | None = None
         self._listeners: list[EventListener] = []
@@ -556,6 +557,8 @@ class SessionManager:
             self._reliability.set_export_outcome("discarded")
             self._write_reliability_record()
         self.session = self._new_session()
+        if self.input_devices is not None:
+            self.input_devices.reset()
         self._journal = None
         self._reliability = ReliabilityTracker()
         if emit_snapshot:
@@ -571,6 +574,8 @@ class SessionManager:
 
         s = self.session
         return {
+            "session_id": s.id,
+            "input_devices": self.input_devices.snapshot() if self.input_devices else None,
             "status": s.status,
             "checks": [c.model_dump(mode="json") for c in self.checks],
             "source_partial": s.source_partial,

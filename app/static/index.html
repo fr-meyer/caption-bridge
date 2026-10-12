@@ -82,6 +82,16 @@
             <button id="glossary-clear" class="btn-secondary" type="button">Clear terms</button>
             <p id="glossary-error" class="export-error hidden" role="alert"></p>
         </details>
+        <div class="drawer-section audio-device-controls">
+            <label class="drawer-label" for="idle-input-device">Microphone input</label>
+            <select id="idle-input-device" class="drawer-select" data-native-input></select>
+            <label class="drawer-label" for="idle-output-device">Spoken readback output</label>
+            <select id="idle-output-device" class="drawer-select" data-browser-output></select>
+            <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
+            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button></div>
+            <small>Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small data-audio-device-status role="status"></small>
+        </div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
@@ -128,6 +138,16 @@
             <select id="drawer-target-select" class="drawer-select" aria-label="Target language"></select>
             <span id="drawer-lang-error" class="export-error hidden"></span>
         </div>
+        <div class="drawer-section audio-device-controls">
+            <label class="drawer-label" for="drawer-input-device">Microphone input</label>
+            <select id="drawer-input-device" class="drawer-select" data-native-input></select>
+            <label class="drawer-label" for="drawer-output-device">Spoken readback output</label>
+            <select id="drawer-output-device" class="drawer-select" data-browser-output></select>
+            <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
+            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button></div>
+            <small>Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small data-audio-device-status role="status"></small>
+        </div>
         <div class="drawer-section">
             <span class="drawer-label">Source Text</span>
             <button id="source-toggle" class="btn-icon active" title="Toggle source text" aria-label="Toggle source text">Src</button>
@@ -168,6 +188,7 @@
         </div>
     </div>
 
+    <script src="/audio-devices.js" defer></script>
     <script src="/app.js" defer></script>
 </body>
 </html>

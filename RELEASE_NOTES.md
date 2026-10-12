@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- Draft local microphone-input and browser spoken-output selection with explicit
+  default/unsupported routing, transient device metadata and input locked until
+  New Session. Idle permission readiness no longer opens a microphone stream.
+  Physical device acceptance remains pending; see [audio devices](docs/audio-devices.md).
+
 ## v0.4.0 - 2026-09-28
 
 - Add optional, bounded terminology preferences before Start, tied to a session

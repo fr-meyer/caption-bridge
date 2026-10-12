@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import platform
 
 import sounddevice as sd
 
@@ -46,28 +47,19 @@ def _check_mic_available() -> ReadinessCheck:
 
 
 def _check_mic_permission() -> ReadinessCheck:
-    """Try to open a short raw input stream to verify OS-level permission."""
+    """Check existing authorization without opening input before Start."""
+    if platform.system() != "Darwin":
+        return ReadinessCheck(name="Microphone Permission", key="mic_permission", ready=True,
+                              detail="Input access is checked when Start opens the microphone")
+    from app.audio_devices import microphone_authorization
+
     try:
-        stream = sd.RawInputStream(
-            samplerate=16000, channels=1, dtype="int16", blocksize=1600
-        )
-        stream.start()
-        stream.stop()
-        stream.close()
-        return ReadinessCheck(
-            name="Microphone Permission",
-            key="mic_permission",
-            ready=True,
-            detail="Ready",
-        )
-    except Exception as exc:
-        logger.debug("mic_permission check failed: %s", exc)
-        return ReadinessCheck(
-            name="Microphone Permission",
-            key="mic_permission",
-            ready=False,
-            detail=str(exc)[:120],
-        )
+        ready = microphone_authorization() == 3
+    except Exception:
+        ready = False
+    return ReadinessCheck(name="Microphone Permission", key="mic_permission", ready=ready,
+                          detail="Authorized; input opens on Start" if ready
+                          else "Existing microphone permission unavailable")
 
 
 class ReadinessPoller:

@@ -122,6 +122,16 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         )
     elif scenario == "glossary_idle":
         snapshot["available_target_languages"].append({"code": "fr", "label": "French"})
+    elif scenario in {"audio_devices", "audio_devices_active"}:
+        snapshot["session_id"] = "synthetic-device-session"
+        snapshot["input_devices"] = {
+            "available": [{"id": "native-a", "label": "Synthetic input A"},
+                          {"id": "native-b", "label": "Synthetic input B"}],
+            "selected": "native-b" if scenario == "audio_devices_active" else "default",
+            "active_label": "Synthetic input B" if scenario == "audio_devices_active" else None,
+        }
+        if scenario == "audio_devices_active":
+            snapshot.update(status="listening", started_at=_STARTED_AT)
     elif scenario != "idle_ready":
         raise ValueError(f"unsupported browser scenario: {scenario}")
     return snapshot
@@ -215,6 +225,10 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/audio-devices.js")
+    async def audio_devices_js() -> FileResponse:
+        return FileResponse(STATIC_DIR / "audio-devices.js", media_type="text/javascript")
+
     @app.get("/app.js")
     async def app_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "app.js", media_type="text/javascript")
@@ -236,6 +250,8 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                 harness.record(message)
                 message_type = message.get("type")
                 if message_type == "start":
+                    if harness.scenario == "audio_devices":
+                        harness.scenario = "audio_devices_active"
                     await websocket.send_bytes(
                         orjson.dumps(
                             {

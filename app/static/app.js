@@ -15,6 +15,11 @@
     ]);
 
     let audioContext = null;
+    let audioDevices = null;
+    function getAudioContext() {
+        if (!audioContext) audioContext = new AudioContext();
+        return audioContext;
+    }
     let ttsChunkBuffers = {};
     let ttsPlaybackQueue = [];
     let ttsActiveSourceNode = null;
@@ -214,6 +219,9 @@
 
     function handleMessage(msg) {
         switch (msg.type) {
+            case "input_devices":
+                if (audioDevices) audioDevices.inventory(msg);
+                break;
             case "session_snapshot":
                 handleSnapshot(msg);
                 break;
@@ -265,6 +273,10 @@
     }
 
     function handleSnapshot(msg) {
+        if (audioDevices) {
+            audioDevices.snapshot(msg.input_devices, msg.status, msg.session_id);
+            audioDevices.refresh();
+        }
         appState.status = msg.status;
         if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
             appState.providerOutage = null;
@@ -364,6 +376,7 @@
 
     function handleStatus(msg) {
         appState.status = msg.status;
+        if (audioDevices) audioDevices.updateStatus(msg.status);
 
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
@@ -684,7 +697,7 @@
         }
 
         if (!audioContext) {
-            audioContext = new AudioContext();
+            getAudioContext();
         }
         var ab = audioContext.createBuffer(1, float32.length, 24000);
         ab.getChannelData(0).set(float32);
@@ -720,7 +733,7 @@
             return;
         }
         if (!audioContext) {
-            audioContext = new AudioContext();
+            getAudioContext();
         }
 
         var queued = ttsPlaybackQueue.shift();
@@ -896,6 +909,7 @@
     }
 
     function fullRender() {
+        if (audioDevices) audioDevices.updateStatus(appState.status);
         render();
         rebuildCaptionLog();
     }
@@ -1382,7 +1396,7 @@
 
         els.enableAudioBtn.addEventListener("click", function () {
             if (!audioContext) {
-                audioContext = new AudioContext();
+                getAudioContext();
             }
             audioContext.resume().then(function () {
                 appState.ttsAudioUnlocked = true;
@@ -1595,7 +1609,8 @@
             entries: entries, target_language: appState.targetLanguage
         } : null;
         send({ type: "start", target_language: appState.targetLanguage,
-            tts_muted: appState.ttsMuted, glossary: entries });
+            tts_muted: appState.ttsMuted, glossary: entries,
+            input_device: audioDevices ? audioDevices.input : "default" });
     }
 
     // ===== 3.8 Session Preferences Reset =====
@@ -1685,6 +1700,19 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
+        audioDevices = new window.CaptionAudioDevices({
+            send: send,
+            context: getAudioContext,
+            canRoute: () => typeof AudioContext !== "undefined" &&
+                typeof AudioContext.prototype.setSinkId === "function",
+            unavailable: () => {
+                appState.ttsMuted = true;
+                clearTtsPlaybackState();
+                send({type: "tts_mute", muted: true});
+                renderTtsControls();
+            },
+        });
+        audioDevices.mount(document);
         loadCaptionsOnlyPreference();
         loadGlossaryPreference();
         loadBuildIdentity();
