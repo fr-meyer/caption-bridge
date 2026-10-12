@@ -1,17 +1,37 @@
 # Release notes
 
-## Unreleased
+## v0.5.0 candidate — unreleased
 
-- Draft target-language/caption-timing profiles with explicit browser opt-in,
-  fixed session/reconnect timing and export/recovery transparency. Current settings
-  preserve operator defaults; live timing/quality/cost acceptance and release
-  promotion remain pending. See the [profile guide](docs/session-profiles.md).
-- Add an experimental translation thinking selector (Provider default or High) before Start and in Settings. Capture each caption’s requested level and output-token limit in private export/recovery metadata; live changes affect future captions.
-- Prepare GLM 5.3 with a 4096-token output allowance and a configurable 20-second request deadline after observed empty answers and 10-second timeouts. Small and Medium retain their existing limits. Reject token-limited partial answers without retry or speech, and keep a truncated quality repair from replacing the original flagged caption. Private export/recovery retains the last reported finish reason and usage. Representative live reliability remains unproved.
+This proposed minor release prepares the source integrated by PR #82 into
+`dev` at `a5e81b6bcc8a3eecec88d38283c3099a38c79257`. Published `main` remains
+v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
 
-- Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Medium is the draft startup choice pending representative GLM acceptance (#68); Small and GLM remain selectable, and explicit environment overrides still win. GLM is labeled experimental with a reliability note; the current translation choice stays visible while listening.
-- Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 remains a public-preview model. Different private speech sessions support the current reliability decision but do not rank translation accuracy. Comparative live-caption quality remains to be evaluated.
-- Add the [translation model guide](docs/translation-model-selection.md) and an offline-by-default, capped public-text comparison runner.
+- Select translation models and caption timing profiles before Start or in
+  Settings. Medium is the startup default; explicit environment overrides win.
+  Model/thinking changes affect future captions and preserve in-flight requests.
+  GLM 5.3 and Large 4 remain optional previews without a live-reliability claim.
+- Preserve requested/reported model, thinking, token cap, usage, profile and
+  terminology revisions in private exports/recovery. Reject token-limited
+  partial answers and truncated repairs rather than speaking incomplete text.
+- Show unfinished speech and provide Catch up and Replay. Per-clip identities
+  and epochs isolate replay failures and stale acknowledgements. Progressive
+  playback remains opt-in; buffered playback and normal speed remain defaults.
+- Confirm or undo session terminology changes while preserving original ASR
+  text and earlier captions. Export analysis avoids counting identical snapshots
+  twice and retains the session's configuration scope.
+- Show connection loss, protect an attached browser's ownership, verify ASR
+  readiness/settings, accept final-only text safely and drain admitted capture
+  tails before input completion. Diagnostics remain content-free.
+
+Exact merged-dev CI passed Python 3.11/3.13 and Chromium. The attended October 12
+public Korean ASR → Medium → English buffered-speech case passed with a clear
+human hearing verdict. The earlier public prerecorded Catch up/Replay result
+retains its playback-only scope. These results do not complete the broader Mac
+release checklist or establish GLM/Large 4, physical Windows, VoiceOver or
+long-session reliability. No repeated audio session was used for this preparation.
+
+The proposed immediate rollback is immutable v0.4.0. Publication, any Mac-local
+model override change and activation remain separate from this local candidate.
 
 ## v0.4.0 - 2026-09-28
 
