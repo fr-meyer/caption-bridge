@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import sys
 import warnings
@@ -77,7 +79,34 @@ _SUMMABLE_KEYS = (
 )
 
 
-def print_run_summary(path: Path, data: dict) -> dict | None:
+def collect_transcripts(roots: list[Path]) -> tuple[list[tuple[Path, dict]], int]:
+    """Read each export once, skipping exact repeated snapshots without deleting files."""
+    paths: set[Path] = set()
+    for root in roots:
+        if root.is_file():
+            paths.add(root.resolve())
+        else:
+            paths.update(path.resolve() for path in root.rglob("transcript.json"))
+
+    loaded: list[tuple[Path, dict]] = []
+    seen: set[bytes] = set()
+    duplicates = 0
+    for path in sorted(paths):
+        data = load_transcript(path)
+        if data is None:
+            continue
+        digest = hashlib.sha256(
+            json.dumps(data, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()
+        ).digest()
+        if digest in seen:
+            duplicates += 1
+            continue
+        seen.add(digest)
+        loaded.append((path, data))
+    return loaded, duplicates
+
+
+def print_run_summary(path: Path, data: dict, *, include_segments: bool = True) -> dict | None:
     quality_summary = data["quality_summary"]
 
     print(f"\n=== Run: {path} ===")
@@ -86,6 +115,9 @@ def print_run_summary(path: Path, data: dict) -> dict | None:
     for key in ("initial_reason_counts", "final_reason_counts"):
         counts = quality_summary.get(key) or {}
         print(f"  {key}: {json.dumps(counts, sort_keys=True)}")
+
+    if not include_segments:
+        return quality_summary
 
     print(
         f"\n{'seq':>4}  {'status':<12}  {'initial':<7}  {'final':<7}  "
@@ -116,21 +148,22 @@ def print_run_summary(path: Path, data: dict) -> dict | None:
     return quality_summary
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("roots", nargs="*", type=Path, default=[Path("runs")])
+    parser.add_argument("--summary-only", action="store_true", help="Omit per-caption metadata rows")
+    args = parser.parse_args(argv)
     aggregate = dict.fromkeys(_SUMMABLE_KEYS, 0)
     initial_reason_counts: Counter[str] = Counter()
     final_reason_counts: Counter[str] = Counter()
     repair_latency_max: int | None = None
 
-    paths = sorted(Path("runs").glob("**/transcript.json"))
-    if not paths:
-        print("No transcript.json files found under runs/", file=sys.stderr)
+    transcripts, duplicates = collect_transcripts(args.roots)
+    if not transcripts:
+        print("No valid transcript.json files found in the supplied paths", file=sys.stderr)
 
-    for path in paths:
-        data = load_transcript(path)
-        if data is None:
-            continue
-        summary = print_run_summary(path, data)
+    for path, data in transcripts:
+        summary = print_run_summary(path, data, include_segments=not args.summary_only)
         if summary is None:
             continue
         for key in _SUMMABLE_KEYS:
@@ -149,6 +182,8 @@ def main() -> None:
     )
 
     print("\n=== Aggregate totals ===")
+    print(f"  unique_exports: {len(transcripts)}")
+    print(f"  duplicate_exports_skipped: {duplicates}")
     for key, value in aggregate.items():
         print(f"  {key}: {value}")
     print(f"  repair_latency_ms_average: {latency_average}")

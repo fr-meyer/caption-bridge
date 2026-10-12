@@ -11,8 +11,17 @@ import orjson
 
 from app.config import AppConfig
 from app.exporter import export_session
-from app.glossary import Glossary, parse_glossary
-from app.state import RecoveryNotice, RecoveryState, Segment, SegmentQuality, Session
+from app.glossary import Glossary, TerminologyRevision, parse_glossary
+from app.profiles import CaptionProfile
+from app.state import (
+    RecoveryNotice,
+    RecoveryState,
+    Segment,
+    SegmentQuality,
+    Session,
+    TranslationModelChange,
+)
+from app.terminology import restore_revision
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +44,24 @@ class SessionJournal:
     def record_session_started(self) -> None:
         self._write({"type": "session_started"})
 
+    def record_caption_profile(self, profile: CaptionProfile) -> None:
+        self._write({"type": "session_caption_profile", "caption_profile": profile.model_dump(mode="json")})
+    def record_translation_model_start(
+        self, model: str, reasoning_effort: str | None = None
+    ) -> None:
+        self._write({
+            "type": "session_translation_model", "model": model,
+            "reasoning_effort": reasoning_effort,
+        })
+
+    def record_translation_model_change(self, change: TranslationModelChange) -> None:
+        self._write({
+            "type": "translation_model_changed",
+            "change": change.model_dump(mode="json"),
+        })
+
     def record_glossary(self, glossary: Glossary) -> None:
-        self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json")})
+        self._write({"type": "session_glossary", "glossary": glossary.model_dump(mode="json", exclude_defaults=True)})
 
     def record_segment_created(self, seg: Segment) -> None:
         self._write({
@@ -46,7 +71,23 @@ class SessionJournal:
             "segment_kind": seg.segment_kind,
             "created_at": seg.created_at.isoformat(),
             "target_language": seg.target_language,
+            "translation_model": seg.translation_model,
+            "translation_model_revision": seg.translation_model_revision,
+            "translation_reasoning_effort": seg.translation_reasoning_effort,
+            "translation_max_tokens": seg.translation_max_tokens,
+            "translation_prompt_version": seg.translation_prompt_version,
         })
+
+    def record_terminology(self, revision: TerminologyRevision, undo_versions: list[int]) -> None:
+        self._write({"type": "terminology_revision",
+                     "revision": revision.model_dump(mode="json"), "undo_versions": undo_versions})
+
+    def record_translation_requested(self, seg: Segment) -> None:
+        self._write({"type": "translation_requested", "seq": seg.seq,
+                     "effective_source_text": seg.effective_source_text,
+                     "terminology_version": seg.terminology_version,
+                     "terminology_status": seg.terminology_status,
+                     "terminology": seg.terminology.model_dump(mode="json") if seg.terminology else None})
 
     def record_translation_updated(self, seg: Segment) -> None:
         self._write({
@@ -55,6 +96,11 @@ class SessionJournal:
             "translated_text": seg.translated_text,
             "target_language": seg.target_language,
             "translation_status": seg.translation_status,
+            "translated_at": seg.translated_at.isoformat() if seg.translated_at else None,
+            "translation_model_resolved": seg.translation_model_resolved,
+            "translation_prompt_tokens": seg.translation_prompt_tokens,
+            "translation_completion_tokens": seg.translation_completion_tokens,
+            "translation_finish_reason": seg.translation_finish_reason,
             "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
             "failure_reason": seg.failure_reason,
         })
@@ -111,16 +157,65 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
             if rec_type == "session_started":
                 session.started_at = datetime.fromisoformat(rec["ts"])
 
+            elif rec_type == "session_caption_profile":
+                try:
+                    session.caption_profile = CaptionProfile.model_validate(rec.get("caption_profile"))
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery caption profile metadata — ignored")
+            elif rec_type == "session_translation_model":
+                model = rec.get("model")
+                if isinstance(model, str) and model:
+                    session.translation_model = model
+                effort = rec.get("reasoning_effort")
+                if effort in {"default", "high"}:
+                    session.translation_reasoning_effort = effort
+
+            elif rec_type == "translation_model_changed":
+                try:
+                    change = TranslationModelChange.model_validate(rec.get("change"))
+                    if change.revision > session.translation_model_revision:
+                        session.translation_model = change.model
+                        if change.reasoning_effort in {"default", "high"}:
+                            session.translation_reasoning_effort = change.reasoning_effort
+                        session.translation_model_revision = change.revision
+                        session.translation_model_changes.append(change)
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery translation model change — ignored")
+
             elif rec_type == "session_glossary":
                 value = rec.get("glossary")
                 try:
                     if not isinstance(value, dict) or set(value) != {"entries", "target_language"}:
                         raise ValueError("Invalid glossary record.")
                     session.glossary = parse_glossary(
-                        value["entries"], value["target_language"]
+                        value["entries"], value["target_language"], historical=True
                     )
                 except (ValueError, TypeError):
                     logger.warning("Invalid recovery glossary metadata — ignored")
+
+            elif rec_type == "terminology_revision":
+                try:
+                    restore_revision(session, rec.get("revision"), rec.get("undo_versions"))
+                except (ValueError, TypeError):
+                    logger.warning("Invalid recovery terminology metadata — ignored")
+
+            elif rec_type == "translation_requested":
+                seg = segments_by_seq.get(rec.get("seq"))
+                if seg is not None:
+                    try:
+                        metadata = Segment.model_validate({
+                            **seg.model_dump(),
+                            "effective_source_text": rec.get("effective_source_text"),
+                            "terminology_version": rec.get("terminology_version", 0),
+                            "terminology_status": rec.get("terminology_status", "empty"),
+                            "terminology": rec.get("terminology"),
+                        })
+                        seg.effective_source_text = metadata.effective_source_text
+                        seg.terminology_version = metadata.terminology_version
+                        seg.terminology_status = metadata.terminology_status
+                        seg.terminology = metadata.terminology
+                    except (ValueError, TypeError):
+                        logger.warning("Invalid recovery translation terminology — ignored")
 
             elif rec_type == "session_stopped":
                 session.ended_at = datetime.fromisoformat(rec["ts"])
@@ -133,6 +228,11 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     segment_kind=rec["segment_kind"],
                     created_at=datetime.fromisoformat(rec["created_at"]),
                     target_language=rec.get("target_language"),
+                    translation_model=rec.get("translation_model"),
+                    translation_model_revision=rec.get("translation_model_revision"),
+                    translation_reasoning_effort=rec.get("translation_reasoning_effort"),
+                    translation_max_tokens=rec.get("translation_max_tokens"),
+                    translation_prompt_version=rec.get("translation_prompt_version"),
                     translation_status="pending",
                 )
                 segments_by_seq[seg.seq] = seg
@@ -143,6 +243,18 @@ def run_recovery(config: AppConfig) -> RecoveryResult:
                     seg.translated_text = rec.get("translated_text")
                     seg.target_language = rec.get("target_language")
                     seg.translation_status = rec.get("translation_status", "pending")
+                    translated_at = rec.get("translated_at")
+                    try:
+                        seg.translated_at = (
+                            datetime.fromisoformat(translated_at) if translated_at is not None else None
+                        )
+                    except (ValueError, TypeError):
+                        seg.translated_at = None
+                        logger.warning("Invalid recovery translation timestamp — ignored")
+                    seg.translation_model_resolved = rec.get("translation_model_resolved")
+                    seg.translation_prompt_tokens = rec.get("translation_prompt_tokens")
+                    seg.translation_completion_tokens = rec.get("translation_completion_tokens")
+                    seg.translation_finish_reason = rec.get("translation_finish_reason")
                     quality_data = rec.get("quality")
                     if quality_data is not None and isinstance(quality_data, dict):
                         try:

@@ -13,9 +13,18 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import AppConfig
-from app.glossary import Glossary
+from app.glossary import Glossary, TerminologyRevision
 from app.languages import is_valid_target_language
+from app.pipeline_diagnostics import AsrProtocolDiagnostics, validate_protocol_snapshot
+from app.profiles import CaptionProfile, available_profiles, resolve_profile
 from app.reliability import ReliabilityTracker, write_session_record
+from app.translation_models import (
+    TRANSLATION_PROMPT_VERSION,
+    available_translation_models,
+    translation_output_limit,
+    validate_reasoning_effort,
+    validate_translation_model,
+)
 
 if TYPE_CHECKING:
     from app.journal import SessionJournal
@@ -91,10 +100,33 @@ class Segment(BaseModel):
     segment_kind: SegmentKind
     translated_text: str | None = None
     target_language: str | None = None
+    translation_model: str | None = None
+    translation_model_revision: int | None = None
+    translation_reasoning_effort: str | None = None
+    translation_max_tokens: int | None = None
+    translation_prompt_version: str | None = None
+    translation_model_resolved: str | None = None
+    translation_prompt_tokens: int | None = None
+    translation_completion_tokens: int | None = None
+    translation_finish_reason: str | None = None
     translation_status: TranslationStatus = "pending"
     translated_at: datetime | None = None
     quality: SegmentQuality | None = None
     failure_reason: str | None = None
+    effective_source_text: str | None = None
+    terminology_version: int = Field(default=0, ge=0, le=101, strict=True)
+    terminology: Glossary | None = None
+    terminology_status: Literal["active", "empty", "paused"] = "empty"
+
+
+class TranslationModelChange(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    changed_at: datetime = Field(default_factory=_utcnow)
+    model: str
+    reasoning_effort: str | None = None
+    revision: int
+    applies_from_seq: int
 
 
 class ReadinessCheck(BaseModel):
@@ -140,7 +172,15 @@ class Session(BaseModel):
     journal_path: str | None = None
     source_language: str = "auto"
     target_language: str = "en"
+    translation_model: str | None = None
+    translation_model_revision: int = 0
+    translation_reasoning_effort: str | None = None
+    translation_model_changes: list[TranslationModelChange] = Field(default_factory=list)
     glossary: Glossary | None = None
+    caption_profile: CaptionProfile | None = None
+    terminology_version: int = Field(default=0, ge=0, le=101, strict=True)
+    terminology_history: list[TerminologyRevision] = Field(default_factory=list, max_length=101)
+    terminology_undo_versions: list[int] = Field(default_factory=list, max_length=100)
     client_connected: bool = False
     disconnect_grace_until: datetime | None = None
 
@@ -214,6 +254,9 @@ class SessionManager:
         return Session(
             source_language=self.config.default_source_language,
             target_language=target,
+            caption_profile=resolve_profile("current", self.config),
+            translation_model=self.config.translate_model,
+            translation_reasoning_effort="default",
         )
 
     # -- event system -------------------------------------------------------
@@ -241,6 +284,35 @@ class SessionManager:
 
     def record_audio_queue(self, depth: int, dropped: int) -> None:
         self._reliability.record_audio_queue(depth, dropped)
+
+    def record_audio_ingress(self, metrics: dict[str, int]) -> None:
+        self._reliability.pipeline.record_capture(metrics)
+
+    def set_capture_active(self, active: bool) -> None:
+        self._reliability.pipeline.capture_active = active
+        self._emit_pipeline_state()
+
+    def set_asr_state(self, state: str, reason: str = "none") -> None:
+        self._reliability.pipeline.set_state(state, reason)
+        self._emit_pipeline_state()
+
+    def _emit_pipeline_state(self) -> None:
+        self._emit("asr_state", self._reliability.pipeline.snapshot())
+
+    def record_asr_sent(self, byte_count: int) -> None:
+        self._reliability.pipeline.record_sent(byte_count)
+
+    def record_asr_event(self, event_type: str, characters: int = 0) -> None:
+        self._reliability.pipeline.record_event(event_type, characters)
+
+    def record_asr_error(self) -> None:
+        self._reliability.pipeline.record_error()
+
+    def record_asr_protocol(self, data: dict[str, Any]) -> None:
+        if not validate_protocol_snapshot(data):
+            raise ValueError("invalid ASR protocol metrics")
+        self._reliability.pipeline.protocol = AsrProtocolDiagnostics(**data)
+        self._emit_pipeline_state()
 
     def record_websocket_queue(
         self,
@@ -307,6 +379,14 @@ class SessionManager:
             source_text=text,
             segment_kind="complete",
             target_language=self.session.target_language,
+            translation_model=self.session.translation_model,
+            translation_model_revision=self.session.translation_model_revision,
+            translation_reasoning_effort=self.session.translation_reasoning_effort,
+            translation_max_tokens=translation_output_limit(
+                self.session.translation_model or self.config.translate_model,
+                self.session.translation_reasoning_effort or "default",
+            ),
+            translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -325,6 +405,14 @@ class SessionManager:
             source_text=text,
             segment_kind="reconnect_fragment",
             target_language=self.session.target_language,
+            translation_model=self.session.translation_model,
+            translation_model_revision=self.session.translation_model_revision,
+            translation_reasoning_effort=self.session.translation_reasoning_effort,
+            translation_max_tokens=translation_output_limit(
+                self.session.translation_model or self.config.translate_model,
+                self.session.translation_reasoning_effort or "default",
+            ),
+            translation_prompt_version=TRANSLATION_PROMPT_VERSION,
         )
         self.session.next_seq += 1
         self.session.segments.append(seg)
@@ -408,7 +496,9 @@ class SessionManager:
             self._journal.record_translation_updated(seg)
         self._try_deliver()
 
-    def mark_translation_failed(self, seq: int, session_id: str) -> None:
+    def mark_translation_failed(
+        self, seq: int, session_id: str, reason: str | None = None
+    ) -> None:
         if session_id != self.session.id:
             logger.warning(
                 "mark_translation_failed: ignoring stale callback for seq #%d "
@@ -421,6 +511,8 @@ class SessionManager:
             logger.warning("mark_translation_failed: segment #%d not found", seq)
             return
         seg.translation_status = "failed"
+        if reason is not None:
+            seg.failure_reason = reason
         seg.translated_at = _utcnow()
         if self._journal is not None:
             self._journal.record_translation_updated(seg)
@@ -450,9 +542,15 @@ class SessionManager:
                     "source_text": seg.source_text,
                     "translated_text": seg.translated_text,
                     "target_language": seg.target_language,
+                    "translation_model": seg.translation_model,
+                    "translation_model_revision": seg.translation_model_revision,
+                    "translation_reasoning_effort": seg.translation_reasoning_effort,
+                    "translation_max_tokens": seg.translation_max_tokens,
                     "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
                     "segment_kind": seg.segment_kind,
+                    "terminology_version": seg.terminology_version,
+                    "terminology_status": seg.terminology_status,
                 },
             )
             self._reliability.latency.observe_render_dispatch(seg.seq)
@@ -484,8 +582,17 @@ class SessionManager:
             self.session.started_at = _utcnow()
             if self._journal is not None:
                 self._journal.record_session_started()
+                if self.session.caption_profile is not None:
+                    self._journal.record_caption_profile(self.session.caption_profile)
+                if self.session.translation_model is not None:
+                    self._journal.record_translation_model_start(
+                        self.session.translation_model,
+                        self.session.translation_reasoning_effort,
+                    )
                 if self.session.glossary is not None:
                     self._journal.record_glossary(self.session.glossary)
+                for revision in self.session.terminology_history:
+                    self._journal.record_terminology(revision, [])
 
         if status == "listening":
             self._start_elapsed_ticker()
@@ -571,8 +678,13 @@ class SessionManager:
 
         s = self.session
         return {
+            "session_id": s.id,
             "status": s.status,
+            "pipeline_diagnostics": self._reliability.pipeline.snapshot(),
             "checks": [c.model_dump(mode="json") for c in self.checks],
+            "tts_epoch": self._tts_dispatcher._tts_epoch if self._tts_dispatcher else 0,
+            "tts_streaming_playback": self.config.tts_streaming_playback,
+            "tts_queue": self._tts_dispatcher.get_speech_state() if self._tts_dispatcher else None,
             "source_partial": s.source_partial,
             "segments": [seg.model_dump(mode="json") for seg in s.segments],
             "exported": s.exported,
@@ -589,7 +701,19 @@ class SessionManager:
             ),
             "source_language": s.source_language,
             "target_language": s.target_language,
+            "translation_model": s.translation_model,
+            "translation_model_revision": s.translation_model_revision,
+            "translation_reasoning_effort": s.translation_reasoning_effort,
+            "translation_model_changes": [
+                change.model_dump(mode="json") for change in s.translation_model_changes
+            ],
+            "available_translation_models": available_translation_models(self.config),
             "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
+            "caption_profile": s.caption_profile.model_dump(mode="json") if s.caption_profile else None,
+            "available_caption_profiles": available_profiles(self.config),
+            "terminology_version": s.terminology_version,
+            "terminology_can_undo": bool(s.terminology_undo_versions),
+            "terminology_changes": max(0, len(s.terminology_history) - 1),
             "available_target_languages": get_available_target_languages(),
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "runtime_metrics": {
@@ -606,6 +730,37 @@ class SessionManager:
     def set_target_language(self, language: str) -> None:
         self.session.target_language = language
         logger.info("Target language set to %s", language)
+
+    def set_translation_model(self, raw: object) -> None:
+        self.set_translation_settings(
+            raw, self.session.translation_reasoning_effort or "default"
+        )
+
+    def set_translation_settings(self, raw_model: object, raw_effort: object) -> None:
+        model = validate_translation_model(raw_model, self.config)
+        effort = validate_reasoning_effort(raw_effort, model)
+        if self.session.status == "session_ended":
+            raise ValueError("Start a new session before choosing translation settings.")
+        if model == self.session.translation_model and effort == self.session.translation_reasoning_effort:
+            return
+        if self.session.started_at is not None:
+            self.session.translation_model_revision += 1
+            change = TranslationModelChange(
+                model=model, reasoning_effort=effort,
+                revision=self.session.translation_model_revision,
+                applies_from_seq=self.session.next_seq,
+            )
+            self.session.translation_model_changes.append(change)
+            if self._journal is not None:
+                self._journal.record_translation_model_change(change)
+        self.session.translation_model = model
+        self.session.translation_reasoning_effort = effort
+        self._emit("translation_model_changed", {
+            "model": model,
+            "reasoning_effort": effort,
+            "revision": self.session.translation_model_revision,
+            "applies_from_seq": self.session.next_seq,
+        })
 
     # -- elapsed ticker -----------------------------------------------------
 

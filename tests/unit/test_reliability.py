@@ -139,6 +139,8 @@ def test_tracker_reduces_events_to_content_free_aggregates() -> None:
         "retries": 1,
         "skipped": 1,
         "failures": 1,
+        "catch_up_actions": 0,
+        "catch_up_skipped": 0,
     }
     forbidden = {
         "text",

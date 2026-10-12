@@ -72,7 +72,9 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} python -m pytest -q
 
       - name: Check browser JavaScript
-        run: node --check app/static/app.js
+        run: |
+          node --check app/static/app.js
+          node --check app/static/pcm-player.js
 
   browser-e2e:
     runs-on: ubuntu-latest

@@ -1,5 +1,18 @@
 # Release notes
 
+## Unreleased
+
+- Draft target-language/caption-timing profiles with explicit browser opt-in,
+  fixed session/reconnect timing and export/recovery transparency. Current settings
+  preserve operator defaults; live timing/quality/cost acceptance and release
+  promotion remain pending. See the [profile guide](docs/session-profiles.md).
+- Add an experimental translation thinking selector (Provider default or High) before Start and in Settings. Capture each caption’s requested level and output-token limit in private export/recovery metadata; live changes affect future captions.
+- Prepare GLM 5.3 with a 4096-token output allowance and a configurable 20-second request deadline after observed empty answers and 10-second timeouts. Small and Medium retain their existing limits. Reject token-limited partial answers without retry or speech, and keep a truncated quality repair from replacing the original flagged caption. Private export/recovery retains the last reported finish reason and usage. Representative live reliability remains unproved.
+
+- Add a text-translation model selector before Start and in Settings. Live changes apply to future segments while in-flight translations retain their original model. Medium is the draft startup choice pending representative GLM acceptance (#68); Small and GLM remain selectable, and explicit environment overrides still win. GLM is labeled experimental with a reliability note; the current translation choice stays visible while listening.
+- Keep selected and provider-reported model IDs, model-change history, and reported token usage in private transcript exports and recovery journals for later quality analysis. GLM 5.3 remains a public-preview model. Different private speech sessions support the current reliability decision but do not rank translation accuracy. Comparative live-caption quality remains to be evaluated.
+- Add the [translation model guide](docs/translation-model-selection.md) and an offline-by-default, capped public-text comparison runner.
+
 ## v0.4.0 - 2026-09-28
 
 - Add optional, bounded terminology preferences before Start, tied to a session
