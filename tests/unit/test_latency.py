@@ -14,6 +14,7 @@ from app.latency import (
     validate_latency_snapshot,
 )
 from app.reliability import (
+    SCHEMA_VERSION,
     ReliabilityTracker,
     load_history,
     validate_session_record,
@@ -144,7 +145,7 @@ def test_sequence_state_is_bounded() -> None:
 
 def test_current_record_keeps_loading_legacy_history(tmp_path) -> None:
     current = _record()
-    assert current["schema_version"] == 4
+    assert current["schema_version"] == SCHEMA_VERSION
     assert validate_session_record(current)
     assert validate_latency_snapshot(current["latency"])
 
@@ -152,7 +153,10 @@ def test_current_record_keeps_loading_legacy_history(tmp_path) -> None:
     legacy_queues = {key: dict(value) for key, value in current["queues"].items()}
     legacy_queues["tts"].pop("catch_up_actions")
     legacy_queues["tts"].pop("catch_up_skipped")
-    v1 = {key: value for key, value in current.items() if key not in {"latency", "speech_playback"}}
+    v1 = {
+        key: value for key, value in current.items()
+        if key not in {"latency", "speech_playback", "pipeline"}
+    }
     v1["schema_version"] = 1
     v1["queues"] = legacy_queues
     assert validate_session_record(v1)
@@ -164,7 +168,7 @@ def test_current_record_keeps_loading_legacy_history(tmp_path) -> None:
     )
     sessions, _soaks, skipped = load_history(root)
     assert skipped == 0
-    assert {item["schema_version"] for item in sessions} == {1, 4}
+    assert {item["schema_version"] for item in sessions} == {1, SCHEMA_VERSION}
 
 
 def test_session_record_still_strips_private_payloads() -> None:

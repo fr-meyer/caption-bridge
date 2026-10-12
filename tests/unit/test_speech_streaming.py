@@ -89,6 +89,7 @@ def test_browser_stats_are_bounded_idempotent_private_and_history_compatible() -
     for version in (1, 2, 3):
         old = deepcopy(record)
         old.pop("speech_playback")
+        old.pop("pipeline")
         old["schema_version"] = version
         if version < 3:
             old["queues"]["tts"].pop("catch_up_actions")
