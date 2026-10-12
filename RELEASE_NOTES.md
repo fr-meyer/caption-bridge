@@ -22,6 +22,9 @@ v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
 - Show connection loss, protect an attached browser's ownership, verify ASR
   readiness/settings, accept final-only text safely and drain admitted capture
   tails before input completion. Diagnostics remain content-free.
+- Update the development/test dependency `urllib3` to 2.8.0 for the reported
+  proxy-TLS, Deflate-loop and chunk-size buffering fixes. The production
+  dependency closure and application behavior remain unchanged.
 
 Exact merged-dev CI passed Python 3.11/3.13 and Chromium. The attended October 12
 public Korean ASR → Medium → English buffered-speech case passed with a clear

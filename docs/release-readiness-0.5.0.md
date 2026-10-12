@@ -22,11 +22,16 @@ release, installed-app update or authorization to start microphones/providers.
 - P1.4 is closed by issue #35. Two-hour endurance, physical Windows, VoiceOver
   and second-operator onboarding are separate follow-ups for the owner Mac CLI scope.
 
-This preparation changes only the package version in `pyproject.toml`, the
+The version preparation changed the package version in `pyproject.toml`, the
 virtual project entry in `uv.lock`, `PACKAGE_VERSION` in `app/identity.py` and
-release documentation. Identity display changes; capture, provider, translation,
-speech and session behavior do not. The prior acceptance keeps its original
-runtime identity; source comparisons establish which unchanged behavior carries.
+release documentation. The subsequent isolated repair updates the dev-only
+`pytest-base-url` → `requests` → `urllib3` dependency from 2.7.0 to 2.8.0.
+The fresh audit found three distinct issues represented by six alias records;
+the repaired Apple Silicon/Python 3.11 catalog reports no known findings.
+Full validation and the remaining audit selectors are recorded separately.
+Identity display changes; capture, provider, translation, speech and session
+behavior do not. The prior acceptance keeps its original runtime identity;
+source comparisons establish which unchanged behavior carries.
 
 ## Work that does not need another audio session
 
