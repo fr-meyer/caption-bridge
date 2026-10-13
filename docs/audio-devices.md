@@ -7,8 +7,13 @@ path (16 kHz by default). Format validation uses the same configured sample rate
 as capture, including before reconnect.
 Input stays fixed during listening and reconnect; use New Session to choose
 another microphone. Listing devices does not capture audio. macOS idle readiness
-reads existing authorization without opening input; actual device access is
-checked when Start opens the stream. Other platforms defer the permission/open
+reads existing authorization without opening input. Mac Start requires microphone
+permission already granted for the launcher; an undetermined, denied, restricted
+or unverifiable authorization blocks Start. This feature does not initiate a first
+grant or change device permissions. First-grant setup is separate; an unlisted
+launcher cannot be granted access merely by toggling a missing Settings entry.
+For an authorized launcher, actual device access is checked when Start opens the
+stream. Other platforms defer the permission/open
 check to Start. This does not add physical Windows support.
 
 **Spoken readback output** belongs to the browser's shared Web Audio context.
