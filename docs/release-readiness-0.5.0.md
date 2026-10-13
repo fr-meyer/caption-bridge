@@ -19,6 +19,9 @@ release, installed-app update or authorization to start microphones/providers.
 - The October 7 prerecorded playback result proves clear playback, Catch up
   stopping and Replay restarting in its narrower scope. `app/tts.py` and
   `app/static/pcm-player.js` remain byte-identical to that candidate.
+- The [October 13 owner Mac record](acceptance/mac-release-2026-10-13.md)
+  completes the planned listening/lifecycle cases on exact source `080ee7aa`;
+  this documentation successor preserves its application tree unchanged.
 - P1.4 is closed by issue #35. Two-hour endurance, physical Windows, VoiceOver
   and second-operator onboarding are separate follow-ups for the owner Mac CLI scope.
 
@@ -48,38 +51,38 @@ source comparisons establish which unchanged behavior carries.
   prior value privately and change it only under the later activation scope.
   Never copy API keys or environment contents into this record.
 
-## Concrete remaining attended cases
+## Completed attended cases and retained scope
 
-The [Mac checklist](mac-acceptance.md) applies before `dev` → `main` reliability
-promotion. Its broad physical checks remain unperformed for this candidate:
+The [October 13 owner Mac record](acceptance/mac-release-2026-10-13.md)
+consolidates two separately approved windows: ordinary controller startup,
+connective/ending/negation/number/terminology cases, Medium default and High,
+actual Settings, browser replacement/audio relock, mid-clip mute/unmute/Replay,
+Small → Medium future-caption provenance, Stop/export, New Session defaults
+and retained results. The initial helper timeout remains in its historical
+record; the narrow follow-up completes its missing caption/speech cases.
+No uninterrupted live run or endurance result is inferred by adding windows.
 
-1. Ordinary supported controller startup/readiness and loopback ownership;
-   pre-Start default/explicit override behavior and New Session reset.
-2. Public Korean connective pause/continuation, a clear polite ending,
-   negation/numbers and representative terminology. Judge source response,
-   readable target and latency separately. The already-passed dark-matter
-   sentence and English hearing verdict do not need another demonstration.
-3. Settings changes during listening, future-caption provenance and private
-   export metadata; browser refresh with one capture pipeline and audio relock.
-   Optional preview models must stay experimental rather than forcing a new
-   provider comparison to validate Medium.
-4. Mute/unmute and Replay while live captions continue, followed by Stop/Export,
-   New Session and the repeated supported controller start/status/stop cycle.
-   Earlier playback-only success does not establish this live interaction.
-5. Console/log privacy checks. Controlled network interruption can be deferred
-   with its reason recorded; do not disrupt Mac-wide networking by default.
+Controlled network interruption is deferred because Mac-wide disruption and
+extra retries were outside the agreed public-fixture session. Windows,
+VoiceOver/second operator, endurance and preview-model comparisons remain
+separate follow-ups for the supported owner Mac CLI scope. Buffered playback
+and normal speech speed were used; opt-in progressive playback has automated
+coverage without a new physical claim.
 
-Native microphone/output judgment and any required provider-backed physical
-cases need the operator's attended Mac. Model/profile/provenance/epoch mechanics
-already have deterministic coverage; do not repeat that coverage as an audio test.
+Application bytes and the locked package catalog remain identical to the
+accepted `080ee7aa31ad5bb4ade26e1a695c4d9286983bb1` candidate. Reuse its live,
+source-review, 459-test GCP and ten-selector dependency-audit evidence. Hosted
+CI at merged dev `a5e81b6` passed all three jobs, including 51 Chromium cases;
+it supports unchanged behavior and is not hosted CI for this successor.
+After publication require exact-head Python 3.11/3.13 and browser CI, plus
+review of this sanitized documentation delta. No extra audio session is needed.
 
 ## Later approval and publication sequence
 
-No piecemeal device or provider approval is requested by this preparation.
-When the owner chooses to finish release acceptance, present one concrete
-session covering only the uncovered public-fixture/lifecycle cases, its ambient
-microphone transmission, existing devices and cleanup. Resolve device readiness
-once at the start and keep main promotion/activation explicit in the selected scope.
+The planned listening checks are complete and the operator is released from
+attendance. Publication, main promotion and installed activation need their
+own scope. Keep private transcripts, screenshots, test harnesses and detailed
+run evidence local; publish only this content-free acceptance summary.
 
 After the preparation is reviewed and its applicable checks pass, publish its
 feature PR into `dev` under the repository workflow, then prepare a separate

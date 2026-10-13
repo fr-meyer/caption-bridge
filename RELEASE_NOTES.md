@@ -26,12 +26,21 @@ v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
   proxy-TLS, Deflate-loop and chunk-size buffering fixes. The production
   dependency closure and application behavior remain unchanged.
 
-Exact merged-dev CI passed Python 3.11/3.13 and Chromium. The attended October 12
-public Korean ASR → Medium → English buffered-speech case passed with a clear
-human hearing verdict. The earlier public prerecorded Catch up/Replay result
-retains its playback-only scope. These results do not complete the broader Mac
-release checklist or establish GLM/Large 4, physical Windows, VoiceOver or
-long-session reliability. No repeated audio session was used for this preparation.
+Exact merged-dev CI passed Python 3.11/3.13 and Chromium. The
+[October 13 owner Mac acceptance](docs/acceptance/mac-release-2026-10-13.md)
+completed the planned ordinary startup, public Korean caption cases,
+Medium/default and High, actual controls, Small → Medium future-caption change,
+Stop/export/reset and retained-results checks. Clear English hearing was
+confirmed. A test-helper restart timeout was diagnosed offline and its missing
+cases passed in a separately approved narrow follow-up; the first window is
+not rewritten as an uninterrupted successful run. Private run evidence stays
+local. Controlled network interruption was deferred with its reason recorded.
+
+These results establish the attended owner Mac cases, without a GLM/Large 4,
+physical Windows, VoiceOver, progressive-playback listening or long-session
+reliability claim. This documentation update changes no accepted application
+bytes and requires no repeated audio test. Exact publication-head CI and review
+remain required before release promotion.
 
 The proposed immediate rollback is immutable v0.4.0. Publication, any Mac-local
 model override change and activation remain separate from this local candidate.
