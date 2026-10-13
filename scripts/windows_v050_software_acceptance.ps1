@@ -42,17 +42,20 @@ function Stop-OwnedProcessTree {
     param([System.Diagnostics.Process]$Process)
 
     if ($null -eq $Process) {
-        return
+        return $true
     }
     try {
         if (-not $Process.HasExited) {
             # Use the started Process object instead of reopening a possibly reused PID.
             $Process.Kill($true)
-            $Process.WaitForExit(5000) | Out-Null
+            if (-not $Process.WaitForExit(5000)) {
+                return $false
+            }
         }
+        return $Process.HasExited
     }
     catch {
-        # The final listener check is the authoritative teardown gate.
+        return $false
     }
 }
 
@@ -427,8 +430,12 @@ catch {
     $failureStage = $currentStage
 }
 finally {
-    Stop-OwnedProcessTree -Process $browser
-    Stop-OwnedProcessTree -Process $server
+    if (-not (Stop-OwnedProcessTree -Process $browser)) {
+        $cleanupFailed = $true
+    }
+    if (-not (Stop-OwnedProcessTree -Process $server)) {
+        $cleanupFailed = $true
+    }
     Start-Sleep -Milliseconds 750
 
     if (@(Get-BoundListeners -Ports @($AppPort, $CdpPort)).Count -ne 0) {
