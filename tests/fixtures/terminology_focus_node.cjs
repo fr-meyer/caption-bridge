@@ -10,8 +10,7 @@ function slice(start, end) {
     assert(a >= 0 && b > a, "production function boundaries");
     return source.slice(a, b);
 }
-const functions = slice("    function canEditTerms()", "    function restoreTerminologyState(") +
-    slice("    function openTermEditor(entry)", "    function saveCaptionTerm()");
+const functions = slice("    function canEditTerms()", "    function parseGlossaryText(");
 function model() {
     const context = vm.createContext({});
     vm.runInContext(`
@@ -21,7 +20,9 @@ function model() {
                 this.tagName=tag.toUpperCase(); this.children=[]; this.parentElement=null;
                 this.isConnected=false; this.disabled=false; this.hidden=false; this.inert=false;
                 this.dataset={}; this.attributes={}; this.listeners={}; this.value=''; this.textContent='';
-                this.classList={add(){},remove(){}};
+                const classes=new Set();
+                this.classList={add(name){classes.add(name);},remove(name){classes.delete(name);},
+                    contains(name){return classes.has(name);}};
             }
             attach(connected) { this.isConnected=connected;this.children.forEach(el=>el.attach(connected)); }
             appendChild(el) { this.children.push(el);el.parentElement=this;el.attach(this.isConnected); }
@@ -59,6 +60,7 @@ function model() {
         document.body.appendChild(els.statusLabel);
         ['termList','termVersion','termSource','termPreferred','termKind','termCaption','termError',
          'termSave','termUndo','termClose'].forEach(name=>els.termDialog.appendChild(els[name]));
+        els.termError.classList.add('hidden');
         var window={getSelection:()=>({anchorNode:null})};
         var appState={status:'listening',targetLanguage:'en'};
         var terminologyState={sessionId:'synthetic-session',version:1,canUndo:true,changes:1};
@@ -66,6 +68,9 @@ function model() {
             {source:'alpha',preferred:'A',kind:'target'}, {source:'beta',preferred:'B',kind:'source'}]};
         var termPending=false,termContext={language:'en',version:1},modalReturnFocus=new WeakMap();
         var sent=[];function send(msg) { sent.push(msg); }
+        function renderGlossary() { renderTermEditor(); }
+        function termEvent(type,message) { return {type,message,session_id:'synthetic-session',
+            terminology_version:1,terminology_can_undo:true,terminology_changes:1,glossary:activeGlossary}; }
         function opener() { var el=new Element('button');document.body.appendChild(el);el.focus();return el; }
     ` + functions, context);
     return context;
@@ -132,6 +137,25 @@ for (const state of ["available", "disabled", "hidden", "detached", "inert"]) {
     const c = model();run(c, "renderTermEditor();");
     assert.equal(run(c, "els.termList.children[0].children[1].getAttribute('aria-label')"), "Edit term: alpha");
     assert.equal(run(c, "els.termList.children[1].children[2].getAttribute('aria-label')"), "Remove term: beta"); tests++;
+}
+function showError(context, kind) {
+    if (kind === "validation") run(context, "els.termSource.value='';els.termPreferred.value='valid';saveCaptionTerm();");
+    else run(context, "handleTerminology(termEvent('terminology_error','Synthetic server validation error'));");
+    assert.equal(run(context, "!els.termError.classList.contains('hidden') && els.termError.textContent.length>0"), true,
+        kind + " error remains available while active");
+}
+for (const kind of ["validation", "server"]) {
+    const c = model();run(c, "opener();openTermEditor(null);");showError(c, kind);
+    run(c, "els.termSource.value='gamma';els.termPreferred.value='G';saveCaptionTerm();" +
+        "handleTerminology(termEvent('terminology_updated'));renderTermEditor();");
+    assert.equal(run(c, "els.termError.classList.contains('hidden') && els.termError.textContent===''"), true,
+        kind + " error must not persist in a directly referenced accessible description after success"); tests++;
+}
+for (const kind of ["validation", "server"]) {
+    const c = model();run(c, "var trigger=opener();openTermEditor(null);");showError(c, kind);
+    run(c, "els.termDialog.close();restoreTermFocus();openTermEditor(null);");
+    assert.equal(run(c, "els.termError.classList.contains('hidden') && els.termError.textContent===''"), true,
+        kind + " error must not persist in a directly referenced accessible description after reopening"); tests++;
 }
 {
     const html = fs.readFileSync(path.join(root, "app/static/index.html"), "utf8");

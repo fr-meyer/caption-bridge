@@ -1867,6 +1867,7 @@
             els.termError.textContent = msg.message;
             els.termError.classList.remove("hidden");
         } else {
+            els.termError.textContent = "";
             els.termError.classList.add("hidden");
             els.termSource.value = "";
             els.termPreferred.value = "";
@@ -1888,6 +1889,7 @@
         els.termKind.value = "target";
         els.termCaption.textContent = entry ? "Original: " + entry.sourceText +
             "\nTranslation: " + (entry.translatedText || "unavailable") : "";
+        els.termError.textContent = "";
         els.termError.classList.add("hidden");
         renderTermEditor();
         modalReturnFocus.set(els.termDialog, document.activeElement);

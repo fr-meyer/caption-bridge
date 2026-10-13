@@ -18,6 +18,6 @@ def test_terminology_focus_with_synthetic_dom() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "tests": 14, "passed": True, "real_browser": False, "network": False,
+        "tests": 18, "passed": True, "real_browser": False, "network": False,
         "audio": False, "permissions": False, "storage": False,
     }
