@@ -51,7 +51,12 @@ def term_server(tmp_path):
     @app.websocket("/ws")
     async def websocket(connection: WebSocket):
         await connection.accept()
-        await connection.send_bytes(orjson.dumps({"type": "session_snapshot", **manager.get_snapshot()}))
+        await connection.send_bytes(orjson.dumps({
+            "type": "session_snapshot", **manager.get_snapshot(),
+            "connection_lifecycle": {
+                "connection_id": "conn-000001", "state": "admitted", "reason": "owner_admitted",
+            },
+        }))
         try:
             while True:
                 message = orjson.loads(await connection.receive_text())

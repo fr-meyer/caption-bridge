@@ -397,8 +397,10 @@
 
     function handleSnapshot(msg) {
         if (appState.ownershipBlocked) return;
-        if (msg.connection_lifecycle &&
-            (!handleConnectionLifecycle(msg.connection_lifecycle) || msg.connection_lifecycle.state !== "admitted")) return;
+        const lifecycle = msg.connection_lifecycle || appState.connectionLifecycle;
+        if (!lifecycle || (appState.connectionLifecycle &&
+            lifecycle.connection_id !== appState.connectionLifecycle.connection_id) ||
+            !handleConnectionLifecycle(lifecycle) || lifecycle.state !== "admitted") return;
         appState.connectionState = "connected";
         if (audioDevices) {
             audioDevices.snapshot(msg.input_devices, msg.status, msg.session_id);

@@ -54,6 +54,9 @@ def _snapshot(scenario: str) -> dict[str, Any]:
     ))
     snapshot: dict[str, Any] = {
         "type": "session_snapshot",
+        "connection_lifecycle": {
+            "connection_id": "conn-000001", "state": "admitted", "reason": "owner_admitted",
+        },
         "status": "idle_ready",
         "checks": [
             {
