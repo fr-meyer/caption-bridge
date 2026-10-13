@@ -5,6 +5,7 @@
         constructor(options) {
             this.options = options;
             this.media = options.media || navigator.mediaDevices;
+            this.permissions = options.permissions || root.navigator?.permissions;
             this.inputs = [];
             this.input = "default";
             this.activeInput = null;
@@ -18,6 +19,8 @@
             this.revision = 0;
             this.outputBusy = false;
             this.choosingOutput = false;
+            this.revealingOutputs = false;
+            this.permissionCleanupFailed = false;
             this.refreshPending = false;
             this.refreshRevision = 0;
         }
@@ -38,6 +41,9 @@
             document.querySelectorAll("[data-choose-audio-output]").forEach(button => {
                 button.hidden = !this.canRoute() || !this.media?.selectAudioOutput;
                 button.addEventListener("click", () => this.chooseOutput());
+            });
+            document.querySelectorAll("[data-reveal-audio-outputs]").forEach(button => {
+                button.addEventListener("click", () => this.revealOutputs());
             });
             this.media?.addEventListener?.("devicechange", () => this.refreshOutputs());
             this.render();
@@ -71,7 +77,7 @@
             this.render();
         }
         async refreshOutputs() {
-            if (this.outputBusy || this.choosingOutput) {
+            if (this.outputBusy || this.choosingOutput || this.revealingOutputs) {
                 this.refreshPending = true;
                 return;
             }
@@ -118,6 +124,43 @@
                 this.refreshPending = false;
                 this.render();
                 this.refreshOutputs();
+            }
+        }
+        async revealOutputs() {
+            if (!this.canRoute() || this.media?.selectAudioOutput || !this.media?.getUserMedia ||
+                this.outputBusy || this.choosingOutput || this.revealingOutputs || this.permissionCleanupFailed) return;
+            const session = this.session;
+            let stream = null;
+            this.revealingOutputs = true;
+            ++this.refreshRevision;
+            this.render();
+            try {
+                let granted = false;
+                try { granted = (await this.permissions?.query({name: "microphone"}))?.state === "granted"; }
+                catch (_) { /* Explicit click still permits a browser permission request. */ }
+                if (!granted) stream = await this.media.getUserMedia({audio: true, video: false});
+                if (session === this.session) this.notice = "";
+            } catch (_) {
+                if (session === this.session) this.notice = "Browser microphone permission was not granted. Additional outputs remain hidden.";
+            } finally {
+                // Never connect, inspect, record or transmit this temporary permission stream.
+                if (stream) {
+                    let tracks = [];
+                    try { tracks = stream.getTracks(); }
+                    catch (_) { this.permissionCleanupFailed = true; }
+                    for (const track of tracks) {
+                        try { track.stop(); }
+                        catch (_) { this.permissionCleanupFailed = true; }
+                        if (track.readyState !== "ended") this.permissionCleanupFailed = true;
+                    }
+                }
+                this.revealingOutputs = false;
+                ++this.refreshRevision;
+                this.refreshPending = false;
+                if (this.permissionCleanupFailed) {
+                    this.notice = "Temporary browser microphone closure was not confirmed. Close this page before continuing.";
+                } else if (session === this.session) await this.refreshOutputs();
+                this.render();
             }
         }
         async setOutput(id, label) {
@@ -184,7 +227,14 @@
                 const items = [{id: "", label: "System/browser default output"}, ...this.outputs.map((device, index) =>
                     ({id: device.deviceId, label: device.label || "Permitted audio output " + (index + 1)}))];
                 this.fill(select, items, this.output, "Selected output unavailable");
-                select.disabled = !this.canRoute() || this.outputBusy || this.choosingOutput;
+                select.disabled = !this.canRoute() || this.outputBusy || this.choosingOutput || this.revealingOutputs;
+            });
+            this.document.querySelectorAll("[data-reveal-audio-outputs]").forEach(button => {
+                button.hidden = !this.canRoute() || Boolean(this.media?.selectAudioOutput) || !this.media?.getUserMedia;
+                button.disabled = this.outputBusy || this.choosingOutput || this.revealingOutputs || this.permissionCleanupFailed;
+            });
+            this.document.querySelectorAll("[data-output-permission-hint]").forEach(element => {
+                element.hidden = !this.canRoute() || Boolean(this.media?.selectAudioOutput) || !this.media?.getUserMedia;
             });
             this.document.querySelectorAll("[data-audio-device-status]").forEach(element => {
                 const input = this.activeInput ? "Capture input: " + this.activeInput + ". " :

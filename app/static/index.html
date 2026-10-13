@@ -116,8 +116,10 @@
             <label class="drawer-label" for="idle-output-device">Spoken readback output</label>
             <select id="idle-output-device" class="drawer-select" data-browser-output></select>
             <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
-            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button></div>
+            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button>
+            <button class="btn-secondary" type="button" data-reveal-audio-outputs hidden>Show more outputs</button></div>
             <small>Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small data-output-permission-hint hidden>Show more outputs asks for browser microphone permission. Any temporary browser input is stopped immediately; its audio is never recorded or sent.</small>
             <small data-audio-device-status role="status"></small>
         </div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
@@ -173,8 +175,10 @@
             <label class="drawer-label" for="drawer-output-device">Spoken readback output</label>
             <select id="drawer-output-device" class="drawer-select" data-browser-output></select>
             <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
-            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button></div>
+            <button class="btn-secondary" type="button" data-choose-audio-output hidden>Choose speech output</button>
+            <button class="btn-secondary" type="button" data-reveal-audio-outputs hidden>Show more outputs</button></div>
             <small>Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small data-output-permission-hint hidden>Show more outputs asks for browser microphone permission. Any temporary browser input is stopped immediately; its audio is never recorded or sent.</small>
             <small data-audio-device-status role="status"></small>
         </div>
         <div class="drawer-section">

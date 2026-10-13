@@ -155,3 +155,94 @@ test("removal during a pending sink change is checked again after the transition
     assert.equal(muteCalls, 1);
     assert.equal(devices.outputUnavailable, true);
 });
+
+function discoveryFixture(state = "prompt") {
+    const f = fixture();
+    delete f.media.selectAudioOutput;
+    f.order = [];
+    f.devices.permissions = {query: async () => ({state})};
+    f.media.enumerateDevices = async () => {f.order.push("enumerate"); return f.outputs;};
+    f.tracks = [0, 1].map(index => ({readyState: "live", stop() {
+        f.order.push("stop-" + index); this.readyState = "ended";
+    }}));
+    f.media.getUserMedia = async constraints => {
+        f.order.push("permission");
+        assert.deepEqual(constraints, {audio: true, video: false});
+        return {getTracks: () => f.tracks};
+    };
+    return f;
+}
+
+test("explicit discovery closes every temporary track before enumerating without changing input or sink", async () => {
+    const f = discoveryFixture();
+    f.devices.input = "native-selection";
+    await f.devices.revealOutputs();
+    assert.deepEqual(f.order, ["permission", "stop-0", "stop-1", "enumerate"]);
+    assert.ok(f.tracks.every(track => track.readyState === "ended"));
+    assert.equal(f.devices.input, "native-selection");
+    assert.equal(f.devices.output, "");
+    assert.deepEqual(f.calls, []);
+});
+
+test("existing browser permission refreshes outputs without another microphone stream", async () => {
+    const f = discoveryFixture("granted");
+    f.media.getUserMedia = () => assert.fail("Already granted; must not open input");
+    await f.devices.revealOutputs();
+    assert.deepEqual(f.order, ["enumerate"]);
+    assert.equal(f.devices.outputs.length, 1);
+});
+
+test("permission denial keeps native choice and route, with no private error details", async () => {
+    const f = discoveryFixture();
+    f.devices.input = "native-selection";
+    f.devices.output = "synthetic-sink";
+    f.media.getUserMedia = async () => {throw Error("PRIVATE_PERMISSION_DETAIL");};
+    await f.devices.revealOutputs();
+    assert.equal(f.devices.input, "native-selection");
+    assert.equal(f.devices.output, "synthetic-sink");
+    assert.match(f.devices.notice, /not granted/);
+    assert.doesNotMatch(f.devices.notice, /PRIVATE/);
+    assert.deepEqual(f.calls, []);
+});
+
+test("pending explicit permission is single-flight and stale-session resolution still closes tracks", async () => {
+    const f = discoveryFixture();
+    const permission = deferred();
+    let requests = 0;
+    f.media.getUserMedia = () => {requests++; return permission.promise;};
+    f.devices.session = "older";
+    const older = f.devices.revealOutputs();
+    await flush();
+    await f.devices.revealOutputs();
+    assert.equal(requests, 1);
+    f.devices.session = "newer";
+    f.devices.input = "new-native-selection";
+    permission.resolve({getTracks: () => f.tracks});
+    await older;
+    assert.ok(f.tracks.every(track => track.readyState === "ended"));
+    assert.equal(f.devices.input, "new-native-selection");
+    assert.equal(f.devices.revealingOutputs, false);
+    assert.deepEqual(f.order, ["stop-0", "stop-1"]);
+});
+
+test("unconfirmed temporary input closure tries every track and prevents another request", async () => {
+    const f = discoveryFixture();
+    f.tracks[0].stop = () => {f.order.push("stop-failed"); throw Error("PRIVATE_STOP_DETAIL");};
+    await f.devices.revealOutputs();
+    assert.deepEqual(f.order, ["permission", "stop-failed", "stop-1"]);
+    assert.equal(f.tracks[1].readyState, "ended");
+    assert.equal(f.devices.permissionCleanupFailed, true);
+    assert.match(f.devices.notice, /Close this page/);
+    assert.doesNotMatch(f.devices.notice, /PRIVATE/);
+    await f.devices.revealOutputs();
+    assert.equal(f.order.filter(event => event === "permission").length, 1);
+});
+
+test("output-only chooser is preferred and ordinary refresh never requests browser input", async () => {
+    const f = fixture();
+    f.media.getUserMedia = () => assert.fail("Chooser/refresh must not open input");
+    await f.devices.revealOutputs();
+    await f.devices.refreshOutputs();
+    await f.devices.chooseOutput();
+    assert.equal(f.devices.output, "synthetic-sink");
+});

@@ -19,8 +19,21 @@ check to Start. This does not add physical Windows support.
 **Spoken readback output** belongs to the browser's shared Web Audio context.
 Choose an exposed output in the idle panel or Settings. A successful sink change
 applies to both live speech and replay. **Choose speech output**, when offered,
-opens the browser's output chooser only after a deliberate click. No browser
-microphone stream is opened to reveal device labels or grant speaker access.
+opens the browser's output chooser only after a deliberate click. On browsers with an output chooser, no browser microphone stream is opened.
+
+Chrome may expose only the default output while its site microphone permission
+is still Ask, even when the native Mac input is already authorized. **Show more
+outputs** is offered when output routing is supported but the browser lacks an
+output-only chooser. It requests browser microphone permission only after that
+explicit click. If permission is already granted, it just refreshes the list.
+Otherwise it immediately stops every track of the temporary permission stream
+before refreshing output choices. The stream is never connected to playback,
+inspected, recorded or sent to the server or a provider. Denial keeps the current
+route; unconfirmed track closure disables another request and asks the user to
+close the page. Native capture input and output selection are unchanged by this
+permission action. Browser permission and any Chrome OS permission prompt remain
+operator decisions; no permission is requested on load, Refresh, Start or Enable
+audio. This optional browser setup does not grant the native launcher access.
 
 Output APIs and device exposure vary by browser and permission state. When
 selection is unsupported, speech uses system/browser default output and the
@@ -79,3 +92,5 @@ API references: [native sounddevice metadata/format checks](https://python-sound
 [browser device exposure](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices),
 [AudioContext output routing](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/setSinkId),
 [explicit output chooser](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/selectAudioOutput).
+
+Chrome permission/exposure reference: [Chrome AudioContext output routing](https://developer.chrome.com/blog/audiocontext-setsinkid).
