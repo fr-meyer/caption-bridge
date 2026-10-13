@@ -24,6 +24,24 @@ pytestmark = pytest.mark.browser
 STATIC = Path(__file__).resolve().parents[1] / "app" / "static"
 
 
+@pytest.fixture(autouse=True)
+def fake_browser_media(page: Page) -> None:
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'mediaDevices', {value: {
+            enumerateDevices: async () => [], addEventListener() {},
+            getUserMedia() { throw Error('Real browser capture forbidden'); },
+        }});
+        window.AudioContext = class {
+            constructor() { throw Error('Real browser audio forbidden'); }
+            setSinkId() {}
+        };
+        const NativeSocket = window.WebSocket;
+        window.WebSocket = class extends NativeSocket {
+            constructor(...args) { super(...args); window.__termSocket = this; }
+        };
+    """)
+
+
 @pytest.fixture
 def term_server(tmp_path):
     config = AppConfig(_env_file=None, MISTRAL_TTS_ENABLED=False,
@@ -92,6 +110,9 @@ def term_server(tmp_path):
     server.should_exit = True
     thread.join(timeout=5)
     assert not thread.is_alive()
+    with socket.socket() as probe:
+        probe.settimeout(.2)
+        assert probe.connect_ex(("127.0.0.1", port)) != 0, "Synthetic listener must close"
 
 
 def open_caption(page: Page, url: str):
@@ -113,11 +134,11 @@ def test_caption_save_inspect_edit_remove_undo_and_focus_without_stopping(page: 
     expect(page.locator("#term-list")).to_contain_text("misheard → corrected (source correction)")
     expect(page.locator(".caption-translated")).to_have_text("Original translation.")
     expect(page.locator(".caption-terms-version")).to_have_text("Terms v0")
-    page.get_by_role("button", name="Edit", exact=True).click()
+    page.get_by_role("button", name="Edit term: misheard", exact=True).click()
     page.locator("#term-preferred").fill("edited")
     page.locator("#term-save").click()
     expect(page.locator("#term-version")).to_contain_text("v2")
-    page.get_by_role("button", name="Remove", exact=True).click()
+    page.get_by_role("button", name="Remove term: misheard", exact=True).click()
     expect(page.locator("#term-list .term-row")).to_have_count(0)
     page.locator("#term-undo").click()
     expect(page.locator("#term-list")).to_contain_text("edited")
@@ -167,3 +188,50 @@ def test_invalid_terms_and_caption_mismatch_leave_listening_unchanged(page: Page
     expect(page.locator("#term-save")).to_be_enabled()
     assert manager.session.status == "listening"
     assert manager.session.terminology_version == 0
+
+
+def test_term_focus_updates_read_only_inspection_and_hidden_opener(page: Page, term_server):
+    url, manager = term_server
+    open_caption(page, url)
+    page.locator("#term-source").fill("misheard")
+    page.locator("#term-preferred").fill("corrected")
+    page.locator("#term-save").click()
+    expect(page.locator("#term-version")).to_contain_text("v1")
+
+    def emit(message):
+        page.evaluate(
+            "message => window.__termSocket.onmessage({data: JSON.stringify(message)})", message,
+        )
+
+    edit = page.get_by_role("button", name="Edit term: misheard", exact=True)
+    edit.focus()
+    emit({"type": "terminology_updated", **terminology.state(manager.session)})
+    expect(edit).to_be_focused()
+    remove = page.get_by_role("button", name="Remove term: misheard", exact=True)
+    remove.focus()
+    emit({"type": "terminology_updated", **terminology.state(manager.session)})
+    expect(remove).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-list .term-row")).to_have_count(0)
+    expect(page.locator("#term-close")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("button", name="Correct term in caption 1", exact=True)).to_be_focused()
+
+    page.get_by_role("button", name="Settings", exact=True).click()
+    terms = page.get_by_role("button", name="Session terminology", exact=True)
+    terms.focus()
+    page.keyboard.press("Enter")
+    page.keyboard.press("Escape")
+    expect(terms).to_be_focused()
+
+    emit({"type": "terminology_updated", **terminology.state(manager.session),
+          "terminology_changes": 100})
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-save")).to_be_disabled()
+    expect(page.locator("#term-undo")).to_be_disabled()
+    expect(page.locator("#term-close")).to_be_focused()
+    emit({"type": "session_snapshot", **manager.get_snapshot(), "status": "session_ended"})
+    page.keyboard.press("Escape")
+    expect(page.locator("#term-dialog")).not_to_be_visible()
+    expect(page.locator("#status-label")).to_be_focused()
+    assert manager.session.status == "listening"  # Only synthetic UI state was changed.

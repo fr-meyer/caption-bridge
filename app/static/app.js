@@ -1555,6 +1555,7 @@
         });
         els.sessionTerms.addEventListener("click", function () { openTermEditor(null); });
         els.termClose.addEventListener("click", function () { els.termDialog.close(); });
+        els.termDialog.addEventListener("close", restoreTermFocus);
         els.termForm.addEventListener("submit", function (event) {
             event.preventDefault();
             saveCaptionTerm();
@@ -1889,12 +1890,28 @@
             "\nTranslation: " + (entry.translatedText || "unavailable") : "";
         els.termError.classList.add("hidden");
         renderTermEditor();
+        modalReturnFocus.set(els.termDialog, document.activeElement);
         els.termDialog.showModal();
-        els.termSource.focus();
+        (canEditTerms() ? els.termSource : els.termClose).focus();
+    }
+
+    function restoreTermFocus() {
+        if (els.termDialog.open) return;
+        const previous = modalReturnFocus.get(els.termDialog);
+        modalReturnFocus.delete(els.termDialog);
+        if (previous && previous !== document.body && previous.isConnected &&
+            !previous.disabled && previous.getClientRects().length && !previous.closest("[inert]")) {
+            previous.focus();
+        } else {
+            els.statusLabel.focus();
+        }
     }
 
     function renderTermEditor() {
         if (!els.termList) return;
+        const focused = els.termDialog.open && els.termList.contains(document.activeElement)
+            ? document.activeElement : null;
+        let nextFocus = null;
         els.termVersion.textContent = "Session terms v" + terminologyState.version +
             " · " + currentTerms().length + "/20 pairs" +
             (terminologyState.changes >= 100 ? " · 100-change limit reached" : "") +
@@ -1911,7 +1928,12 @@
             const edit = document.createElement("button");
             edit.type = "button";
             edit.textContent = "Edit";
+            edit.setAttribute("aria-label", "Edit term: " + term.source);
+            edit.dataset.termSource = term.source;
+            edit.dataset.termAction = "edit";
             edit.disabled = !canEditTerms();
+            if (focused && focused.dataset.termSource === term.source &&
+                focused.dataset.termAction === "edit" && !edit.disabled) nextFocus = edit;
             edit.addEventListener("click", function () {
                 termContext.captionSeq = null;
                 termContext.editSource = term.source;
@@ -1924,7 +1946,12 @@
             const remove = document.createElement("button");
             remove.type = "button";
             remove.textContent = "Remove";
+            remove.setAttribute("aria-label", "Remove term: " + term.source);
+            remove.dataset.termSource = term.source;
+            remove.dataset.termAction = "remove";
             remove.disabled = !canEditTerms();
+            if (focused && focused.dataset.termSource === term.source &&
+                focused.dataset.termAction === "remove" && !remove.disabled) nextFocus = remove;
             remove.addEventListener("click", function () {
                 termContext.captionSeq = null;
                 sendTermChange(currentTerms().filter(function (item) { return item.source !== term.source; }));
@@ -1934,6 +1961,7 @@
         });
         els.termSave.disabled = !canEditTerms();
         els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
+        if (focused) (nextFocus || els.termClose).focus();
     }
 
     function sendTermChange(entries, undo) {
