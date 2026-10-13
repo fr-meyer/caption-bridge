@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import shutil
 import subprocess
 import tomllib
@@ -105,11 +106,11 @@ def test_powershell_ast_parse_only():
             "pwsh",
             "-NoProfile",
             "-Command",
-            "$tokens=$null;$errors=$null;[System.Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){exit 1}",
-            str(NEW),
+            "$tokens=$null;$errors=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:CAPTION_PS_AST_SOURCE,[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){exit 1}",
         ],
         capture_output=True,
         text=True,
         timeout=5,
+        env=dict(os.environ, CAPTION_PS_AST_SOURCE=str(NEW)),
     )
     assert result.returncode == 0

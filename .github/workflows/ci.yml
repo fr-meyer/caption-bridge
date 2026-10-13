@@ -85,6 +85,13 @@ jobs:
           speed-evaluation/pitch/test_wsola.cjs
           speed-evaluation/pitch/test_transform_client.cjs
 
+      - name: Test offline v0.5 reliability and Windows software contracts
+        if: matrix.python-version == '3.11'
+        timeout-minutes: 2
+        run: >-
+          uv run --python 3.11 python -B evaluations/reliability_v050/run_offline.py
+          --receipt-dir "$RUNNER_TEMP/caption-reliability-v050"
+
   browser-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15

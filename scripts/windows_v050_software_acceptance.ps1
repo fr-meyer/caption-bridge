@@ -46,7 +46,9 @@ function Stop-OwnedProcessTree {
     }
     try {
         if (-not $Process.HasExited) {
-            & taskkill.exe /PID $Process.Id /T /F *> $null
+            # Use the started Process object instead of reopening a possibly reused PID.
+            $Process.Kill($true)
+            $Process.WaitForExit(5000) | Out-Null
         }
     }
     catch {
@@ -75,7 +77,7 @@ if ($AppPort -eq $CdpPort) {
     throw 'Application and CDP ports must differ.'
 }
 
-$runtimeRoot = Join-Path $runnerTemp 'caption-bridge-v050-software-acceptance'
+$runtimeRoot = Join-Path $runnerTemp ('caption-bridge-v050-software-' + [Guid]::NewGuid().ToString('N'))
 $profileRoot = Join-Path $runtimeRoot 'chromium-profile'
 $serverOut = Join-Path $runtimeRoot 'server.stdout'
 $serverErr = Join-Path $runtimeRoot 'server.stderr'
@@ -121,9 +123,9 @@ try {
             $identity.git_sha.ToLowerInvariant() -ne $ExpectedSha.ToLowerInvariant() -or
             $identity.git_dirty -ne $false
         ) {
-            throw 'Runtime identity does not match the immutable release.'
+            throw 'Runtime identity does not match the frozen candidate.'
         }
-        Write-Output '{"exact_release":true,"provider_configuration":false,"software_identity":true}'
+        Write-Output '{"exact_candidate":true,"provider_configuration":false,"software_identity":true}'
 
         $currentStage = 'bounded-offline-validation'
         Invoke-NativeGate $python -B 'evaluations/reliability_v050/run_offline.py' --receipt-dir (Join-Path $runtimeRoot 'offline-checks')
@@ -414,7 +416,7 @@ print(json.dumps({
                 [Environment]::SetEnvironmentVariable($proxyName, $proxyValues[$proxyName], 'Process')
             }
         }
-        Write-Output '{"exact_release":true,"windows_software_fixture":true,"physical_windows_pass":false,"loopback_only":true,"provider_calls":false,"public_dom_gate":true}'
+        Write-Output '{"exact_candidate":true,"windows_software_fixture":true,"physical_windows_pass":false,"loopback_only":true,"provider_calls":false,"public_dom_gate":true}'
     }
     finally {
         Pop-Location
