@@ -29,18 +29,22 @@ off the Mac.
    source edits into a live runtime tree.
 3. Run `uv sync --frozen`.
 4. Confirm `make identity` shows the expected package version and git SHA.
-5. Start only when needed.
+5. If this release changes the translation default, inspect the Mac-local `MISTRAL_TRANSLATE_MODEL` setting. An existing value overrides the code default. Record its previous value in an owner-only rollback note, then deliberately keep, change, or remove that setting according to the approved release choice; do not print or copy the API key.
+6. Start only when needed and verify the model shown before Start matches the release choice.
 
 ## Rollback
 
-For v0.4.0, the immediate published rollback is immutable `v0.3.0`
-at `1542b462534590b7183765d9071efff4ae9e65ab` on `main`.
+For the proposed v0.5.0 release, the immediate published rollback is immutable
+`v0.4.0` at `84f7b48e881dec288f60aaa2209f236f8e24ae2e` on `main`.
+Until v0.5.0 is published, v0.4.0 remains current and its rollback is `v0.3.0`
+at `1542b462534590b7183765d9071efff4ae9e65ab`.
 Earlier `v0.2.1`, `v0.2.0` and `v0.1.0` tags remain available.
 
 1. Stop the controller.
-2. Check out that tag or SHA in a clean tree.
-3. Run `uv sync --frozen`.
-4. Confirm identity, then start only if a live session is required.
+2. Restore the prior Mac-local `MISTRAL_TRANSLATE_MODEL` value if the upgrade changed it. This matters when rolling back to a build with a smaller output-token limit.
+3. Check out that tag or SHA in a clean tree.
+4. Run `uv sync --frozen`.
+5. Confirm identity and the intended translation model before starting a live session.
 
 ## Uninstall
 

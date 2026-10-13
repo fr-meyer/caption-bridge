@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,10 +13,18 @@ class AppConfig(BaseSettings):
         validation_alias="MISTRAL_TRANSCRIBE_MODEL",
     )
     translate_model: str = Field(
-        default="mistral-small-latest",
+        default="mistral-medium-latest",
         validation_alias="MISTRAL_TRANSLATE_MODEL",
     )
     target_streaming_delay_ms: int = 1000
+    asr_initial_timeout_ms: int = Field(default=10000, ge=100, le=60000, strict=True)
+
+    @field_validator("asr_initial_timeout_ms", mode="before")
+    @classmethod
+    def parse_asr_initial_timeout(cls, value):
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            return int(value)
+        return value
     audio_sample_rate: int = 16000
     audio_queue_max_chunks: int = Field(default=50, ge=5, le=1000)
     pause_timeout_ms: int = Field(default=1500, ge=100, le=10000)
@@ -44,6 +52,10 @@ class AppConfig(BaseSettings):
     )
     translation_context_segments: int = 5
     translation_timeout_ms: int = Field(default=10000, ge=100, le=120000)
+    translation_glm_timeout_ms: int = Field(
+        default=20000, ge=100, le=120000,
+        validation_alias="TRANSLATION_GLM_TIMEOUT_MS",
+    )
     translation_drain_timeout_ms: int = Field(
         default=30000,
         ge=1000,
@@ -98,6 +110,9 @@ class AppConfig(BaseSettings):
     tts_enabled: bool = Field(
         default=True,
         validation_alias="MISTRAL_TTS_ENABLED",
+    )
+    tts_streaming_playback: bool = Field(
+        default=False, validation_alias="MISTRAL_TTS_STREAMING_PLAYBACK",
     )
     tts_sample_rate: int = Field(
         default=24000,

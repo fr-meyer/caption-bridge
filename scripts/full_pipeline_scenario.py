@@ -195,9 +195,10 @@ class FullPipelineReport:
     browser_queue_coalesced: int
     browser_queue_dropped: int
     browser_critical_preserved: bool
-    replacement_closed_previous: bool
-    replacement_audio_relocked: bool
-    replacement_snapshot_preserved: bool
+    owner_conflict_rejected: bool
+    owner_retained_on_conflict: bool
+    reconnect_audio_relocked: bool
+    reconnect_snapshot_preserved: bool
     export_files: int
     export_statuses_preserved: bool
     journal_stopped: bool
@@ -246,14 +247,16 @@ def _test_bounded_browser_queue() -> tuple[int, bool, int, int, bool]:
     )
 
 
-async def _test_websocket_replacement(
+async def _test_websocket_ownership(
     manager: SessionManager,
     tts: TTSDispatcher,
-) -> tuple[bool, bool, bool, int]:
+) -> tuple[bool, bool, bool, bool, int]:
     first = _FakeWebSocket()
     second = _FakeWebSocket()
+    reconnect = _FakeWebSocket()
     first_task = asyncio.create_task(ws_module.websocket_endpoint(first))  # type: ignore[arg-type]
     second_task: asyncio.Task[None] | None = None
+    reconnect_task: asyncio.Task[None] | None = None
     try:
         await asyncio.wait_for(first.accepted.wait(), timeout=1)
         await asyncio.wait_for(first.snapshot_sent.wait(), timeout=1)
@@ -261,36 +264,56 @@ async def _test_websocket_replacement(
 
         second_task = asyncio.create_task(ws_module.websocket_endpoint(second))  # type: ignore[arg-type]
         await asyncio.wait_for(second.accepted.wait(), timeout=1)
-        await asyncio.wait_for(second.snapshot_sent.wait(), timeout=1)
-        await asyncio.wait_for(first.disconnected.wait(), timeout=1)
+        await asyncio.wait_for(second_task, timeout=1)
+        conflict_rejected = (
+            second.close_code == ws_module.OWNER_CONFLICT_CODE
+            and second.close_reason == ws_module.OWNER_CONFLICT_REASON
+            and not second.snapshot_sent.is_set()
+            and any(
+                event.get("type") == "connection_lifecycle"
+                and event.get("state") == "rejected"
+                and event.get("reason") == ws_module.OWNER_CONFLICT_REASON
+                for event in second.sent
+            )
+        )
+        owner_retained = (
+            not first.disconnected.is_set()
+            and not first_task.done()
+            and ws_module._active_connection is not None
+            and ws_module._active_connection.websocket is first
+            and tts._audio_unlocked
+        )
+
+        first.disconnected.set()
         await asyncio.wait_for(first_task, timeout=1)
+        audio_relocked = not tts._audio_unlocked
+        reconnect_task = asyncio.create_task(ws_module.websocket_endpoint(reconnect))  # type: ignore[arg-type]
+        await asyncio.wait_for(reconnect.snapshot_sent.wait(), timeout=1)
 
         first_snapshot = next(
             event for event in first.sent if event.get("type") == "session_snapshot"
         )
-        second_snapshot = next(
-            event for event in second.sent if event.get("type") == "session_snapshot"
+        reconnect_snapshot = next(
+            event for event in reconnect.sent if event.get("type") == "session_snapshot"
         )
         expected_seq = list(range(1, 7))
         snapshots_preserved = all(
             [segment["seq"] for segment in snapshot["segments"]] == expected_seq
-            for snapshot in (first_snapshot, second_snapshot)
+            for snapshot in (first_snapshot, reconnect_snapshot)
         )
-        replacement_closed = (
-            first.close_code == 1000 and first.close_reason == "replaced"
-        )
-        audio_relocked = not tts._audio_unlocked
-
-        second.disconnected.set()
-        await asyncio.wait_for(second_task, timeout=1)
-        remaining = sum(not task.done() for task in (first_task, second_task))
-        return replacement_closed, audio_relocked, snapshots_preserved, remaining
+        reconnect.disconnected.set()
+        await asyncio.wait_for(reconnect_task, timeout=1)
+        remaining = sum(not task.done() for task in (first_task, second_task, reconnect_task))
+        return conflict_rejected, owner_retained, audio_relocked, snapshots_preserved, remaining
     finally:
         first.disconnected.set()
         second.disconnected.set()
+        reconnect.disconnected.set()
         tasks = [first_task]
         if second_task is not None:
             tasks.append(second_task)
+        if reconnect_task is not None:
+            tasks.append(reconnect_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         manager.on_client_connect()
         await asyncio.sleep(0)
@@ -303,7 +326,8 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
     old_ws_metrics = ws_module._ws_metrics
     old_ws_manager = ws_module.manager
     old_ws_settings = ws_module.settings
-    old_active_ws = ws_module._active_ws
+    old_active_connection = ws_module._active_connection
+    old_connection_counter = ws_module._connection_counter
     temp_path = ""
     values: dict[str, Any] = {}
 
@@ -330,6 +354,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 MISTRAL_TTS_RETRY_MAX_DELAY_MS=1,
                 MISTRAL_TTS_RETRY_JITTER_FACTOR=0.0,
                 TRANSLATION_TIMEOUT_MS=100,
+                TRANSLATION_GLM_TIMEOUT_MS=100,
                 TRANSLATION_DRAIN_TIMEOUT_MS=5000,
                 TRANSLATION_MAX_CONCURRENCY=4,
                 TRANSLATION_REPAIR_MAX_ATTEMPTS=0,
@@ -421,8 +446,9 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
 
             ws_module.manager = manager
             ws_module.settings = config
-            ws_module._active_ws = None
-            replacement_result = await _test_websocket_replacement(manager, tts)
+            ws_module._active_connection = None
+            ws_module._connection_counter = 0
+            ownership_result = await _test_websocket_ownership(manager, tts)
 
             manager.set_status("session_ended")
             manager.on_client_disconnect()
@@ -495,9 +521,10 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 "browser_queue_coalesced": queue_result[2],
                 "browser_queue_dropped": queue_result[3],
                 "browser_critical_preserved": queue_result[4],
-                "replacement_closed_previous": replacement_result[0],
-                "replacement_audio_relocked": replacement_result[1],
-                "replacement_snapshot_preserved": replacement_result[2],
+                "owner_conflict_rejected": ownership_result[0],
+                "owner_retained_on_conflict": ownership_result[1],
+                "reconnect_audio_relocked": ownership_result[2],
+                "reconnect_snapshot_preserved": ownership_result[3],
                 "export_files": len(export_files),
                 "export_statuses_preserved": export_statuses
                 == ["done", "done", "timed_out", "done", "done", "failed"],
@@ -511,7 +538,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 ),
                 "remaining_translation_tasks": len(dispatcher._in_flight),
                 "remaining_tts_jobs": tts._queue.qsize(),
-                "remaining_browser_tasks": replacement_result[3],
+                "remaining_browser_tasks": ownership_result[4],
                 "remaining_lifecycle_tasks": remaining_lifecycle,
             }
             values["passed"] = all(
@@ -540,9 +567,10 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                     values["browser_queue_coalesced"] == 1,
                     values["browser_queue_dropped"] == 2,
                     values["browser_critical_preserved"],
-                    values["replacement_closed_previous"],
-                    values["replacement_audio_relocked"],
-                    values["replacement_snapshot_preserved"],
+                    values["owner_conflict_rejected"],
+                    values["owner_retained_on_conflict"],
+                    values["reconnect_audio_relocked"],
+                    values["reconnect_snapshot_preserved"],
                     export_files == ["transcript.json", "transcript.txt"],
                     values["export_statuses_preserved"],
                     values["journal_stopped"],
@@ -568,7 +596,8 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
         ws_module._ws_metrics = old_ws_metrics
         ws_module.manager = old_ws_manager
         ws_module.settings = old_ws_settings
-        ws_module._active_ws = old_active_ws
+        ws_module._active_connection = old_active_connection
+        ws_module._connection_counter = old_connection_counter
 
     temporary_artifacts_removed = bool(temp_path) and not Path(temp_path).exists()
     remaining_tts_tasks = 0

@@ -1,5 +1,50 @@
 # Release notes
 
+## v0.5.0 candidate — unreleased
+
+This proposed minor release prepares the source integrated by PR #82 into
+`dev` at `a5e81b6bcc8a3eecec88d38283c3099a38c79257`. Published `main` remains
+v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
+
+- Select translation models and caption timing profiles before Start or in
+  Settings. Medium is the startup default; explicit environment overrides win.
+  Model/thinking changes affect future captions and preserve in-flight requests.
+  GLM 5.3 and Large 4 remain optional previews without a live-reliability claim.
+- Preserve requested/reported model, thinking, token cap, usage, profile and
+  terminology revisions in private exports/recovery. Reject token-limited
+  partial answers and truncated repairs rather than speaking incomplete text.
+- Show unfinished speech and provide Catch up and Replay. Per-clip identities
+  and epochs isolate replay failures and stale acknowledgements. Progressive
+  playback remains opt-in; buffered playback and normal speed remain defaults.
+- Confirm or undo session terminology changes while preserving original ASR
+  text and earlier captions. Export analysis avoids counting identical snapshots
+  twice and retains the session's configuration scope.
+- Show connection loss, protect an attached browser's ownership, verify ASR
+  readiness/settings, accept final-only text safely and drain admitted capture
+  tails before input completion. Diagnostics remain content-free.
+- Update the development/test dependency `urllib3` to 2.8.0 for the reported
+  proxy-TLS, Deflate-loop and chunk-size buffering fixes. The production
+  dependency closure and application behavior remain unchanged.
+
+Exact merged-dev CI passed Python 3.11/3.13 and Chromium. The
+[October 13 owner Mac acceptance](docs/acceptance/mac-release-2026-10-13.md)
+completed the planned ordinary startup, public Korean caption cases,
+Medium/default and High, actual controls, Small → Medium future-caption change,
+Stop/export/reset and retained-results checks. Clear English hearing was
+confirmed. A test-helper restart timeout was diagnosed offline and its missing
+cases passed in a separately approved narrow follow-up; the first window is
+not rewritten as an uninterrupted successful run. Private run evidence stays
+local. Controlled network interruption was deferred with its reason recorded.
+
+These results establish the attended owner Mac cases, without a GLM/Large 4,
+physical Windows, VoiceOver, progressive-playback listening or long-session
+reliability claim. This documentation update changes no accepted application
+bytes and requires no repeated audio test. Exact publication-head CI and review
+remain required before release promotion.
+
+The proposed immediate rollback is immutable v0.4.0. Publication, any Mac-local
+model override change and activation remain separate from this local candidate.
+
 ## v0.4.0 - 2026-09-28
 
 - Add optional, bounded terminology preferences before Start, tied to a session

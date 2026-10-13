@@ -26,8 +26,28 @@ class _Events:
 
 
 class _Realtime:
-    def transcribe_stream(self, **_kwargs):
+    async def connect(self, **_kwargs):
+        return _Connection()
+
+
+class _Connection:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    def __aiter__(self):
         return _Events()
+
+    async def flush_audio(self):
+        pass
+
+    async def end_audio(self):
+        pass
+
+    async def close(self):
+        pass
 
 
 class _Client:
@@ -57,6 +77,7 @@ def test_provider_error_event_is_normalized_to_exception(monkeypatch) -> None:
         audio_sample_rate=16000,
         transcribe_model="test-model",
         target_streaming_delay_ms=1000,
+        asr_initial_timeout_ms=100,
     )
     errors: list[Exception] = []
 

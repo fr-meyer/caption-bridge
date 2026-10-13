@@ -29,7 +29,7 @@ def export_session(session: Session, config: AppConfig, recovery: bool = False) 
                 seg.failure_reason = "recovered_pending"
 
     _write_transcript_txt(export_dir, session)
-    _write_transcript_json(export_dir, session, config)
+    _write_transcript_json(export_dir, session, config, recovery=recovery)
 
     return str(export_dir)
 
@@ -46,6 +46,11 @@ def _format_relative_timestamp(session: Session, seg: Segment) -> str:
 
 def _write_transcript_txt(export_dir: Path, session: Session) -> None:
     lines: list[str] = []
+    if session.caption_profile is not None:
+        profile = session.caption_profile
+        lines.append(f"Caption timing: {profile.id} (pause {profile.pause_timeout_ms} ms, "
+                     f"fragment hold {profile.fragment_max_hold_ms} ms)")
+        lines.append("")
     if session.glossary is not None:
         lines.append(f"Terminology preferences ({session.glossary.target_language}):")
         lines.extend(
@@ -121,26 +126,56 @@ def _compute_quality_summary(session: Session) -> dict:
     }
 
 
-def _write_transcript_json(export_dir: Path, session: Session, config: AppConfig) -> None:
+def _write_transcript_json(
+    export_dir: Path, session: Session, config: AppConfig, *, recovery: bool = False
+) -> None:
     data = {
         "session_id": session.id,
         "source_language": session.source_language,
         "target_language": session.target_language,
-        "glossary": session.glossary.model_dump(mode="json") if session.glossary else None,
+        "translation_model_at_export": session.translation_model,
+        "translation_reasoning_effort_at_export": session.translation_reasoning_effort,
+        "translation_model_changes": [
+            change.model_dump(mode="json") for change in session.translation_model_changes
+        ],
+        "caption_profile": session.caption_profile.model_dump(mode="json") if session.caption_profile else None,
+        "glossary": session.glossary.model_dump(mode="json", exclude_defaults=True) if session.glossary else None,
+        "terminology_version": session.terminology_version,
+        "terminology_history": [r.model_dump(mode="json") for r in session.terminology_history],
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        # Runtime configuration does not establish historical model provenance.
+        "config_scope": "recovery_runtime" if recovery else "export_runtime",
         "config": {
             "transcribe_model": config.transcribe_model,
             "translate_model": config.translate_model,
+            "translation_provider": (
+                config.translation_provider
+                if isinstance(config.translation_provider, str) else None
+            ),
         },
         "segments": [
             {
                 "seq": seg.seq,
                 "created_at": seg.created_at.isoformat(),
+                "translated_at": seg.translated_at.isoformat() if seg.translated_at else None,
                 "source_text": seg.source_text,
+                "effective_source_text": seg.effective_source_text,
+                "terminology_version": seg.terminology_version,
+                "terminology_status": seg.terminology_status,
+                "terminology": seg.terminology.model_dump(mode="json") if seg.terminology else None,
                 "segment_kind": seg.segment_kind,
                 "translated_text": seg.translated_text,
                 "target_language": seg.target_language,
+                "translation_model": seg.translation_model,
+                "translation_model_revision": seg.translation_model_revision,
+                "translation_reasoning_effort": seg.translation_reasoning_effort,
+                "translation_max_tokens": seg.translation_max_tokens,
+                "translation_prompt_version": seg.translation_prompt_version,
+                "translation_model_resolved": seg.translation_model_resolved,
+                "translation_prompt_tokens": seg.translation_prompt_tokens,
+                "translation_completion_tokens": seg.translation_completion_tokens,
+                "translation_finish_reason": seg.translation_finish_reason,
                 "translation_status": seg.translation_status,
                 "quality": seg.quality.model_dump(mode="json") if seg.quality is not None else None,
                 "failure_reason": seg.failure_reason,

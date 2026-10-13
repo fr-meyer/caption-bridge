@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import app.lifecycle as lifecycle_module
+from app.lifecycle import RuntimePaths
 from scripts.support_bundle import (
     assert_content_free,
     build_bundle,
@@ -13,7 +15,12 @@ from scripts.support_bundle import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_support_bundle_is_content_free() -> None:
+def test_support_bundle_is_content_free(tmp_path, monkeypatch) -> None:
+    paths = RuntimePaths(
+        state=tmp_path / "runtime" / "runtime.json",
+        log=tmp_path / "logs" / "caption-bridge.log",
+    )
+    monkeypatch.setattr(lifecycle_module, "default_runtime_paths", lambda: paths)
     payload = build_bundle(REPO_ROOT)
     assert payload["schema_version"] == 1
     assert payload["identity"]["service"] == "caption-bridge"

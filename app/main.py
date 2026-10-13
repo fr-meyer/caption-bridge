@@ -18,10 +18,12 @@ from app.boundary import BoundaryDetector
 from app.config import settings
 from app.identity import runtime_identity
 from app.journal import SessionJournal, run_recovery
+from app.pipeline_diagnostics import ASR_REASONS
+from app.profiles import resolve_profile
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
 from app.state import SessionManager
-from app.transcribe import transcribe
+from app.transcribe import AsrStreamError, transcribe
 from app.translate import TranslationDispatcher
 from app.tts import TTSDispatcher
 
@@ -54,13 +56,58 @@ _transcribe_task: asyncio.Task | None = None
 _stream_ready: asyncio.Event = asyncio.Event()
 _stream_error: Exception | None = None
 _pipeline_stopping: bool = False
+_pipeline_generation: int = 0
+_stream_established: bool = False
+_has_verified_session: bool = False
+_initial_establishment_task: asyncio.Task | None = None
+_input_finishing: bool = False
+_stream_completed: bool = False
 
 
-def _on_session_created() -> None:
+def _on_session_created(generation: int | None = None) -> None:
     """Called when the Mistral realtime session handshake completes."""
-    global _stream_error
+    global _stream_error, _stream_established, _has_verified_session
+    if _stream_completed or (generation is not None and not _is_current_pipeline(generation)):
+        return
     _stream_error = None
+    _stream_established = True
+    _has_verified_session = True
+    manager.set_asr_state("ready")
     _stream_ready.set()
+
+
+def _is_current_pipeline(generation: int) -> bool:
+    return generation == _pipeline_generation and not _pipeline_stopping
+
+
+def _accepts_stream_data(generation: int) -> bool:
+    # Established streams may deliver final text while normal Stop drains;
+    # state callbacks still cannot revive a stopping or replaced pipeline.
+    return (not _stream_completed and generation == _pipeline_generation
+            and (not _pipeline_stopping or _stream_established))
+
+
+async def _watch_initial_establishment(generation: int) -> None:
+    """Establish once within a deadline; Start never blocks the WS Stop handler."""
+    try:
+        await asyncio.wait_for(
+            _wait_for_stream_established(), settings.asr_initial_timeout_ms / 1000
+        )
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        if not _is_current_pipeline(generation):
+            return
+        reason = "initial_timeout" if isinstance(exc, TimeoutError) else getattr(exc, "reason", "transport_error")
+        if reason not in ASR_REASONS:
+            reason = "transport_error"
+        if isinstance(exc, TimeoutError):
+            manager.record_asr_error()
+        manager.set_asr_state("failed", reason)
+        await _stop_pipeline()
+        if manager.session.status in ("listening", "reconnecting"):
+            manager.set_status("session_ended")
+        manager._write_reliability_record()
 
 
 async def _wait_for_stream_established() -> None:
@@ -94,8 +141,18 @@ async def _wait_for_stream_established() -> None:
 async def _start_pipeline() -> None:
     """Spin up mic capture → transcription → boundary detection."""
     global _audio, _detector, _transcribe_task, _stream_error, _pipeline_stopping  # noqa: PLW0603
+    global _pipeline_generation, _stream_established, _has_verified_session, _initial_establishment_task
+    global _input_finishing, _stream_completed
 
     _pipeline_stopping = False
+    _input_finishing = False
+    _stream_completed = False
+    _pipeline_generation += 1
+    generation = _pipeline_generation
+    _stream_established = False
+    initial = manager.session.status != "reconnecting"
+    if initial:
+        _has_verified_session = False
     _stream_ready.clear()
     _stream_error = None
 
@@ -105,14 +162,18 @@ async def _start_pipeline() -> None:
         loop=loop,
         max_queue_chunks=settings.audio_queue_max_chunks,
         metrics_callback=manager.record_audio_queue,
-        onset_callback=manager.observe_speech_pcm,
+        onset_callback=lambda chunk: manager.observe_speech_pcm(chunk) if _is_current_pipeline(generation) else None,
+        # Received PCM remains capture ingress while its accepted tail drains;
+        # only generation replacement makes those capture counters stale.
+        ingress_callback=lambda metrics: manager.record_audio_ingress(metrics) if generation == _pipeline_generation else None,
     )
+    profile = manager.session.caption_profile or resolve_profile("current", settings)
     detector = BoundaryDetector(
-        pause_timeout_s=settings.pause_timeout_ms / 1000,
+        pause_timeout_s=profile.pause_timeout_ms / 1000,
         on_partial=manager.update_partial,
         on_finalize=manager.finalize_segment,
         fragment_merge_enabled=settings.fragment_merge_enabled,
-        fragment_max_hold_s=settings.fragment_max_hold_ms / 1000,
+        fragment_max_hold_s=profile.fragment_max_hold_ms / 1000,
         min_segment_chars=settings.fragment_min_chars,
         min_segment_tokens=settings.fragment_min_tokens,
     )
@@ -124,10 +185,15 @@ async def _start_pipeline() -> None:
             audio.stop()
         except Exception:
             pass
+        manager.set_capture_active(False)
+        manager.set_asr_state("failed", "microphone_error")
+        manager.record_asr_error()
         raise
 
     _audio = audio
     _detector = detector
+    manager.set_capture_active(True)
+    manager.set_asr_state("connecting")
 
     if manager.session.status != "reconnecting":
         manager.set_status("listening")
@@ -137,53 +203,124 @@ async def _start_pipeline() -> None:
         transcribe(
             audio_stream=_audio.stream(),
             config=settings,
-            on_delta=_detector.push,
-            on_done=lambda: _on_transcription_done(attempt_id),
-            on_error=lambda exc: _on_transcription_error(exc, attempt_id),
-            on_session_created=_on_session_created,
+            on_delta=lambda text: detector.push(text) if _accepts_stream_data(generation) else None,
+            on_final_text=lambda text: detector.push(text) if _accepts_stream_data(generation) else None,
+            on_protocol=lambda data: manager.record_asr_protocol(data) if _accepts_stream_data(generation) else None,
+            on_done=lambda: _on_transcription_done(attempt_id, generation),
+            on_error=lambda exc: _on_transcription_error(exc, attempt_id, generation),
+            on_session_created=lambda: _on_session_created(generation),
+            on_sent=lambda size: manager.record_asr_sent(size) if _accepts_stream_data(generation) else None,
+            on_event=lambda kind, chars: manager.record_asr_event(kind, chars) if _accepts_stream_data(generation) else None,
         )
     )
+    if initial:
+        _initial_establishment_task = asyncio.create_task(_watch_initial_establishment(generation))
 
 
 async def _teardown_pipeline() -> None:
     """Low-level cleanup: stop audio, cancel transcription task, reset detector."""
-    global _audio, _detector, _transcribe_task  # noqa: PLW0603
+    global _audio, _detector, _transcribe_task, _pipeline_generation  # noqa: PLW0603
+
+    if not _pipeline_stopping:
+        _pipeline_generation += 1
 
     if _audio is not None:
         _audio.stop()
+        manager.set_capture_active(False)
 
     if _transcribe_task is not None:
+        if not _stream_established:
+            _transcribe_task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(_transcribe_task), timeout=5.0)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             _transcribe_task.cancel()
+            await asyncio.gather(_transcribe_task, return_exceptions=True)
         except Exception:
             logger.debug("Transcription task finished with error during stop")
         _transcribe_task = None
 
     if _detector is not None:
+        if _pipeline_stopping:
+            remaining = _detector.flush_buffer()
+            if remaining:
+                manager.finalize_segment(remaining)
         _detector.reset()
 
     _audio = None
     _detector = None
+    if _pipeline_stopping:
+        _pipeline_generation += 1
 
 
 async def _stop_pipeline() -> None:
     """Full stop: cancel reconnection, tear down pipeline, drain translations."""
-    global _pipeline_stopping
+    global _pipeline_stopping, _initial_establishment_task, _input_finishing
     _pipeline_stopping = True
+    _input_finishing = False
+    if _initial_establishment_task is not None:
+        if _initial_establishment_task is not asyncio.current_task():
+            _initial_establishment_task.cancel()
+        _initial_establishment_task = None
     reconnect_manager.cancel()
     await _teardown_pipeline()
+    if manager._reliability.pipeline.state != "failed":
+        manager.set_asr_state("stopped", "user_stop")
     await dispatcher.drain()
     await tts_dispatcher.drain()
 
 
-def _on_transcription_done(attempt_id: int) -> None:
-    global _stream_error
+async def _finish_input() -> None:
+    """Explicitly finish mic input while admitted captions/speech complete."""
+    global _pipeline_stopping, _input_finishing
+    if _input_finishing or manager._reliability.pipeline.reason == "input_finished":
+        return
+    if (manager.session.status != "listening" or not _stream_established
+            or _stream_completed or _pipeline_stopping or _audio is None):
+        raise ValueError("Input can only finish after transcription is ready")
+    _input_finishing = True
+    _pipeline_stopping = True
+    reconnect_manager.cancel()
+    manager.set_asr_state("draining")
+    _audio.finish_input()
+    manager.set_capture_active(False)
+
+
+def _complete_finished_input(state: str, reason: str) -> None:
+    if _detector is not None:
+        remaining = _detector.flush_buffer()
+        if remaining:
+            manager.finalize_segment(remaining)
+    manager.set_asr_state(state, reason)
+    # Emitted after the final source flush, so this count is the admission
+    # ceiling for callers waiting for captions and translated speech to drain.
+    manager._emit("finish_input_complete", {
+        "asr_state": state, "reason": reason,
+        "source_count": len(manager.session.segments),
+        "translation_pending_count": sum(seg.translation_status == "pending" for seg in manager.session.segments),
+    })
+
+
+def _on_transcription_done(attempt_id: int, generation: int | None = None) -> None:
+    global _stream_error, _stream_completed
+
+    if _stream_completed or (generation is not None and generation != _pipeline_generation):
+        return
+    if _pipeline_stopping and not _input_finishing:
+        return
+    _stream_completed = True
+
+    if _input_finishing:
+        _complete_finished_input("stopped", "input_finished")
+        return
 
     if not _stream_ready.is_set():
-        _stream_error = RuntimeError("Stream closed before session was established")
+        _stream_error = AsrStreamError("closed_before_ready")
         _stream_ready.set()
+
+    if not _has_verified_session and not _pipeline_stopping:
+        manager.record_asr_error()
+        return
 
     if _pipeline_stopping:
         if _detector is not None:
@@ -217,17 +354,33 @@ def _on_transcription_done(attempt_id: int) -> None:
         return
 
     logger.warning("Transcription stream ended unexpectedly — triggering reconnect")
+    manager.set_asr_state("failed", "stream_done")
     reconnect_manager.on_connection_error(
         RuntimeError("Transcription stream ended unexpectedly")
     )
 
 
-def _on_transcription_error(exc: Exception, attempt_id: int) -> None:
-    global _stream_error
+def _on_transcription_error(exc: Exception, attempt_id: int, generation: int | None = None) -> None:
+    global _stream_error, _stream_completed
+    if _stream_completed or (generation is not None and generation != _pipeline_generation):
+        return
+    if _pipeline_stopping and not _input_finishing:
+        return
+    _stream_completed = True
+    manager.record_asr_error()
     logger.error("Transcription error: error_type=%s", type(exc).__name__)
     if not _stream_ready.is_set():
         _stream_error = exc
         _stream_ready.set()
+
+    if not _has_verified_session:
+        return
+
+    reason = getattr(exc, "reason", "transport_error")
+    if _input_finishing:
+        _complete_finished_input("failed", reason if reason in ASR_REASONS else "transport_error")
+        return
+    manager.set_asr_state("failed", reason if reason in ASR_REASONS else "transport_error")
 
     if manager.session.status == "reconnecting":
         if attempt_id != reconnect_manager.current_attempt_id:
@@ -258,6 +411,7 @@ async def _on_grace_expiry() -> None:
 # Wire pipeline functions into ws.py
 ws.start_pipeline = _start_pipeline
 ws.stop_pipeline = _stop_pipeline
+ws.finish_input = _finish_input
 manager.set_grace_expiry_hook(_on_grace_expiry)
 
 
@@ -317,7 +471,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 
-BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/styles.css"})
+BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/styles.css"})
 
 
 @app.middleware("http")

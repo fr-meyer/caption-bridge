@@ -14,6 +14,7 @@ from app.latency import (
     validate_latency_snapshot,
 )
 from app.reliability import (
+    SCHEMA_VERSION,
     ReliabilityTracker,
     load_history,
     validate_session_record,
@@ -142,29 +143,32 @@ def test_sequence_state_is_bounded() -> None:
     assert len(tracker._classes) <= _MAX_SEQUENCES
 
 
-def test_schema_v2_record_keeps_loading_v1(tmp_path) -> None:
-    v2 = _record()
-    assert v2["schema_version"] == 2
-    assert validate_session_record(v2)
-    assert "latency" in v2
-    assert validate_latency_snapshot(v2["latency"])
+def test_current_record_keeps_loading_legacy_history(tmp_path) -> None:
+    current = _record()
+    assert current["schema_version"] == SCHEMA_VERSION
+    assert validate_session_record(current)
+    assert validate_latency_snapshot(current["latency"])
 
+    # Legacy records predate the catch-up counters.
+    legacy_queues = {key: dict(value) for key, value in current["queues"].items()}
+    legacy_queues["tts"].pop("catch_up_actions")
+    legacy_queues["tts"].pop("catch_up_skipped")
     v1 = {
-        key: value
-        for key, value in v2.items()
-        if key != "latency"
+        key: value for key, value in current.items()
+        if key not in {"latency", "speech_playback", "pipeline"}
     }
     v1["schema_version"] = 1
+    v1["queues"] = legacy_queues
     assert validate_session_record(v1)
 
     root = tmp_path / "reliability"
-    write_session_record(root, v2)
+    write_session_record(root, current)
     (root / "session-legacy.json").write_text(
         __import__("orjson").dumps(v1).decode()
     )
     sessions, _soaks, skipped = load_history(root)
     assert skipped == 0
-    assert {item["schema_version"] for item in sessions} == {1, 2}
+    assert {item["schema_version"] for item in sessions} == {1, SCHEMA_VERSION}
 
 
 def test_session_record_still_strips_private_payloads() -> None:

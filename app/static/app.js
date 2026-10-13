@@ -7,21 +7,30 @@
     const DEFAULT_FONT_SIZE = 28;
     const CAPTIONS_ONLY_KEY = "captionBridge.captionsOnly";
     const GLOSSARY_KEY = "captionBridge.glossary";
+    const CAPTION_PROFILE_KEY = "captionBridge.sessionProfile";
+    let savedCaptionProfile = null;
+    let defaultProfileTargetLanguage = "en";
+    let captionProfileStorageNotice = "";
+
     const glossaryDrafts = Object.create(null);
     let activeGlossary = null;
+    let terminologyState = { sessionId: null, version: 0, canUndo: false, changes: 0 };
+    let termContext = null;
+    let termPending = false;
 
     const TTS_SUPPORTED_LANGUAGES = new Set([
         "en", "fr", "de", "es", "nl", "pt", "it", "hi", "ar",
     ]);
 
     let audioContext = null;
-    let ttsChunkBuffers = {};
-    let ttsPlaybackQueue = [];
-    let ttsActiveSourceNode = null;
-    let ttsPlaybackStarting = false;
+    let pcmPlayer = null;
 
     const appState = {
         status: "idle_blocked",
+        connectionState: "connecting",
+        connectionLifecycle: null,
+        ownershipBlocked: false,
+        pipelineDiagnostics: null,
         checks: [],
         sourcePartial: "",
         segments: [],
@@ -41,9 +50,15 @@
         exportFailureModalVisible: false,
         recoveryFailure: null,
         targetLanguage: "en",
+        captionProfileId: "current",
+        availableCaptionProfiles: [],
         availableTargetLanguages: [],
+        translationModel: "mistral-medium-latest",
+        translationReasoningEffort: "default",
+        availableTranslationModels: [],
         drawerOpen: false,
         ttsEnabled: true,
+        ttsStreaming: false,
         // Audio permission is document-scoped: a browser replacement must
         // require a fresh user gesture before translated speech can play.
         ttsAudioUnlocked: false,
@@ -51,6 +66,8 @@
         ttsSpeakingSeq: null,
         currentTtsEpoch: 0,
         ttsMuted: false,
+        ttsPendingCount: 0,
+        ttsCatchUpPending: false,
         captionsOnly: false,
         providerCapacityWarning: null,
     };
@@ -119,9 +136,19 @@
         els.drawerClose = $("drawer-close");
         els.settingsDrawer = $("settings-drawer");
         els.drawerTargetSelect = $("drawer-target-select");
+        els.drawerModelSelect = $("drawer-model-select");
+        els.drawerThinkingSelect = $("drawer-thinking-select");
+        els.idleThinkingSelect = $("idle-thinking-select");
+        els.drawerModelError = $("drawer-model-error");
+        els.idleModelSelect = $("idle-model-select");
         els.sourceToggle = $("source-toggle");
         els.idleTargetSelect = $("idle-target-select");
         els.headerLang = $("header-lang");
+        els.translationModelStatus = $("translation-model-status");
+        els.asrNotice = $("asr-notice");
+        els.connectionOwnershipNotice = $("connection-ownership-notice");
+        els.idleModelHelp = $("idle-model-help");
+        els.drawerModelHelp = $("drawer-model-help");
         els.providerNotice = $("provider-notice");
         els.providerNoticeTitle = $("provider-notice-title");
         els.providerNoticeDetail = $("provider-notice-detail");
@@ -132,40 +159,61 @@
         els.enableAudioBtn = $("enable-audio-btn");
         els.ttsToggleBtn = $("tts-toggle-btn");
         els.ttsDrawerToggle = $("tts-drawer-toggle");
+        els.speechBacklog = $("speech-backlog");
+        els.speechBacklogStatus = $("speech-backlog-status");
+        els.catchUpBtn = $("catch-up-btn");
+        els.catchUpNotice = $("catch-up-notice");
         els.captionsOnlyIdle = $("captions-only-idle");
         els.captionsOnlyDrawer = $("captions-only-drawer");
         els.buildIdentity = $("build-identity");
+        els.captionProfileEditor = $("caption-profile-editor");
+        els.captionTiming = $("caption-timing");
+        els.captionProfileRemember = $("caption-profile-remember");
+        els.captionProfileClear = $("caption-profile-clear");
+        els.captionProfileHelp = $("caption-profile-help");
+        els.captionProfileSessionNote = $("caption-profile-session-note");
         els.glossaryTerms = $("glossary-terms");
         els.glossaryRemember = $("glossary-remember");
         els.glossaryClear = $("glossary-clear");
         els.glossaryError = $("glossary-error");
         els.glossaryLanguage = $("glossary-language");
         els.glossarySessionNote = $("glossary-session-note");
+        ["dialog", "caption", "version", "list", "form", "kind", "source", "preferred",
+            "error", "save", "undo", "close"].forEach(function (name) {
+            els["term" + name[0].toUpperCase() + name.slice(1)] = $("term-" + name);
+        });
+        els.sessionTerms = $("session-terms");
     }
 
     // ===== 3.2 WebSocket Connection =====
 
     function connectWebSocket() {
+        if (appState.ownershipBlocked) return;
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
         const url = `${proto}//${location.host}/ws`;
 
         ws = new WebSocket(url);
+        appState.connectionLifecycle = null;
+        // Synchronous decoding preserves frame order (Blob.text promises can race).
+        ws.binaryType = "arraybuffer";
+        const connection = ws;
+        let connectionClosed = false;
 
         ws.onopen = function () {
+            if (connectionClosed || connection !== ws) return;
             reconnectAttempt = 0;
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
-            send({ type: "tts_mute", muted: appState.ttsMuted });
-            if (appState.ttsAudioUnlocked && !appState.captionsOnly) {
-                send({ type: "tts_audio_enabled" });
-            }
+            // Restore mute/audio only after an authoritative admitted snapshot.
         };
 
         ws.onmessage = function (event) {
+            if (connectionClosed || connection !== ws || appState.ownershipBlocked) return;
             if (event.data instanceof Blob) {
                 event.data.text().then(function (text) {
+                    if (connectionClosed || connection !== ws || appState.ownershipBlocked) return;
                     try {
                         handleMessage(JSON.parse(text));
                     } catch (_) { /* malformed JSON */ }
@@ -184,7 +232,23 @@
             } catch (_) { /* malformed JSON */ }
         };
 
-        ws.onclose = function () {
+        ws.onclose = function (event) {
+            connectionClosed = true;
+            if (connection !== ws) return;
+            if (appState.ownershipBlocked || (event && event.code === 4409) ||
+                (event && event.code === 1000 && event.reason === "replaced")) {
+                blockConnectionOwnership(event && event.code === 1000 ? "ownership_lost" : "owner_active");
+                return;
+            }
+            if (appState.connectionLifecycle) {
+                appState.connectionLifecycle.state = "closed";
+                appState.connectionLifecycle.reason = event && event.code === 1011 && event.reason === "writer_failed"
+                    ? "writer_failed" : "transport_closed";
+            }
+            appState.connectionState = "reconnecting";
+            clearTtsPlaybackState();
+            appState.ttsSpeakingSeq = null;
+            render();
             scheduleReconnect();
         };
 
@@ -194,6 +258,7 @@
     }
 
     function scheduleReconnect() {
+        if (appState.ownershipBlocked) return;
         if (reconnectTimer) return;
         const delays = [1000, 2000, 4000, 8000, 15000];
         const delay = delays[Math.min(reconnectAttempt, delays.length - 1)];
@@ -205,9 +270,46 @@
     }
 
     function send(obj) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
+        if (!appState.ownershipBlocked && appState.connectionState === "connected" &&
+            ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(obj));
         }
+    }
+
+    function blockConnectionOwnership(reason) {
+        appState.ownershipBlocked = true;
+        appState.connectionState = "ownership_blocked";
+        if (appState.connectionLifecycle) {
+            appState.connectionLifecycle.state = reason === "owner_active" ? "rejected" : "closed";
+            appState.connectionLifecycle.reason = reason;
+        }
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        appState.ttsAudioUnlocked = false;
+        appState.ttsSpeakingSeq = null;
+        appState.pipelineDiagnostics = null;
+        clearTtsPlaybackState();
+        render();
+    }
+
+    function handleConnectionLifecycle(msg) {
+        const states = ["admitted", "rejected", "closed"];
+        const reasons = ["owner_admitted", "owner_active", "transport_closed", "writer_failed",
+            "handler_failed", "cancelled", "ownership_lost"];
+        if (!msg || typeof msg.connection_id !== "string" || !/^conn-[0-9]{6,}$/.test(msg.connection_id) ||
+            !states.includes(msg.state) || !reasons.includes(msg.reason)) return false;
+        if ((msg.state === "admitted" && msg.reason !== "owner_admitted") ||
+            (msg.state === "rejected" && msg.reason !== "owner_active") ||
+            (msg.state === "closed" && ["owner_admitted", "owner_active"].includes(msg.reason))) return false;
+        appState.connectionLifecycle = {
+            connection_id: msg.connection_id, state: msg.state, reason: msg.reason,
+        };
+        if (msg.state === "rejected" || msg.reason === "ownership_lost") {
+            blockConnectionOwnership(msg.reason === "ownership_lost" ? "ownership_lost" : "owner_active");
+        }
+        return true;
     }
 
     // ===== 3.3 Message Handlers =====
@@ -217,17 +319,32 @@
             case "session_snapshot":
                 handleSnapshot(msg);
                 break;
+            case "connection_lifecycle":
+                handleConnectionLifecycle(msg);
+                break;
+            case "translation_model_changed":
+                handleTranslationModelChanged(msg);
+                break;
             case "readiness":
                 handleReadiness(msg);
                 break;
             case "status":
                 handleStatus(msg);
                 break;
+            case "asr_state":
+                appState.pipelineDiagnostics = { capture: msg.capture, asr: msg.asr, protocol: msg.protocol };
+                renderHeader();
+                renderAsrNotice();
+                break;
             case "source_partial":
                 handleSourcePartial(msg);
                 break;
             case "caption":
                 handleCaption(msg);
+                break;
+            case "terminology_updated":
+            case "terminology_error":
+                handleTerminology(msg);
                 break;
             case "export_result":
                 handleExportResult(msg);
@@ -237,6 +354,12 @@
                 break;
             case "elapsed":
                 handleElapsed(msg);
+                break;
+            case "tts_queue":
+                handleTtsQueue(msg);
+                break;
+            case "tts_caught_up":
+                handleTtsCaughtUp(msg);
                 break;
             case "tts_speaking":
                 handleTtsSpeaking(msg);
@@ -265,16 +388,25 @@
     }
 
     function handleSnapshot(msg) {
+        if (appState.ownershipBlocked) return;
+        if (msg.connection_lifecycle &&
+            (!handleConnectionLifecycle(msg.connection_lifecycle) || msg.connection_lifecycle.state !== "admitted")) return;
+        appState.connectionState = "connected";
         appState.status = msg.status;
+        appState.pipelineDiagnostics = msg.pipeline_diagnostics || null;
         if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
             appState.providerOutage = null;
         }
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
         }
-        ttsChunkBuffers = {};
+        // Audio is scoped to this document/epoch.
         appState.ttsSpeakingSeq = null;
-        clearTtsPlaybackState();
+        appState.ttsCatchUpPending = false;
+        appState.ttsStreaming = msg.tts_streaming_playback === true;
+        appState.ttsPendingCount = msg.tts_queue ? msg.tts_queue.pending_count : 0;
+        if (els.catchUpNotice) els.catchUpNotice.textContent = "";
+        clearTtsPlaybackState(true);
 
         appState.checks = msg.checks || [];
         appState.sourcePartial = msg.source_partial || "";
@@ -284,9 +416,16 @@
         appState.endedAt = msg.ended_at || null;
 
         appState.availableTargetLanguages = msg.available_target_languages || [];
+        appState.availableTranslationModels = msg.available_translation_models || [];
+        appState.translationModel = msg.translation_model ||
+            (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
+            "mistral-medium-latest";
+        appState.translationReasoningEffort = msg.translation_reasoning_effort || "default";
         appState.targetLanguage = msg.target_language || "en";
         confirmedTargetLanguage = appState.targetLanguage;
+        restoreCaptionProfile(msg);
         activeGlossary = msg.glossary || null;
+        restoreTerminologyState(msg);
 
         appState.exportFailure = msg.export_failure || null;
         if (appState.exportFailure && msg.status === "session_ended") {
@@ -321,6 +460,9 @@
                 translationStatus: seg.translation_status,
                 createdAt: seg.created_at,
                 targetLanguage: seg.target_language,
+                translationModel: seg.translation_model,
+                terminologyVersion: seg.terminology_version || 0,
+                terminologyStatus: seg.terminology_status || "empty",
             });
         }
         appState.captions.reverse();
@@ -338,16 +480,16 @@
 
         if (isFirstConnect) {
             resetSessionPreferences();
-            if (appState.status === "idle_blocked" || appState.status === "idle_ready") {
-                send({ type: "tts_mute", muted: appState.ttsMuted });
-            }
             isFirstConnect = false;
         } else if (appState.status === "idle_blocked" || appState.status === "idle_ready") {
             resetSessionPreferences();
-            send({ type: "tts_mute", muted: appState.ttsMuted });
         }
+        send({ type: "tts_mute", muted: appState.ttsMuted });
+        if (appState.ttsAudioUnlocked && !appState.captionsOnly) send({ type: "tts_audio_enabled" });
 
         populateLanguageDropdowns();
+        populateModelDropdowns();
+        populateThinkingDropdowns();
         renderGlossary();
         fullRender();
 
@@ -367,7 +509,7 @@
 
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
-            ttsChunkBuffers = {};
+            // Audio is scoped to this document/epoch.
             appState.ttsSpeakingSeq = null;
             clearTtsPlaybackState();
             renderSpeakingHighlight();
@@ -411,6 +553,9 @@
             translationStatus: msg.translation_status,
             createdAt: msg.created_at,
             targetLanguage: msg.target_language,
+            translationModel: msg.translation_model,
+            terminologyVersion: msg.terminology_version || 0,
+            terminologyStatus: msg.terminology_status || "empty",
         };
         appState.captions.unshift(entry);
         prependCaptionEntry(entry);
@@ -441,9 +586,30 @@
         }
     }
 
+    function handleTranslationModelChanged(msg) {
+        if (typeof msg.model !== "string") return;
+        appState.translationModel = msg.model;
+        if (msg.reasoning_effort === "default" || msg.reasoning_effort === "high") {
+            appState.translationReasoningEffort = msg.reasoning_effort;
+        }
+        populateModelDropdowns();
+        populateThinkingDropdowns();
+    }
+
     function handleError(msg) {
         console.error("Server error:", msg.message);
 
+        if (msg.message && /model|thinking/i.test(msg.message)) {
+            populateModelDropdowns();
+            populateThinkingDropdowns();
+            if (els.drawerModelError) {
+                els.drawerModelError.textContent = msg.message;
+                els.drawerModelError.classList.remove("hidden");
+                setTimeout(function () {
+                    els.drawerModelError.classList.add("hidden");
+                }, 4000);
+            }
+        }
         if (msg.message && /language/i.test(msg.message)) {
             appState.targetLanguage = confirmedTargetLanguage;
             if (els.drawerTargetSelect) {
@@ -543,44 +709,110 @@
         }
     }
 
-    function handleTtsSpeaking(msg) {
-        if (appState.ttsMuted || msg.tts_epoch == null || msg.seq == null) return;
-        var incomingEpoch = msg.tts_epoch;
-        if (incomingEpoch !== appState.currentTtsEpoch) {
+    function handleTtsQueue(msg) {
+        if (!Number.isInteger(msg.tts_epoch) || msg.tts_epoch < appState.currentTtsEpoch) return;
+        if (appState.ttsCatchUpPending && msg.tts_epoch <= appState.currentTtsEpoch) return;
+        if (msg.tts_epoch !== appState.currentTtsEpoch) {
             clearTtsPlaybackState();
-            purgeTtsChunkBuffersNotEpoch(incomingEpoch);
+            // Audio is scoped to this document/epoch.
+            appState.ttsSpeakingSeq = null;
+            appState.ttsCatchUpPending = false;
+            appState.currentTtsEpoch = msg.tts_epoch;
+            renderSpeakingHighlight();
         }
-        appState.currentTtsEpoch = incomingEpoch;
-        appState.ttsSpeakingSeq = msg.seq;
+        appState.ttsPendingCount = Number.isInteger(msg.pending_count) ? Math.max(0, msg.pending_count) : 0;
+        renderTtsControls();
+    }
+
+    function handleTtsCaughtUp(msg) {
+        if (msg.tts_epoch < appState.currentTtsEpoch) return;
+        handleTtsQueue(msg);
+        appState.ttsCatchUpPending = false;
+        els.catchUpNotice.textContent = "Speech caught up. Current clip stopped; " +
+            msg.skipped_count + " pending clip(s) skipped. All captions kept and replayable.";
+        renderTtsControls();
+    }
+
+    function catchUpSpeech() {
+        if (!ws || ws.readyState !== WebSocket.OPEN || appState.ttsCatchUpPending) return;
+        appState.ttsCatchUpPending = true;
+        clearTtsPlaybackState();
+        // Audio is scoped to this document/epoch.
+        appState.ttsSpeakingSeq = null;
         renderSpeakingHighlight();
+        send({ type: "tts_catch_up", tts_epoch: appState.currentTtsEpoch });
+        renderTtsControls();
+    }
+
+    function getPcmPlayer() {
+        if (pcmPlayer) return pcmPlayer;
+        function ack(type, msg, extra) {
+            send(Object.assign({ type: type, seq: msg.seq, tts_epoch: msg.tts_epoch,
+                clip_id: msg.clip_id }, extra || {}));
+        }
+        pcmPlayer = new window.CaptionPcmPlayer({
+            streaming: () => appState.ttsStreaming,
+            canPlay: () => !appState.ttsMuted && appState.ttsAudioUnlocked && !appState.ttsCatchUpPending,
+            context: () => {
+                if (!audioContext) audioContext = new AudioContext();
+                return audioContext;
+            },
+            onFirstChunk: msg => ack("tts_chunk_received", msg),
+            onStart: msg => {
+                appState.ttsSpeakingSeq = msg.seq;
+                renderSpeakingHighlight();
+                ack("tts_playback_start", msg);
+            },
+            onComplete: (msg, stats) => {
+                appState.ttsSpeakingSeq = null;
+                renderSpeakingHighlight();
+                ack("tts_playback_stats", msg, stats);
+                ack("tts_playback_complete", msg);
+            },
+            onError: (msg, reason) => {
+                appState.ttsSpeakingSeq = pcmPlayer.active && pcmPlayer.active.started
+                    ? pcmPlayer.active.msg.seq : null;
+                renderSpeakingHighlight();
+                els.catchUpNotice.textContent = "Spoken readback interrupted. Captions stay available for replay.";
+                ack("tts_playback_error", msg, {reason: reason});
+            },
+            onLocked: () => { appState.ttsAudioUnlocked = false; renderTtsControls(); },
+        });
+        return pcmPlayer;
+    }
+
+    function acceptTtsMessage(msg) {
+        return !appState.ttsMuted && !appState.ttsCatchUpPending &&
+            msg.tts_epoch === appState.currentTtsEpoch;
+    }
+
+    function handleTtsSpeaking(msg) {
+        if (appState.ttsMuted || appState.ttsCatchUpPending || !Number.isInteger(msg.tts_epoch) ||
+            msg.tts_epoch < appState.currentTtsEpoch || msg.seq == null) return;
+        if (msg.tts_epoch !== appState.currentTtsEpoch) {
+            clearTtsPlaybackState();
+            appState.currentTtsEpoch = msg.tts_epoch;
+        }
+        getPcmPlayer().begin(msg);
     }
 
     function handleTtsAudio(msg) {
-        if (appState.ttsMuted || msg.tts_epoch !== appState.currentTtsEpoch) return;
-        var key = msg.seq + ":" + msg.tts_epoch;
-        if (!ttsChunkBuffers[key]) {
-            ttsChunkBuffers[key] = { chunks: [], done: false };
-        }
-        if (msg.data) {
-            ttsChunkBuffers[key].chunks.push(msg.data);
-        }
-        if (msg.is_last === true) {
-            ttsChunkBuffers[key].done = true;
-            enqueueTtsPlaybackFromKey(key);
-        }
+        if (!acceptTtsMessage(msg)) return;
+        getPcmPlayer().receive(msg);
     }
 
     function handleTtsError(msg) {
         if (msg.tts_epoch !== appState.currentTtsEpoch) return;
-        removeFromTtsPlaybackQueue(msg.seq, msg.tts_epoch);
-        if (appState.ttsSpeakingSeq === msg.seq) {
-            appState.ttsSpeakingSeq = null;
-            renderSpeakingHighlight();
-        }
-        delete ttsChunkBuffers[msg.seq + ":" + msg.tts_epoch];
+        // Legacy never-emitted errors cannot refer to buffered audio for the same caption.
+        if (msg.clip_id == null && msg.audio_emitted === false) return;
+        getPcmPlayer().cancel(msg);
+        appState.ttsSpeakingSeq = pcmPlayer.active && pcmPlayer.active.started
+            ? pcmPlayer.active.msg.seq : null;
+        renderSpeakingHighlight();
     }
 
     function handleTtsSkipped(msg) {
+        if (msg.clip_id == null && msg.audio_emitted === false) return;
         handleTtsError(msg);
     }
 
@@ -610,168 +842,20 @@
         }
     }
 
-    function purgeTtsChunkBuffersNotEpoch(epoch) {
-        var suf = ":" + String(epoch);
-        Object.keys(ttsChunkBuffers).forEach(function (k) {
-            if (!k.endsWith(suf)) {
-                delete ttsChunkBuffers[k];
-            }
-        });
-    }
-
-    function discardTtsChunkBuffersForEpoch(epoch) {
-        var suf = ":" + String(epoch);
-        Object.keys(ttsChunkBuffers).forEach(function (k) {
-            if (k.endsWith(suf)) {
-                delete ttsChunkBuffers[k];
-            }
-        });
-    }
-
-    function clearTtsPlaybackState() {
-        ttsPlaybackQueue.length = 0;
-        ttsPlaybackStarting = false;
-        if (ttsActiveSourceNode) {
-            try {
-                ttsActiveSourceNode._cbCancelled = true;
-                ttsActiveSourceNode.onended = null;
-                ttsActiveSourceNode.stop(0);
-            } catch (_) { /* node may already be stopped */ }
-            ttsActiveSourceNode = null;
+    function clearTtsPlaybackState(reset) {
+        if (pcmPlayer) {
+            pcmPlayer.cancelAll();
+            if (reset) pcmPlayer.retired.clear();
         }
-    }
-
-    function removeFromTtsPlaybackQueue(seq, epoch) {
-        ttsPlaybackQueue = ttsPlaybackQueue.filter(function (item) {
-            return item.seq !== seq || item.epoch !== epoch;
-        });
-    }
-
-    function decodeTtsChunkEntryToItem(key) {
-        var buf = ttsChunkBuffers[key];
-        if (!buf || !buf.done) return null;
-        var colon = key.lastIndexOf(":");
-        var seq = parseInt(key.slice(0, colon), 10);
-        var epoch = parseInt(key.slice(colon + 1), 10);
-        if (Number.isNaN(seq) || Number.isNaN(epoch)) return null;
-
-        var totalLen = 0;
-        var i;
-        var decoded = [];
-        for (i = 0; i < buf.chunks.length; i++) {
-            var binStr = atob(buf.chunks[i]);
-            var u8 = new Uint8Array(binStr.length);
-            for (var j = 0; j < binStr.length; j++) {
-                u8[j] = binStr.charCodeAt(j);
-            }
-            decoded.push(u8);
-            totalLen += u8.length;
-        }
-        var pcm = new Uint8Array(totalLen);
-        var off = 0;
-        for (i = 0; i < decoded.length; i++) {
-            pcm.set(decoded[i], off);
-            off += decoded[i].length;
-        }
-
-        delete ttsChunkBuffers[key];
-
-        var numSamples = Math.floor(pcm.length / 4);
-        var view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-        var float32 = new Float32Array(numSamples);
-        for (i = 0; i < numSamples; i++) {
-            float32[i] = view.getFloat32(i * 4, true);
-        }
-
-        if (!audioContext) {
-            audioContext = new AudioContext();
-        }
-        var ab = audioContext.createBuffer(1, float32.length, 24000);
-        ab.getChannelData(0).set(float32);
-        return { seq: seq, epoch: epoch, audioBuffer: ab, numSamples: numSamples };
-    }
-
-    function enqueueTtsPlaybackFromKey(key) {
-        var item = decodeTtsChunkEntryToItem(key);
-        if (!item) return;
-
-        if (item.numSamples === 0) {
-            if (appState.ttsSpeakingSeq === item.seq && appState.currentTtsEpoch === item.epoch) {
-                appState.ttsSpeakingSeq = null;
-                renderSpeakingHighlight();
-            }
-            tryStartTtsPlayback();
-            return;
-        }
-
-        ttsPlaybackQueue.push({
-            seq: item.seq,
-            epoch: item.epoch,
-            audioBuffer: item.audioBuffer,
-        });
-        tryStartTtsPlayback();
     }
 
     function tryStartTtsPlayback() {
-        if (ttsActiveSourceNode || ttsPlaybackStarting || ttsPlaybackQueue.length === 0) {
-            return;
-        }
-        if (appState.ttsMuted) {
-            return;
-        }
-        if (!audioContext) {
-            audioContext = new AudioContext();
-        }
-
-        var queued = ttsPlaybackQueue.shift();
-        var seq = queued.seq;
-        var epoch = queued.epoch;
-        var ab = queued.audioBuffer;
-
-        ttsPlaybackStarting = true;
-        audioContext.resume().then(function () {
-            ttsPlaybackStarting = false;
-            if (ttsActiveSourceNode) {
-                ttsPlaybackQueue.unshift(queued);
-                tryStartTtsPlayback();
-                return;
-            }
-            if (appState.ttsMuted || epoch !== appState.currentTtsEpoch) {
-                tryStartTtsPlayback();
-                return;
-            }
-
-            var srcNode = audioContext.createBufferSource();
-            ttsActiveSourceNode = srcNode;
-            srcNode.buffer = ab;
-            srcNode.connect(audioContext.destination);
-            srcNode._cbCancelled = false;
-            srcNode.onended = function () {
-                if (ttsActiveSourceNode === srcNode) {
-                    ttsActiveSourceNode = null;
-                }
-                if (appState.ttsSpeakingSeq === seq && appState.currentTtsEpoch === epoch) {
-                    appState.ttsSpeakingSeq = null;
-                    renderSpeakingHighlight();
-                }
-                if (!srcNode._cbCancelled && appState.currentTtsEpoch === epoch) {
-                    send({ type: "tts_playback_complete", seq: seq });
-                }
-                tryStartTtsPlayback();
-            };
-            try {
-                srcNode.start();
-                send({ type: "tts_playback_start", seq: seq });
-            } catch (_) {
-                ttsActiveSourceNode = null;
-                tryStartTtsPlayback();
-            }
-        });
+        if (pcmPlayer) pcmPlayer.pump();
     }
 
     function applyLocalTtsMuteEffects() {
         clearTtsPlaybackState();
-        discardTtsChunkBuffersForEpoch(appState.currentTtsEpoch);
+
         appState.ttsSpeakingSeq = null;
         renderSpeakingHighlight();
         renderReplayButtons();
@@ -829,6 +913,18 @@
 
     function renderTtsControls() {
         var s = appState.status;
+        var hasSession = s === "listening" || s === "reconnecting" || s === "session_ended";
+        if (els.speechBacklog) els.speechBacklog.classList.toggle("hidden", !hasSession);
+        if (els.speechBacklogStatus) {
+            els.speechBacklogStatus.textContent = appState.ttsCatchUpPending
+                ? "Catching up speech…"
+                : (appState.ttsMuted ? "Speech muted." :
+                    "Speech: " + appState.ttsPendingCount + " clip(s) pending, including the current clip.");
+        }
+        if (els.catchUpBtn) {
+            els.catchUpBtn.disabled = appState.ttsCatchUpPending || appState.ttsMuted ||
+                appState.ttsPendingCount === 0 || !ws || ws.readyState !== WebSocket.OPEN;
+        }
         var banner = els.audioEnableBanner;
         if (banner) {
             if ((s === "listening" || s === "reconnecting" || s === "session_ended") && !appState.ttsAudioUnlocked && !appState.ttsMuted) {
@@ -877,8 +973,10 @@
         }
         document.body.dataset.state = appState.status;
         renderHeader();
+        renderAsrNotice();
         renderHeaderLang();
         renderIdlePanel();
+        renderModelSelectors();
         renderRecoveryNotice();
         renderRecoveryFailureWarning();
         renderProviderNotice();
@@ -893,6 +991,7 @@
         renderTtsControls();
         renderReplayButtons();
         renderSpeakingHighlight();
+        renderConnectionOwnership();
     }
 
     function fullRender() {
@@ -902,9 +1001,11 @@
 
     function renderHeader() {
         const s = appState.status;
+        const asr = appState.pipelineDiagnostics && appState.pipelineDiagnostics.asr;
 
         els.statusDot.className = "status-dot";
-        if (s === "idle_ready" || s === "listening") {
+        if (appState.connectionState === "connected" &&
+            (s === "idle_ready" || (s === "listening" && (!asr || asr.state === "ready")))) {
             els.statusDot.classList.add("green");
         } else {
             els.statusDot.classList.add("yellow");
@@ -917,12 +1018,77 @@
             reconnecting: "Reconnecting…",
             session_ended: "Session ended",
         };
-        els.statusLabel.textContent = labels[s] || s;
+        if (asr && asr.state === "connecting") labels.listening = "Connecting transcription…";
+        if (asr && asr.state === "ready") labels.listening = "Listening · transcription ready";
+        if (asr && asr.state === "draining") labels.listening = "Finishing transcription…";
+        if (asr && asr.reason === "input_finished") labels.listening = "Input finished · completing captions";
+        if (asr && asr.state === "failed") {
+            labels.listening = "Transcription failed";
+            labels.session_ended = "Transcription failed · session ended";
+        }
+        els.statusLabel.textContent = appState.connectionState === "connected"
+            ? (labels[s] || s)
+            : (appState.connectionState === "ownership_blocked"
+                ? "Another page controls this session"
+            : (appState.connectionState === "connecting"
+                ? "Connecting…" : "Connection lost · reconnecting…"));
 
         if (s === "session_ended") {
             els.elapsed.textContent = formatTime(appState.elapsed) + " total";
         } else {
             els.elapsed.textContent = formatTime(appState.elapsed);
+        }
+    }
+
+    function renderConnectionOwnership() {
+        els.connectionOwnershipNotice.classList.toggle("hidden", !appState.ownershipBlocked);
+        els.connectionOwnershipNotice.textContent = appState.ownershipBlocked
+            ? "Another page controls CaptionBridge. This page will stay disconnected. Reload after that page disconnects to try again."
+            : "";
+        [els.stopBtn, els.exportBtn, els.newSessionBtn, els.enableAudioBtn].forEach(function (button) {
+            if (button) button.disabled = appState.ownershipBlocked;
+        });
+        if (appState.ownershipBlocked) {
+            els.startBtn.disabled = true;
+            els.footerHints.textContent = "";
+        }
+    }
+
+    function renderAsrNotice() {
+        const diagnostics = appState.pipelineDiagnostics;
+        const asr = diagnostics && diagnostics.asr;
+        const active = diagnostics && diagnostics.capture && diagnostics.capture.active;
+        if (!asr || asr.state === "idle" || (asr.state === "stopped" && asr.reason !== "input_finished")) {
+            els.asrNotice.classList.add("hidden");
+            els.asrNotice.textContent = "";
+            return;
+        }
+        els.asrNotice.classList.remove("hidden");
+        if (asr.state === "connecting") {
+            els.asrNotice.textContent = (active ? "Microphone active" : "Microphone stopped") +
+                " · connecting to transcription. Wait for transcription readiness before speaking or playing audio. Stop is available.";
+        } else if (asr.state === "ready") {
+            els.asrNotice.textContent = (active ? "Microphone active" : "Microphone stopped") + " · transcription ready.";
+        } else if (asr.state === "draining") {
+            els.asrNotice.textContent = "Microphone stopped · finishing transcription. Captions and translated speech can continue. Stop is available.";
+        } else if (asr.reason === "input_finished") {
+            els.asrNotice.textContent = "Microphone stopped · input finished. Remaining captions and translated speech can continue.";
+        } else {
+            const reasons = {
+                initial_timeout: "Transcription did not become ready within the startup deadline.",
+                provider_error: "The transcription provider reported a failure.",
+                transport_error: "The transcription connection failed.",
+                send_failed: "Sending audio to transcription failed.",
+                closed_before_ready: "The transcription connection closed before readiness.",
+                closed_before_done: "The transcription connection closed before completion.",
+                settings_mismatch: "The transcription provider acknowledged different audio settings.",
+                stream_done: "The transcription stream ended.",
+                invalid_audio: "Transcription received an invalid audio frame.",
+                microphone_error: "Microphone capture failed to start.",
+            };
+            els.asrNotice.textContent = (reasons[asr.reason] || "Transcription failed.") +
+                (active ? " Capture is stopping." : " Microphone capture stopped.") +
+                " Export the session, then create a new session to retry manually.";
         }
     }
 
@@ -961,9 +1127,14 @@
             els.checklist.appendChild(row);
         }
 
-        els.startBtn.disabled = appState.status !== "idle_ready" || appState.recoveryFailure !== null;
+        els.startBtn.disabled = appState.connectionState !== "connected" ||
+            appState.status !== "idle_ready" || appState.recoveryFailure !== null;
 
-        if (appState.recoveryFailure !== null) {
+        if (appState.connectionState === "ownership_blocked") {
+            els.idleHint.textContent = "Another page controls this session.";
+        } else if (appState.connectionState !== "connected") {
+            els.idleHint.textContent = "Waiting for the server to restore the session.";
+        } else if (appState.recoveryFailure !== null) {
             els.idleHint.textContent = "Resolve the failed recovery above to enable Start.";
         } else if (appState.status === "idle_blocked") {
             els.idleHint.textContent = "Resolve checklist blockers to enable Start.";
@@ -1052,6 +1223,19 @@
         src.className = "caption-source";
         src.textContent = entry.sourceText || "";
         div.appendChild(src);
+
+        const termsLabel = document.createElement("small");
+        termsLabel.className = "caption-terms-version";
+        termsLabel.textContent = "Terms v" + (entry.terminologyVersion || 0) +
+            (entry.terminologyStatus === "paused" ? " (paused)" : "");
+        div.appendChild(termsLabel);
+        const correctBtn = document.createElement("button");
+        correctBtn.className = "term-correction-btn btn-secondary";
+        correctBtn.textContent = "Correct term";
+        correctBtn.setAttribute("aria-label", "Correct term in caption " + entry.seq);
+        correctBtn.disabled = !canEditTerms();
+        correctBtn.addEventListener("click", function () { openTermEditor(entry); });
+        div.appendChild(correctBtn);
 
         const replayBtn = document.createElement("button");
         replayBtn.className = "replay-btn";
@@ -1222,6 +1406,87 @@
         });
     }
 
+    function populateModelDropdowns() {
+        [els.idleModelSelect, els.drawerModelSelect].forEach(function (sel) {
+            if (!sel) return;
+            sel.innerHTML = "";
+            appState.availableTranslationModels.forEach(function (model) {
+                var option = document.createElement("option");
+                option.value = model.id;
+                option.textContent = model.label;
+                sel.appendChild(option);
+            });
+            sel.value = appState.translationModel;
+        });
+        renderModelSelectors();
+    }
+
+    function supportsHighReasoning(model) {
+        return ["mistral-small-latest", "mistral-medium-latest",
+            "zai-glm-5-3"].includes(model);
+    }
+
+    function populateThinkingDropdowns() {
+        [els.idleThinkingSelect, els.drawerThinkingSelect].forEach(function (sel) {
+            sel.innerHTML = "";
+            [["default", "Provider default"], ["high", "High reasoning (experimental)"]].forEach(function (item) {
+                const option = document.createElement("option");
+                option.value = item[0];
+                option.textContent = item[1];
+                option.disabled = item[0] === "high" &&
+                    !supportsHighReasoning(appState.translationModel);
+                sel.appendChild(option);
+            });
+            sel.value = appState.translationReasoningEffort;
+        });
+    }
+
+    function renderModelSelectors() {
+        var experimental = appState.translationModel === "zai-glm-5-3";
+        var note = "GLM is experimental and may miss or delay captions. Medium is recommended for now.";
+        els.idleModelHelp.textContent = note;
+        els.idleModelHelp.classList.toggle("hidden", !experimental);
+        els.drawerModelHelp.textContent = "Changes apply to future captions. Requests already underway keep their model." +
+            (experimental ? " " + note : "");
+        var selected = appState.availableTranslationModels.find(function (model) {
+            return model.id === appState.translationModel;
+        });
+        els.translationModelStatus.textContent = "Translation: " +
+            (selected ? selected.label : appState.translationModel);
+        els.translationModelStatus.classList.toggle("hidden",
+            !["listening", "reconnecting", "stopping", "session_ended"].includes(appState.status));
+        if (els.drawerModelSelect) {
+            els.drawerModelSelect.disabled = appState.status === "session_ended";
+            els.drawerThinkingSelect.disabled = appState.status === "session_ended";
+        }
+    }
+
+    function handleDrawerModelChange(e) {
+        var model = e.target.value;
+        var effort = supportsHighReasoning(model) ?
+            appState.translationReasoningEffort : "default";
+        if (appState.status === "idle_ready" || appState.status === "idle_blocked") {
+            appState.translationModel = model;
+            appState.translationReasoningEffort = effort;
+            els.idleModelSelect.value = model;
+            populateThinkingDropdowns();
+            renderModelSelectors();
+        } else {
+            send({ type: "set_translation_model", model: model, reasoning_effort: effort });
+        }
+    }
+
+    function handleDrawerThinkingChange(e) {
+        var effort = e.target.value;
+        if (appState.status === "idle_ready" || appState.status === "idle_blocked") {
+            appState.translationReasoningEffort = effort;
+            els.idleThinkingSelect.value = effort;
+        } else {
+            send({ type: "set_translation_model", model: els.drawerModelSelect.value,
+                reasoning_effort: effort });
+        }
+    }
+
     function handleDrawerTargetChange(e) {
         var newLang = e.target.value;
         appState.targetLanguage = newLang;
@@ -1260,6 +1525,28 @@
     // ===== 3.6 Controls & Event Listeners =====
 
     function setupControls() {
+        els.captionTiming.addEventListener("change", function () {
+            appState.captionProfileId = els.captionTiming.value;
+            if (els.captionProfileRemember.checked) persistCaptionProfile();
+            renderCaptionProfile();
+        });
+        els.captionProfileRemember.addEventListener("change", persistCaptionProfile);
+        els.captionProfileClear.addEventListener("click", function () {
+            els.captionProfileRemember.checked = false;
+            persistCaptionProfile();
+            appState.captionProfileId = "current";
+            appState.targetLanguage = defaultProfileTargetLanguage;
+            populateLanguageDropdowns();
+            renderHeaderLang();
+            renderCaptionProfile();
+        });
+        els.sessionTerms.addEventListener("click", function () { openTermEditor(null); });
+        els.termClose.addEventListener("click", function () { els.termDialog.close(); });
+        els.termForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            saveCaptionTerm();
+        });
+        els.termUndo.addEventListener("click", function () { sendTermChange(null, true); });
         els.glossaryTerms.addEventListener("input", function () {
             glossaryDrafts[appState.targetLanguage] = els.glossaryTerms.value;
             els.glossaryError.classList.add("hidden");
@@ -1335,9 +1622,25 @@
         });
 
         els.drawerTargetSelect.addEventListener("change", handleDrawerTargetChange);
+        els.drawerModelSelect.addEventListener("change", handleDrawerModelChange);
+        els.drawerThinkingSelect.addEventListener("change", handleDrawerThinkingChange);
+        els.idleModelSelect.addEventListener("change", function (e) {
+            appState.translationModel = e.target.value;
+            renderModelSelectors();
+            if (!supportsHighReasoning(appState.translationModel)) {
+                appState.translationReasoningEffort = "default";
+            }
+            els.drawerModelSelect.value = e.target.value;
+            populateThinkingDropdowns();
+        });
+        els.idleThinkingSelect.addEventListener("change", function (e) {
+            appState.translationReasoningEffort = e.target.value;
+            els.drawerThinkingSelect.value = e.target.value;
+        });
 
         els.idleTargetSelect.addEventListener("change", function (e) {
             appState.targetLanguage = e.target.value;
+            if (els.captionProfileRemember.checked) persistCaptionProfile();
             renderHeaderLang();
             renderGlossary();
         });
@@ -1388,8 +1691,11 @@
                 appState.ttsAudioUnlocked = true;
                 send({ type: "tts_audio_enabled" });
                 renderTtsControls();
+                tryStartTtsPlayback();
             });
         });
+
+        els.catchUpBtn.addEventListener("click", catchUpSpeech);
 
         [els.ttsToggleBtn, els.ttsDrawerToggle].forEach(function (button) {
             button.addEventListener("click", toggleTtsMute);
@@ -1444,6 +1750,7 @@
 
     function setupKeyboard() {
         document.addEventListener("keydown", function (e) {
+            if (els.termDialog.open) return; // native dialog traps focus and handles Escape
             const modal = els.discardModal.classList.contains("visible")
                 ? els.discardModal
                 : (els.exportFailureModal.classList.contains("visible") ? els.exportFailureModal : null);
@@ -1511,6 +1818,152 @@
 
     // ===== Terminology preferences =====
 
+    function canEditTerms() {
+        return canOpenTerms() && terminologyState.changes < 100;
+    }
+
+    function canOpenTerms() {
+        return !!terminologyState.sessionId && !termPending &&
+            (appState.status === "listening" || appState.status === "reconnecting");
+    }
+
+    function currentTerms() {
+        return activeGlossary && activeGlossary.target_language === appState.targetLanguage
+            ? activeGlossary.entries.slice() : [];
+    }
+
+    function restoreTerminologyState(msg) {
+        const previousId = terminologyState.sessionId;
+        terminologyState = { sessionId: msg.session_id || null,
+            version: msg.terminology_version || 0, canUndo: !!msg.terminology_can_undo,
+            changes: msg.terminology_changes || 0 };
+        termPending = false;
+        if (termContext && previousId !== terminologyState.sessionId) {
+            els.termDialog.close();
+            termContext = null;
+        }
+        renderTermEditor();
+    }
+
+    function handleTerminology(msg) {
+        activeGlossary = msg.glossary || null;
+        restoreTerminologyState(msg);
+        if (termContext) termContext.version = terminologyState.version;
+        if (msg.type === "terminology_error") {
+            els.termError.textContent = msg.message;
+            els.termError.classList.remove("hidden");
+        } else {
+            els.termError.classList.add("hidden");
+            els.termSource.value = "";
+            els.termPreferred.value = "";
+            if (termContext) termContext.editSource = null;
+        }
+        renderGlossary();
+    }
+
+    function openTermEditor(entry) {
+        if (!canOpenTerms()) return;
+        termContext = { captionSeq: entry ? entry.seq : null, editSource: null,
+            version: terminologyState.version, language: appState.targetLanguage };
+        const selection = window.getSelection();
+        const selected = selection && selection.anchorNode &&
+            els.captionLog.contains(selection.anchorNode) ? selection.toString().trim() : "";
+        els.termSource.value = entry && entry.sourceText.includes(selected) &&
+            Array.from(selected).length <= 80 ? selected : "";
+        els.termPreferred.value = "";
+        els.termKind.value = "target";
+        els.termCaption.textContent = entry ? "Original: " + entry.sourceText +
+            "\nTranslation: " + (entry.translatedText || "unavailable") : "";
+        els.termError.classList.add("hidden");
+        renderTermEditor();
+        els.termDialog.showModal();
+        els.termSource.focus();
+    }
+
+    function renderTermEditor() {
+        if (!els.termList) return;
+        els.termVersion.textContent = "Session terms v" + terminologyState.version +
+            " · " + currentTerms().length + "/20 pairs" +
+            (terminologyState.changes >= 100 ? " · 100-change limit reached" : "") +
+            (activeGlossary && activeGlossary.target_language !== appState.targetLanguage
+                ? " · Previous language terms are paused. Saving replaces that list; Undo restores it." : "");
+        els.termList.replaceChildren();
+        currentTerms().forEach(function (term) {
+            const row = document.createElement("div");
+            row.className = "term-row";
+            const label = document.createElement("span");
+            label.textContent = term.source + " → " + term.preferred +
+                (term.kind === "source" ? " (source correction)" : " (translation)");
+            row.appendChild(label);
+            const edit = document.createElement("button");
+            edit.type = "button";
+            edit.textContent = "Edit";
+            edit.disabled = !canEditTerms();
+            edit.addEventListener("click", function () {
+                termContext.captionSeq = null;
+                termContext.editSource = term.source;
+                els.termSource.value = term.source;
+                els.termPreferred.value = term.preferred;
+                els.termKind.value = term.kind || "target";
+                els.termSource.focus();
+            });
+            row.appendChild(edit);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "Remove";
+            remove.disabled = !canEditTerms();
+            remove.addEventListener("click", function () {
+                termContext.captionSeq = null;
+                sendTermChange(currentTerms().filter(function (item) { return item.source !== term.source; }));
+            });
+            row.appendChild(remove);
+            els.termList.appendChild(row);
+        });
+        els.termSave.disabled = !canEditTerms();
+        els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
+    }
+
+    function sendTermChange(entries, undo) {
+        if (!canEditTerms() || !termContext) return;
+        if (termContext.language !== appState.targetLanguage) {
+            els.termError.textContent = "Target language changed. Close and reopen the terminology editor.";
+            els.termError.classList.remove("hidden");
+            return;
+        }
+        const message = { type: undo ? "undo_terminology" : "update_terminology",
+            session_id: terminologyState.sessionId, expected_version: termContext.version,
+            target_language: termContext.language };
+        if (!undo) {
+            message.glossary = entries;
+            if (termContext.captionSeq != null) message.caption_seq = termContext.captionSeq;
+        }
+        send(message);
+        termPending = true;
+        renderTermEditor();
+    }
+
+    function saveCaptionTerm() {
+        try {
+            const source = els.termSource.value.trim().normalize("NFC");
+            const preferred = els.termPreferred.value.trim().normalize("NFC");
+            if ([source, preferred].some(function (value) {
+                return !value || Array.from(value).length > 80 || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(value);
+            })) throw new Error("Each term needs 1–80 characters without control characters.");
+            const pair = { source: source, preferred: preferred };
+            pair.kind = els.termKind.value;
+            const entries = currentTerms().filter(function (item) {
+                return item.source !== termContext.editSource &&
+                    item.source.toLowerCase() !== pair.source.toLowerCase();
+            });
+            entries.push(pair);
+            if (entries.length > 20) throw new Error("Use at most 20 terminology pairs.");
+            sendTermChange(entries);
+        } catch (error) {
+            els.termError.textContent = error.message;
+            els.termError.classList.remove("hidden");
+        }
+    }
+
     function parseGlossaryText(text) {
         const lines = text.split("\n").map(function (line) { return line.trim(); }).filter(Boolean);
         if (lines.length > 20) throw new Error("Use at most 20 terminology pairs.");
@@ -1561,6 +2014,7 @@
     }
 
     function renderGlossary() {
+        renderCaptionProfile();
         if (!els.glossaryTerms) return;
         const label = appState.availableTargetLanguages.find(function (lang) {
             return lang.code === appState.targetLanguage;
@@ -1570,16 +2024,24 @@
         els.glossaryError.classList.add("hidden");
         const active = activeGlossary && Array.isArray(activeGlossary.entries) &&
             activeGlossary.entries.length > 0;
-        els.glossarySessionNote.classList.toggle("hidden", !active ||
+        els.glossarySessionNote.classList.toggle("hidden", (!active && !terminologyState.version) ||
             appState.status === "idle_ready" || appState.status === "idle_blocked");
         if (active) {
             els.glossarySessionNote.textContent = activeGlossary.target_language === appState.targetLanguage
-                ? "Session terminology is fixed until New Session."
+                ? "Session terminology v" + terminologyState.version + " applies to future captions."
                 : "Session terminology is paused for this target language.";
+        } else if (terminologyState.version) {
+            els.glossarySessionNote.textContent = "Session terminology v" + terminologyState.version + " is empty.";
         }
+        els.sessionTerms.disabled = !canOpenTerms();
+        els.captionLog.querySelectorAll(".term-correction-btn").forEach(function (button) {
+            button.disabled = !canEditTerms();
+        });
+        renderTermEditor();
     }
 
     function startWithGlossary() {
+        if (appState.connectionState !== "connected") return;
         let entries;
         try {
             entries = parseGlossaryText(els.glossaryTerms.value);
@@ -1595,7 +2057,93 @@
             entries: entries, target_language: appState.targetLanguage
         } : null;
         send({ type: "start", target_language: appState.targetLanguage,
-            tts_muted: appState.ttsMuted, glossary: entries });
+            translation_model: appState.translationModel,
+            translation_reasoning_effort: appState.translationReasoningEffort,
+            tts_muted: appState.ttsMuted, glossary: entries,
+            caption_profile: appState.captionProfileId });
+    }
+
+
+    // ===== Language and caption timing profile =====
+
+    function loadCaptionProfile() {
+        try {
+            const raw = localStorage.getItem(CAPTION_PROFILE_KEY);
+            if (!raw || raw.length > 256) return;
+            const saved = JSON.parse(raw);
+            if (!saved || Array.isArray(saved) ||
+                Object.keys(saved).sort().join(",") !== "id,targetLanguage,version" ||
+                saved.version !== 1 || typeof saved.targetLanguage !== "string" ||
+                !["current", "shorter", "longer"].includes(saved.id)) return;
+            savedCaptionProfile = saved;
+            els.captionProfileRemember.checked = true;
+        } catch (_) { /* storage is optional */ }
+    }
+
+    function restoreCaptionProfile(msg) {
+        appState.availableCaptionProfiles = msg.available_caption_profiles || [];
+        const idle = msg.status === "idle_ready" || msg.status === "idle_blocked";
+        appState.captionProfileId = (msg.caption_profile && msg.caption_profile.id) || "current";
+        if (idle) {
+            defaultProfileTargetLanguage = appState.targetLanguage;
+            if (savedCaptionProfile &&
+                appState.availableTargetLanguages.some(function (item) {
+                    return item.code === savedCaptionProfile.targetLanguage;
+                }) &&
+                appState.availableCaptionProfiles.some(function (item) {
+                    return item.id === savedCaptionProfile.id;
+                })) {
+                appState.targetLanguage = savedCaptionProfile.targetLanguage;
+                appState.captionProfileId = savedCaptionProfile.id;
+            } else if (savedCaptionProfile) {
+                savedCaptionProfile = null;
+                els.captionProfileRemember.checked = false;
+            }
+        }
+    }
+
+    function persistCaptionProfile() {
+        captionProfileStorageNotice = "";
+        try {
+            if (els.captionProfileRemember.checked) {
+                savedCaptionProfile = { version: 1, targetLanguage: appState.targetLanguage,
+                    id: appState.captionProfileId };
+                localStorage.setItem(CAPTION_PROFILE_KEY, JSON.stringify(savedCaptionProfile));
+            } else {
+                localStorage.removeItem(CAPTION_PROFILE_KEY);
+                savedCaptionProfile = null;
+            }
+        } catch (_) {
+            savedCaptionProfile = null;
+            els.captionProfileRemember.checked = false;
+            captionProfileStorageNotice = "Could not remember this profile. Your current selection still works.";
+        }
+        renderCaptionProfile();
+    }
+
+    function renderCaptionProfile() {
+        const profiles = appState.availableCaptionProfiles;
+        els.captionProfileEditor.classList.toggle("hidden", profiles.length === 0);
+        const selected = profiles.find(function (item) { return item.id === appState.captionProfileId; });
+        els.captionTiming.innerHTML = "";
+        profiles.forEach(function (item) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.textContent = item.label;
+            els.captionTiming.appendChild(option);
+        });
+        els.captionTiming.value = appState.captionProfileId;
+        const idle = appState.status === "idle_ready" || appState.status === "idle_blocked";
+        els.captionTiming.disabled = !idle;
+        els.captionProfileRemember.disabled = !idle;
+        els.captionProfileClear.disabled = !idle || !savedCaptionProfile;
+        els.captionProfileHelp.textContent = captionProfileStorageNotice ||
+            (selected ? selected.description : "");
+        els.captionProfileSessionNote.classList.toggle("hidden", idle || !selected);
+        if (selected) {
+            els.captionProfileSessionNote.textContent =
+                "Caption timing: " + selected.label + ". Fixed until New Session.";
+        }
     }
 
     // ===== 3.8 Session Preferences Reset =====
@@ -1644,7 +2192,7 @@
         appState.sourceVisible = true;
         appState.ttsMuted = appState.captionsOnly;
         appState.ttsSpeakingSeq = null;
-        ttsChunkBuffers = {};
+        // Audio is scoped to this document/epoch.
         clearTtsPlaybackState();
         appState.drawerOpen = false;
         document.body.classList.remove("source-hidden");
@@ -1687,10 +2235,13 @@
         cacheDom();
         loadCaptionsOnlyPreference();
         loadGlossaryPreference();
+        loadCaptionProfile();
         loadBuildIdentity();
         setupAutoScroll();
         setupControls();
         setupKeyboard();
+        renderHeader();
+        renderIdlePanel();
         connectWebSocket();
     });
 })();
