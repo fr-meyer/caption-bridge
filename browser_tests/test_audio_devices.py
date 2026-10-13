@@ -197,3 +197,63 @@ def test_selected_sink_routes_pcm_replay_and_removal_cancels_every_source(
     page.evaluate("__nodes.at(-1).onended()")
     complete = browser_harness.wait_for_message("tts_playback_complete")
     assert (complete["clip_id"], complete["tts_epoch"], complete["seq"]) == (103, 1, 1)
+
+
+def test_explicit_output_discovery_prompts_then_stops_temporary_input(page: Page, browser_harness: BrowserHarness):
+    browser_harness.configure("audio_devices")
+    page.add_init_script("""
+        window.__permissionRequests = 0; window.__permissionStops = 0;
+        window.__permissionOrder = []; window.__permissionGranted = false;
+        window.AudioContext = class {setSinkId() {return Promise.resolve();}};
+        Object.defineProperty(navigator, 'permissions', {value:{
+            query:async()=>({state:window.__permissionGranted?'granted':'prompt'})
+        }});
+        Object.defineProperty(navigator, 'mediaDevices', {value:{
+            enumerateDevices:async()=>{window.__permissionOrder.push('enumerate');return window.__permissionGranted
+                ?[{kind:'audiooutput',deviceId:'synthetic-extra',label:'Synthetic extra output'}]:[];},
+            addEventListener(){},
+            getUserMedia:async constraints=>{
+                window.__permissionRequests++;window.__permissionOrder.push('permission');
+                window.__permissionGranted=true;
+                const track={readyState:'live',stop(){this.readyState='ended';window.__permissionStops++;
+                    window.__permissionOrder.push('stop');}};
+                return {getTracks:()=>[track]};
+            }
+        }});
+    """)
+    page.goto(browser_harness.url, wait_until="domcontentloaded")
+    page.locator("#idle-input-device").select_option("native-b")
+    page.locator("[data-refresh-audio-devices]").first.click()
+    assert page.evaluate("window.__permissionRequests") == 0
+    expect(page.locator("[data-choose-audio-output]").first).to_be_hidden()
+    button = page.locator("[data-reveal-audio-outputs]").first
+    expect(button).to_be_visible()
+    expect(page.locator("[data-output-permission-hint]").first).to_contain_text("never recorded or sent")
+    button.click()
+    expect(page.locator("#idle-output-device option", has_text="Synthetic extra output")).to_have_count(1)
+    assert page.evaluate("window.__permissionRequests") == page.evaluate("window.__permissionStops") == 1
+    order = page.evaluate("window.__permissionOrder")
+    assert order.index("permission") < order.index("stop") < len(order)-1
+    expect(page.locator("#idle-input-device")).to_have_value("native-b")
+    expect(page.locator("#idle-output-device")).to_have_value("")
+    button.click()
+    assert page.evaluate("window.__permissionRequests") == 1
+
+
+def test_output_discovery_denial_is_visible_without_changing_route(page: Page, browser_harness: BrowserHarness):
+    browser_harness.configure("audio_devices")
+    page.add_init_script("""
+        window.__permissionRequests=0;
+        window.AudioContext=class {setSinkId(){return Promise.resolve();}};
+        Object.defineProperty(navigator,'permissions',{value:{query:async()=>({state:'prompt'})}});
+        Object.defineProperty(navigator,'mediaDevices',{value:{
+            enumerateDevices:async()=>[],addEventListener(){},
+            getUserMedia:async()=>{window.__permissionRequests++;throw Error('PRIVATE_PERMISSION_DETAIL');}
+        }});
+    """)
+    page.goto(browser_harness.url, wait_until="domcontentloaded")
+    page.locator("[data-reveal-audio-outputs]").first.click()
+    expect(page.locator("[data-audio-device-status]").first).to_contain_text("permission was not granted")
+    assert "PRIVATE" not in page.locator("[data-audio-device-status]").first.inner_text()
+    assert page.evaluate("window.__permissionRequests") == 1
+    expect(page.locator("#idle-output-device")).to_have_value("")
