@@ -14,7 +14,7 @@
       "clip_id": 4,
       "worker_terminated": 1,
       "active_job": false,
-      "wall_ms_including_worker_startup": 52.39999997615814,
+      "wall_ms_including_worker_startup": 117.19999998807907,
       "audio_api_calls": 0
     },
     {
@@ -27,7 +27,7 @@
       "clip_id": 4,
       "worker_terminated": 1,
       "active_job": false,
-      "wall_ms_including_worker_startup": 30.30000001192093,
+      "wall_ms_including_worker_startup": 62.599999994039536,
       "audio_api_calls": 0
     }
   ],

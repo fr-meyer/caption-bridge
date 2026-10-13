@@ -45,12 +45,21 @@ separate existing-Chrome 155 check passes three real Worker wiring cases: both
 faster rates and immediate cancellation. The two-second tone stayed near 440 Hz;
 Worker startup plus processing took 52.4/30.3 ms at 1.15x/1.3x. That check binds
 only a temporary local source server and replaces audio/capture entry points
-with throwing counters (zero calls). It is distinct from application-player or
+with throwing counters (zero calls). After direct-entry hardening, the same
+three checks passed again; startup plus processing was 117.2/62.6 ms, illustrating
+that the earlier timing is an observation rather than a guarantee. It is distinct from application-player or
 native Safari integration. Its receipt is
 `evidence/pitch-worker-browser-20261013.json`.
 The [HTML Worker specification](https://html.spec.whatwg.org/multipage/workers.html#dom-worker-terminate)
 defines termination; real browser scheduling and memory overhead remain separate
 measurements.
+
+The Worker entry independently requires safe integer job/epoch/clip IDs, a
+supported rate, exactly the supported message fields, and bounded Float32 PCM.
+Malformed identities (including null) are ignored before the one-job state
+changes, so a subsequent valid request can still succeed. A valid numeric
+identity with an invalid payload consumes that one job and returns only the
+numeric identity plus fixed `transform_rejected`; no arbitrary field is echoed.
 
 ## Concrete integration proposal
 
@@ -100,12 +109,15 @@ node --max-old-space-size=128 --test --test-concurrency=1 \
 node --max-old-space-size=128 speed-evaluation/pitch/measure.cjs
 ```
 
-The first command runs 31 bounded synthetic checks; the second prints aggregate
+The first command runs 33 bounded synthetic checks; the second prints aggregate
 measurements only. This follow-up used one local Node process at a time, no GCP,
 external application endpoint, provider request, audio context or physical device.
 The optional `check_browser_worker.py` uses an existing Python Playwright runtime
 and installed Chrome, without browser downloads; it runs three generated-buffer
 Worker checks with a temporary loopback source server. It does not construct an
 audio context, play media or request capture. No other browser slot was active.
+The narrow Worker repair reran its eight affected Node checks and three real
+Worker checks; the 25 unchanged algorithm checks carry from the identical WSOLA
+source. No unrelated browser or algorithm measurement was repeated.
 PR #72's earlier 11 browser passes/3 Linux WebKit decoder skips are carried as
 historical evidence, not rerun or presented as current v0.5.0 Worker coverage.

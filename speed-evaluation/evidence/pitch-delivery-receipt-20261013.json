@@ -4,25 +4,27 @@
   "application_baseline": "39ecd3e7e6eafd367877eff3b0a0ef878a17b127",
   "reused_original_pr72": "96ebfbe27f1ca96fd847b474745455513132b97a",
   "source_sha256": {
-    "speed-evaluation/pitch/README.md": "da05ff09232c2c15c0cdca268cc39dca3ff38a3eff727678dfb4e1c33b476e92",
+    "speed-evaluation/pitch/README.md": "14283e0338ac16a372a33e6b0e66812f7ec71fab17339ccb5a268adb7b2bb7be",
     "speed-evaluation/pitch/check_browser_worker.py": "7f3558c32b277a559ef1af639aecca9c89bd46dc91ba915215f95df01044deef",
     "speed-evaluation/pitch/measure.cjs": "2070497a150a112e9482d8276bb5b6fe915d92b16a5a56bf405c536702f14e58",
-    "speed-evaluation/pitch/test_transform_client.cjs": "86ea752013c30701c98a6d86d3769b4fb1b708babed2944b7be7f3f0d703909b",
+    "speed-evaluation/pitch/test_transform_client.cjs": "6a80908fcd70032dec9715e34f0c18c416e726e3ad62d7cb03c5098167d4db2f",
     "speed-evaluation/pitch/test_wsola.cjs": "fa89b26db6c681f98814ff47e9df03be03ab64b1c6f7c8a8ee5076f2dec77d53",
     "speed-evaluation/pitch/transform-client.js": "565134178c667499bb37c80405bbbf258fc78ddd38fd075b0676820b38a8c0cb",
-    "speed-evaluation/pitch/wsola-worker.js": "6cb817aec43d90c01d5931242df20e53c25f5ae3db6a6f40d2052412782d5e87",
+    "speed-evaluation/pitch/wsola-worker.js": "0b88c6c6bc0681d8015d97b8c9e270eb26491f77a21f740c927411f3fc654928",
     "speed-evaluation/pitch/wsola.js": "fb00c4fe3af76ee881076f3fe975a664855498a0ca3f2609a19d7c32406cb7ab"
   },
   "checks": {
     "node": {
-      "passed": 31,
+      "passed": 33,
       "failed": 0,
-      "skipped": 0
+      "skipped": 0,
+      "scope": "25 unchanged algorithm checks carried +8 affected Worker checks rerun"
     },
     "existing_chrome_worker": {
       "passed": 3,
       "failed": 0,
-      "audio_api_calls": 0
+      "audio_api_calls": 0,
+      "scope": "same3 Worker cases rerun after boundary repair; zeroaudioAPIcalls"
     }
   },
   "historical_not_rerun": {
@@ -47,5 +49,10 @@
     "Prototype not imported by the application",
     "Actual player32MiB aggregate accounting still needs integration",
     "Safari, physicalWindows, humanquality/intelligibility and arbitraryspeech/noise are unmeasured"
-  ]
+  ],
+  "repair": {
+    "malformed_identity": "ignored without accepting job or echo",
+    "malformed_payload_with_numeric_identity": "one fixed numeric-identity error; noPCM/arbitraryfields",
+    "new_direct_entry_regressions": 2
+  }
 }

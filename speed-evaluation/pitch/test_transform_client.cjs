@@ -76,17 +76,53 @@ test("bad input and factory failures create no persistent pending state", async 
         await assert.rejects(client.run(new Float32Array(2600), 1.3, identity), /rejected/);
     }
 });
-test("the actual worker entry point transforms once and echoes only content-free identity", () => {
+function workerEntry() {
     const messages = [];
     const context = vm.createContext({Float32Array, module: undefined,
         self: {postMessage: message => messages.push(message)}});
     context.importScripts = () => vm.runInContext(fs.readFileSync(__dirname + "/wsola.js", "utf8"), context);
     vm.runInContext(fs.readFileSync(__dirname + "/wsola-worker.js", "utf8"), context);
+    return {messages, onmessage: context.self.onmessage};
+}
+test("the actual worker entry point transforms once and echoes only content-free identity", () => {
+    const {messages, onmessage} = workerEntry();
     const pcm = new Float32Array(2600);
     const event = {data: {id: 1, epoch: 2, clipId: 3, rate: 1.3, pcm}};
-    context.self.onmessage(event);
-    context.self.onmessage(event);
+    onmessage(event);
+    onmessage(event);
     assert.equal(messages.length, 1);
     assert.deepEqual(Object.keys(messages[0]).sort(), ["clipId", "epoch", "id", "pcm"]);
     assert.equal(messages[0].pcm.length, 2000);
+});
+test("malformed direct identities are ignored and a later valid job still succeeds", () => {
+    const {messages, onmessage} = workerEntry();
+    const valid = {id: 1, epoch: 2, clipId: 3, rate: 1.3, pcm: new Float32Array(2600)};
+    const bad = [null, undefined, false, "public-synthetic-marker", [],
+        {...valid, id: "public-synthetic-marker", epoch: {public: true}, clipId: "public"},
+        {...valid, id: 0}, {...valid, id: Number.MAX_SAFE_INTEGER + 1},
+        {...valid, epoch: -1}, {...valid, epoch: 1.5}, {...valid, epoch: Infinity},
+        {...valid, clipId: NaN}, {...valid, clipId: 0}];
+    assert.doesNotThrow(() => onmessage(null));
+    for (const data of bad) assert.doesNotThrow(() => onmessage({data}));
+    assert.equal(messages.length, 0);
+    onmessage({data: valid});
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].pcm.length, 2000);
+    assert.deepEqual([messages[0].id, messages[0].epoch, messages[0].clipId], [1, 2, 3]);
+});
+test("numeric identity with invalid direct payload emits one fixed content-free error", () => {
+    const valid = {id: 1, epoch: 2, clipId: 3, rate: 1.3, pcm: new Float32Array(2600)};
+    const bad = [{...valid, rate: "public-synthetic-marker"}, {...valid, rate: NaN},
+        {...valid, pcm: [0]}, {...valid, pcm: Float32Array.of(NaN)},
+        {...valid, pcm: new Float32Array(1440001)}, {...valid, pcm: undefined},
+        {...valid, caption: "public-synthetic-marker"}];
+    for (const data of bad) {
+        const {messages, onmessage} = workerEntry();
+        assert.doesNotThrow(() => onmessage({data}));
+        onmessage({data: valid}); // A rejected accepted job still has exactly one terminal response.
+        assert.equal(messages.length, 1);
+        assert.deepEqual(Object.keys(messages[0]).sort(), ["clipId", "epoch", "error", "id"]);
+        assert.deepEqual([messages[0].id, messages[0].epoch, messages[0].clipId,
+            messages[0].error], [1, 2, 3, "transform_rejected"]);
+    }
 });
