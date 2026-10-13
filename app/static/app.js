@@ -24,6 +24,11 @@
 
     let audioContext = null;
     let pcmPlayer = null;
+    let audioDevices = null;
+    function getAudioContext() {
+        if (!audioContext) audioContext = new AudioContext();
+        return audioContext;
+    }
 
     const appState = {
         status: "idle_blocked",
@@ -316,6 +321,9 @@
 
     function handleMessage(msg) {
         switch (msg.type) {
+            case "input_devices":
+                if (audioDevices) audioDevices.inventory(msg);
+                break;
             case "session_snapshot":
                 handleSnapshot(msg);
                 break;
@@ -392,6 +400,10 @@
         if (msg.connection_lifecycle &&
             (!handleConnectionLifecycle(msg.connection_lifecycle) || msg.connection_lifecycle.state !== "admitted")) return;
         appState.connectionState = "connected";
+        if (audioDevices) {
+            audioDevices.snapshot(msg.input_devices, msg.status, msg.session_id);
+            audioDevices.refresh();
+        }
         appState.status = msg.status;
         appState.pipelineDiagnostics = msg.pipeline_diagnostics || null;
         if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
@@ -506,6 +518,7 @@
 
     function handleStatus(msg) {
         appState.status = msg.status;
+        if (audioDevices) audioDevices.updateStatus(msg.status);
 
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
@@ -753,10 +766,7 @@
         pcmPlayer = new window.CaptionPcmPlayer({
             streaming: () => appState.ttsStreaming,
             canPlay: () => !appState.ttsMuted && appState.ttsAudioUnlocked && !appState.ttsCatchUpPending,
-            context: () => {
-                if (!audioContext) audioContext = new AudioContext();
-                return audioContext;
-            },
+            context: getAudioContext,
             onFirstChunk: msg => ack("tts_chunk_received", msg),
             onStart: msg => {
                 appState.ttsSpeakingSeq = msg.seq;
@@ -995,6 +1005,7 @@
     }
 
     function fullRender() {
+        if (audioDevices) audioDevices.updateStatus(appState.status);
         render();
         rebuildCaptionLog();
     }
@@ -1685,7 +1696,7 @@
 
         els.enableAudioBtn.addEventListener("click", function () {
             if (!audioContext) {
-                audioContext = new AudioContext();
+                getAudioContext();
             }
             audioContext.resume().then(function () {
                 appState.ttsAudioUnlocked = true;
@@ -2060,7 +2071,8 @@
             translation_model: appState.translationModel,
             translation_reasoning_effort: appState.translationReasoningEffort,
             tts_muted: appState.ttsMuted, glossary: entries,
-            caption_profile: appState.captionProfileId });
+            caption_profile: appState.captionProfileId,
+            input_device: audioDevices ? audioDevices.input : "default" });
     }
 
 
@@ -2233,6 +2245,19 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
+        audioDevices = new window.CaptionAudioDevices({
+            send: send,
+            context: getAudioContext,
+            canRoute: () => typeof AudioContext !== "undefined" &&
+                typeof AudioContext.prototype.setSinkId === "function",
+            unavailable: () => {
+                appState.ttsMuted = true;
+                applyLocalTtsMuteEffects();
+                send({type: "tts_mute", muted: true});
+                renderTtsControls();
+            },
+        });
+        audioDevices.mount(document);
         loadCaptionsOnlyPreference();
         loadGlossaryPreference();
         loadCaptionProfile();

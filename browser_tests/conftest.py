@@ -138,6 +138,16 @@ def _snapshot(scenario: str) -> dict[str, Any]:
                         caption_profile=resolve_profile("longer", AppConfig(_env_file=None)).model_dump(mode="json"))
     elif scenario == "glossary_idle":
         snapshot["available_target_languages"].append({"code": "fr", "label": "French"})
+    elif scenario in {"audio_devices", "audio_devices_active"}:
+        snapshot["session_id"] = "synthetic-device-session"
+        snapshot["input_devices"] = {
+            "available": [{"id": "native-a", "label": "Synthetic input A"},
+                          {"id": "native-b", "label": "Synthetic input B"}],
+            "selected": "native-b" if scenario == "audio_devices_active" else "default",
+            "active_label": "Synthetic input B" if scenario == "audio_devices_active" else None,
+        }
+        if scenario == "audio_devices_active":
+            snapshot.update(status="listening", started_at=_STARTED_AT)
     elif scenario not in {"idle_ready", "model_override"}:
         raise ValueError(f"unsupported browser scenario: {scenario}")
     return snapshot
@@ -217,7 +227,7 @@ class BrowserHarness:
             )
 
     def wait_for_message(
-        self, message_type: str, *, timeout_s: float = 2.0
+        self, message_type: str, *, timeout_s: float = 2.0, after: int = 0,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
@@ -225,7 +235,7 @@ class BrowserHarness:
                 match = next(
                     (
                         message
-                        for message in self.messages
+                        for message in self.messages[after:]
                         if message.get("type") == message_type
                     ),
                     None,
@@ -260,6 +270,10 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
     async def pcm_player_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "pcm-player.js", media_type="text/javascript")
 
+    @app.get("/audio-devices.js")
+    async def audio_devices_js() -> FileResponse:
+        return FileResponse(STATIC_DIR / "audio-devices.js", media_type="text/javascript")
+
     @app.get("/app.js")
     async def app_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "app.js", media_type="text/javascript")
@@ -281,6 +295,8 @@ def _create_app(harness: BrowserHarness) -> FastAPI:
                 harness.record(message)
                 message_type = message.get("type")
                 if message_type == "start":
+                    if harness.scenario == "audio_devices":
+                        harness.scenario = "audio_devices_active"
                     await websocket.send_bytes(
                         orjson.dumps(
                             {

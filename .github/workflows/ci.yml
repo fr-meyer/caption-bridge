@@ -75,6 +75,7 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/pcm-player.js
+          node --check app/static/audio-devices.js
 
   browser-e2e:
     runs-on: ubuntu-latest
@@ -103,3 +104,6 @@ jobs:
 
       - name: Run browser end-to-end contracts
         run: uv run --python 3.13 python -m pytest -q browser_tests --browser chromium
+
+      - name: Test synthetic browser audio routing
+        run: node --test tests/audio-devices.test.cjs
