@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "status": "OFFLINE_EVALUATION_PASS_RUNTIME_UNCHANGED",
+  "application_baseline": "39ecd3e7e6eafd367877eff3b0a0ef878a17b127",
+  "reused_original_pr72": "96ebfbe27f1ca96fd847b474745455513132b97a",
+  "source_sha256": {
+    "speed-evaluation/pitch/README.md": "da05ff09232c2c15c0cdca268cc39dca3ff38a3eff727678dfb4e1c33b476e92",
+    "speed-evaluation/pitch/check_browser_worker.py": "7f3558c32b277a559ef1af639aecca9c89bd46dc91ba915215f95df01044deef",
+    "speed-evaluation/pitch/measure.cjs": "2070497a150a112e9482d8276bb5b6fe915d92b16a5a56bf405c536702f14e58",
+    "speed-evaluation/pitch/test_transform_client.cjs": "86ea752013c30701c98a6d86d3769b4fb1b708babed2944b7be7f3f0d703909b",
+    "speed-evaluation/pitch/test_wsola.cjs": "fa89b26db6c681f98814ff47e9df03be03ab64b1c6f7c8a8ee5076f2dec77d53",
+    "speed-evaluation/pitch/transform-client.js": "565134178c667499bb37c80405bbbf258fc78ddd38fd075b0676820b38a8c0cb",
+    "speed-evaluation/pitch/wsola-worker.js": "6cb817aec43d90c01d5931242df20e53c25f5ae3db6a6f40d2052412782d5e87",
+    "speed-evaluation/pitch/wsola.js": "fb00c4fe3af76ee881076f3fe975a664855498a0ca3f2609a19d7c32406cb7ab"
+  },
+  "checks": {
+    "node": {
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0
+    },
+    "existing_chrome_worker": {
+      "passed": 3,
+      "failed": 0,
+      "audio_api_calls": 0
+    }
+  },
+  "historical_not_rerun": {
+    "pr72_browser_passed": 11,
+    "linux_webkit_wav_decoder_skipped": 3
+  },
+  "constraints": {
+    "gcp_operations": 0,
+    "provider_requests": 0,
+    "microphone_capture": false,
+    "audio_context_created": false,
+    "physical_output": false,
+    "private_data_used": false,
+    "dependency_installs": 0,
+    "production_mutation": false,
+    "git_publication": false
+  },
+  "limits": [
+    "Complete clips only; waits for EOS plus transform/Worker startup",
+    "Normal remains default and progressive remains normal/opt-in",
+    "60-second mono24kHz cap, explicit short-clip rejection",
+    "Prototype not imported by the application",
+    "Actual player32MiB aggregate accounting still needs integration",
+    "Safari, physicalWindows, humanquality/intelligibility and arbitraryspeech/noise are unmeasured"
+  ]
+}

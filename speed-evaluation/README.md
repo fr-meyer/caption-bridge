@@ -1,5 +1,11 @@
 # Spoken-readback speed evaluation (#67)
 
+The original September 30 browser evaluation below is preserved from draft
+PR #72 (`96ebfbe`). The October 13 [PCM/Worker follow-up](pitch/README.md) uses
+v0.5.0 as its application baseline and evaluates pitch-preserving complete-clip
+processing without changing the application. It adds a separate numeric receipt;
+the original browser evidence and three Linux WebKit skips remain historical.
+
 Keep production at normal speed. This candidate adds an independent evaluation
 harness and evidence, with no production imports, control, provider request, or
 audible output. It complements the progressive PCM playback work in #65.
