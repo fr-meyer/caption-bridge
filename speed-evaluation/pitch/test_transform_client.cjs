@@ -76,6 +76,16 @@ test("bad input and factory failures create no persistent pending state", async 
         await assert.rejects(client.run(new Float32Array(2600), 1.3, identity), /rejected/);
     }
 });
+test("unsafe numeric identities are rejected before creating a Worker", async () => {
+    let created = 0;
+    const client = new Client(() => { created++; return fake(); });
+    for (const identity of [{epoch: Number.MAX_SAFE_INTEGER + 1, clipId: 1},
+        {epoch: 0, clipId: Number.MAX_SAFE_INTEGER + 1}]) {
+        await assert.rejects(client.run(new Float32Array(2600), 1.3, identity), /rejected/);
+    }
+    assert.equal(created, 0);
+    assert.equal(client.active, null);
+});
 function workerEntry() {
     const messages = [];
     const context = vm.createContext({Float32Array, module: undefined,

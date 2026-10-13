@@ -4,21 +4,22 @@
   "application_baseline": "39ecd3e7e6eafd367877eff3b0a0ef878a17b127",
   "reused_original_pr72": "96ebfbe27f1ca96fd847b474745455513132b97a",
   "source_sha256": {
-    "speed-evaluation/pitch/README.md": "14283e0338ac16a372a33e6b0e66812f7ec71fab17339ccb5a268adb7b2bb7be",
+    "speed-evaluation/pitch/README.md": "715cc0a1fefd58413b0b8d64d5e0142d331e3a4a52a6faba3cfc18cb60947daf",
     "speed-evaluation/pitch/check_browser_worker.py": "7f3558c32b277a559ef1af639aecca9c89bd46dc91ba915215f95df01044deef",
     "speed-evaluation/pitch/measure.cjs": "2070497a150a112e9482d8276bb5b6fe915d92b16a5a56bf405c536702f14e58",
-    "speed-evaluation/pitch/test_transform_client.cjs": "6a80908fcd70032dec9715e34f0c18c416e726e3ad62d7cb03c5098167d4db2f",
+    "speed-evaluation/pitch/test_transform_client.cjs": "79881568c6bb9ee958d6058ae5a3eaa56ed1791009346f7ee79d11f36142a993",
     "speed-evaluation/pitch/test_wsola.cjs": "fa89b26db6c681f98814ff47e9df03be03ab64b1c6f7c8a8ee5076f2dec77d53",
-    "speed-evaluation/pitch/transform-client.js": "565134178c667499bb37c80405bbbf258fc78ddd38fd075b0676820b38a8c0cb",
+    "speed-evaluation/pitch/transform-client.js": "b91855ba846a37076af7490e6816bdeea3ad4338a45584c91defe4c260a68228",
     "speed-evaluation/pitch/wsola-worker.js": "0b88c6c6bc0681d8015d97b8c9e270eb26491f77a21f740c927411f3fc654928",
-    "speed-evaluation/pitch/wsola.js": "fb00c4fe3af76ee881076f3fe975a664855498a0ca3f2609a19d7c32406cb7ab"
+    "speed-evaluation/pitch/wsola.js": "fb00c4fe3af76ee881076f3fe975a664855498a0ca3f2609a19d7c32406cb7ab",
+    ".github/workflows/ci.yml": "68a45e3b10effcc62d8a74ba2a960dc544cf444b00177c1f99c68ad7dee8dcc8"
   },
   "checks": {
     "node": {
-      "passed": 33,
+      "passed": 34,
       "failed": 0,
       "skipped": 0,
-      "scope": "25 unchanged algorithm checks carried +8 affected Worker checks rerun"
+      "scope": "25 unchanged algorithm checks carried +9 affected Worker/client checks rerun"
     },
     "existing_chrome_worker": {
       "passed": 3,
@@ -54,5 +55,13 @@
     "malformed_identity": "ignored without accepting job or echo",
     "malformed_payload_with_numeric_identity": "one fixed numeric-identity error; noPCM/arbitraryfields",
     "new_direct_entry_regressions": 2
+  },
+  "ci": {
+    "existing_job": "test/python3.11",
+    "new_jobs": 0,
+    "new_actions": 0,
+    "step_timeout_minutes": 1,
+    "workflow_dispatch": false,
+    "hosted_run_performed": false
   }
 }

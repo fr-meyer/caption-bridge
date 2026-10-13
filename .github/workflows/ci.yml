@@ -77,6 +77,14 @@ jobs:
           node --check app/static/pcm-player.js
           node --check app/static/audio-devices.js
 
+      - name: Test pitch-preserving PCM evaluation
+        if: matrix.python-version == '3.11'
+        timeout-minutes: 1
+        run: >-
+          node --max-old-space-size=128 --test --test-concurrency=1
+          speed-evaluation/pitch/test_wsola.cjs
+          speed-evaluation/pitch/test_transform_client.cjs
+
   browser-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15

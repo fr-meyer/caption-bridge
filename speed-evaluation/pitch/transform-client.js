@@ -12,8 +12,8 @@
         run(pcm, rate, identity) {
             if (this.active) return Promise.reject(new Error("transform_busy"));
             if (!(pcm instanceof Float32Array) || pcm.length > MAX_SAMPLES ||
-                ![1, 1.15, 1.3].includes(rate) || !identity || !Number.isInteger(identity.epoch) || identity.epoch < 0 ||
-                !Number.isInteger(identity.clipId) || identity.clipId < 1) {
+                ![1, 1.15, 1.3].includes(rate) || !identity || !Number.isSafeInteger(identity.epoch) || identity.epoch < 0 ||
+                !Number.isSafeInteger(identity.clipId) || identity.clipId < 1) {
                 return Promise.reject(new Error("transform_rejected"));
             }
             return new Promise((resolve, reject) => {

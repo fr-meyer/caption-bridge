@@ -6,7 +6,9 @@ It processes a completed clip into a shorter PCM buffer, which can then be
 played at normal `AudioBufferSourceNode.playbackRate = 1` through the existing
 shared `AudioContext`. No WAV/media decoder, second output route, provider speed
 parameter, microphone, or sample-file export is required. The application and
-its normal speed/opt-in progressive default are unchanged.
+its normal speed/opt-in progressive default are unchanged. CI adds this bounded
+Node contract to the existing Python 3.11 job, with a one-minute step timeout;
+no job, dispatch, action or dependency is added.
 
 The mechanism follows the time-domain frame-alignment concept described in the
 [original WSOLA paper](https://www.isca-archive.org/eurospeech_1993/roelands93_eurospeech.html).
@@ -109,14 +111,15 @@ node --max-old-space-size=128 --test --test-concurrency=1 \
 node --max-old-space-size=128 speed-evaluation/pitch/measure.cjs
 ```
 
-The first command runs 33 bounded synthetic checks; the second prints aggregate
+The first command runs 34 bounded synthetic checks; the second prints aggregate
 measurements only. This follow-up used one local Node process at a time, no GCP,
 external application endpoint, provider request, audio context or physical device.
 The optional `check_browser_worker.py` uses an existing Python Playwright runtime
 and installed Chrome, without browser downloads; it runs three generated-buffer
 Worker checks with a temporary loopback source server. It does not construct an
-audio context, play media or request capture. No other browser slot was active.
-The narrow Worker repair reran its eight affected Node checks and three real
+audio context, play media or request capture. Timing does not claim exclusive
+host resources or a browser/Windows performance guarantee.
+The narrow Worker repair reran its nine affected Node checks and three real
 Worker checks; the 25 unchanged algorithm checks carry from the identical WSOLA
 source. No unrelated browser or algorithm measurement was repeated.
 PR #72's earlier 11 browser passes/3 Linux WebKit decoder skips are carried as
