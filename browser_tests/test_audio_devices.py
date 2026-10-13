@@ -110,6 +110,39 @@ def _pcm_clip(page, clip_id, epoch, *, last=True):
                  "chunk_index": 0, "is_last": last, "data": "AAAA" * 4800})
 
 
+@pytest.mark.parametrize("viewport", [(320, 568), (900, 480)])
+def test_idle_devices_and_start_remain_reachable_by_scroll_and_keyboard(
+    page: Page, browser_harness: BrowserHarness, viewport,
+):
+    browser_harness.configure("audio_devices")
+    page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+    page.add_init_script(_SHARED_PCM_CONTEXT)
+    page.goto(browser_harness.url, wait_until="domcontentloaded")
+    expect(page.locator("#idle-input-device")).to_be_enabled()
+    geometry = page.locator("#idle-panel").evaluate("""panel => ({
+        bottom:panel.getBoundingClientRect().bottom,
+        overflow:getComputedStyle(panel).overflowY,
+        scrollHeight:panel.scrollHeight, height:panel.clientHeight,
+    })""")
+    assert geometry["bottom"] <= viewport[1] + 1
+    assert geometry["overflow"] == "auto"
+    assert geometry["scrollHeight"] > geometry["height"]
+    page.mouse.move(viewport[0] // 2, viewport[1] // 2)
+    page.mouse.wheel(0, 2000)
+    page.wait_for_function("document.getElementById('idle-panel').scrollTop>0")
+    for selector in ("#idle-input-device", "#idle-output-device", "#start-btn"):
+        control = page.locator(selector)
+        control.focus()  # Native keyboard focus must reveal the focused control.
+        visible = control.evaluate("""el => {
+            const r=el.getBoundingClientRect();
+            return r.top>=0 && r.bottom<=innerHeight &&
+                el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+        }""")
+        assert visible, selector
+    page.keyboard.press("Enter")
+    assert browser_harness.wait_for_message("start")["input_device"] == "default"
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 def test_selected_sink_routes_pcm_replay_and_removal_cancels_every_source(
     page: Page, browser_harness: BrowserHarness, streaming: bool,

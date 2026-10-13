@@ -154,13 +154,20 @@ header .title {
 /* ===== Idle panel ===== */
 .idle-panel {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 20px;
     padding: 24px;
 }
+
+.idle-panel > * { flex-shrink: 0; }
+.idle-panel > :first-child { margin-top: auto; }
+.idle-panel > :last-child { margin-bottom: auto; }
+.idle-panel .audio-device-controls { width: 100%; max-width: 480px; }
 
 .checklist {
     width: 100%;
