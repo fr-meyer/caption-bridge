@@ -11,14 +11,15 @@
       this.origin=null;this.ready=null;this.firstSchedule=null;this.previousEnd=null;
       this.lastIndex=-1;this.completed=false;this.attached=false;
       this.currentPayload=null;
+      this.used=false;
     }
     matches(msg){return msg&&msg.clip_id===this.id&&msg.tts_epoch===this.epoch;}
     capture(fn){if(!this.attached)return;try{fn();}catch(_){this.rejected=Math.min(1000000,this.rejected+1);}}
     offset(at){const value=at-this.origin;if(!numeric(value))throw Error('invalid_timing');return value;}
     attach(player){
-      if(this.attached||owners.has(player)||typeof player.clock!=='function')throw Error('probe_attachment');
+      if(this.used||owners.has(player)||typeof player.clock!=='function')throw Error('probe_attachment');
       const probe=this,receive=player.receive,context=player.o.context,complete=player.o.onComplete;
-      this.attached=true;owners.set(player,this);
+      this.attached=true;this.used=true;owners.set(player,this);
       const wrappers=new WeakMap();
       function tracedReceive(msg){
         const selected=probe.matches(msg)&&!!msg.data&&Number.isInteger(msg.chunk_index)&&msg.chunk_index>probe.lastIndex;
@@ -48,8 +49,10 @@
         const wrapper={get currentTime(){return audio.currentTime;},get destination(){return audio.destination;},
           resume(){return audio.resume();},createBuffer(...args){return audio.createBuffer(...args);},
           createBufferSource(){
-            const node=audio.createBufferSource(),start=node.start;
-            node.start=function(...args){
+            const node=audio.createBufferSource();
+            probe.capture(()=>{
+              const start=node.start;
+              node.start=function(...args){
               let at=null,audioNow=null;
               if(probe.matches(player.active?.msg))probe.capture(()=>{at=player.clock();audioNow=audio.currentTime;});
               const result=start.apply(node,args);
@@ -70,7 +73,8 @@
                 probe.previousEnd=scheduled+duration;
               });
               return result;
-            };
+              };
+            });
             return node;
           }};
         wrappers.set(audio,wrapper);return wrapper;
@@ -81,10 +85,12 @@
       }
       player.receive=tracedReceive;player.o.context=tracedContext;player.o.onComplete=tracedComplete;
       this.detach=()=>{
+        if(!probe.attached)return;
         if(player.receive===tracedReceive)player.receive=receive;
         if(player.o.context===tracedContext)player.o.context=context;
         if(player.o.onComplete===tracedComplete)player.o.onComplete=complete;
-        owners.delete(player);probe.attached=false;
+        if(owners.get(player)===probe)owners.delete(player);
+        probe.attached=false;
       };
       return this;
     }

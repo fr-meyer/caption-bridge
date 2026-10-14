@@ -79,6 +79,8 @@ def test_domains_are_separate_and_only_intervals_are_compared():
     first = classify(source, browser)
     for row in browser["chunks"]:
         row["receive_offset_ms"] += 17000
+    for row in browser["schedules"]:
+        row["submitted_offset_ms"] += 17000
     second = classify(source, browser)
     assert first == second  # A different browser origin is not a transport delay.
     browser["chunks"][35]["receive_processing_ms"] = 120
@@ -118,6 +120,38 @@ def test_rejected_or_uncompleted_trace_is_not_certified():
     source["chunks"][-1]["consumer_work_ms"] = None
     assert not classify(source, browser)["complete"]
     assert "data" not in json.dumps(source)
+
+
+@pytest.mark.parametrize("reported_duration", [12360, 100])
+def test_completed_report_cannot_omit_final_chunk_coverage(reported_duration):
+    source = source_fixture()
+    browser = browser_fixture(source)
+    browser["schedules"][0]["covered_through_chunk_index"] = 0
+    browser["schedules"][0]["duration_ms"] = reported_duration
+    with pytest.raises(ValueError, match="coverage"):
+        classify(source, browser)
+
+
+def test_schedule_coverage_and_submission_must_advance_after_receive():
+    source = source_fixture()
+    browser = browser_fixture(source)
+    first = {"schedule_index": 0, "covered_through_chunk_index": 0,
+             "submitted_offset_ms": 10000, "scheduled_ahead_ms": 20,
+             "schedule_gap_ms": 0, "duration_ms": 100}
+    last = {**first, "schedule_index": 1, "covered_through_chunk_index": 123,
+            "submitted_offset_ms": 21500, "duration_ms": 12260}
+    browser["schedules"] = [first, last]
+    assert classify(source, browser)["complete"]
+    last["submitted_offset_ms"] = 9000
+    with pytest.raises(ValueError, match="nonmonotonic"):
+        classify(source, browser)
+    last["submitted_offset_ms"] = 20000
+    with pytest.raises(ValueError, match="before_receive"):
+        classify(source, browser)
+    last["submitted_offset_ms"] = 21500
+    last["covered_through_chunk_index"] = 0
+    with pytest.raises(ValueError, match="nonmonotonic"):
+        classify(source, browser)
 
 
 def test_context_exit_after_break_releases_pcm_without_finishing_the_trace():
@@ -190,8 +224,10 @@ def test_probe_separates_timing_evidence_without_changing_player(tmp_path):
     assert raw["passed"] and not raw["real_audio"] and not raw["real_browser"]
     reports = []
     for case in raw["cases"]:
-        if case["case"] == "observer_failure":
+        if case["case"] in {"observer_failure", "readonly_start"}:
             assert case["browser"]["rejected"] > 0
+            with pytest.raises(ValueError, match="invalid_timing_trace"):
+                classify(case["source"], case["browser"])
             continue
         report = classify(case["source"], case["browser"])
         assert report["complete"]
@@ -208,7 +244,8 @@ def test_probe_separates_timing_evidence_without_changing_player(tmp_path):
             assert report["evidence"]["browser_receive_work_slow"]
             assert report["browser_max_receive_work_ms"] == 120
         reports.append({"case": case["case"], **report})
-    assert len(raw["cases"]) == 6
+    assert len(raw["cases"]) == 7
+    assert raw["attachment_lifecycle_checks"] == 3
     receipt_dir = os.environ.get("SPEECH_TIMING_RECEIPT_DIR")
     if receipt_dir:
         target = Path(receipt_dir)

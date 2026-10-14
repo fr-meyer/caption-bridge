@@ -24,6 +24,9 @@ delay from readiness to the first schedule. It excludes payloads, caption
 sequence/text and private event fields. Detach restores the owned methods;
 observer faults are counted and never interrupt the player. Completed traces
 with rejected rows are not certified.
+Each probe instance attaches once. Detach is idempotent and cannot release a
+newer observer's ownership; a non-writable native node method leaves playback
+untouched and marks timing evidence rejected.
 
 | Evidence | Clock domain | What it can establish |
 | --- | --- | --- |
@@ -34,7 +37,9 @@ with rejected rows are not certified.
 | Receive-interval excess over yield interval | Two independently computed durations | Transit/dispatch variation, limited by both clocks' rate and precision |
 
 `classify` validates an allowlisted finite schema, consecutive chunk indexes,
-sample-derived deadlines, scheduling duration and coverage bounds. It never
+sample-derived deadlines and strictly advancing schedule coverage/submission.
+Each scheduled buffer's duration must equal the newly covered source samples,
+and a completed trace must cover the final chunk. It never
 subtracts the source and browser clock origins. It returns evidence flags,
 not an assigned cause. Unknown fields, nonfinite values, malformed identity or
 unmatched data fail with fixed messages. Partial or rejected traces cannot
@@ -60,7 +65,9 @@ The regression file lives under `tests/unit` and is collected by the existing
 CI test command; no new CI run is claimed here. The tests supply generated silence and fake monotonic/audio clocks and nodes.
 The probe is composed with the unchanged production player. Cases isolate
 anchored delivery, a 350 ms controller stall, a 250 ms resume hold, 120 ms
-receive work, a short tail flushed at EOS, and an observer fault. Each case
+receive work, a short tail flushed at EOS, an observer fault and a non-writable
+node method. Stale detach and incomplete schedule coverage have separate
+regressions. Each player case
 compares scheduling/start/completion behavior with the observer absent. Node
 has a 128 MiB heap and five-second timeout. No actual browser, hardware audio,
 network, SDK or provider request is involved. Optional

@@ -158,18 +158,32 @@ def classify(source, browser, *, tolerance_ms=5):
         last_yield, last_receive = yielded, received
         samples_before += s["samples"]
     gaps = []
+    last_covered = -1
+    last_submission = -1.0
     for row in browser["schedules"]:
         covered = row["covered_through_chunk_index"]
         if type(covered) is not int or not 0 <= covered < len(source["chunks"]):
             raise ValueError("invalid_schedule_coverage")
         for key in _SCHEDULE_KEYS - {"schedule_index", "covered_through_chunk_index"}:
             number(row[key])
+        submitted = row["submitted_offset_ms"]
+        if covered <= last_covered or submitted < last_submission:
+            raise ValueError("nonmonotonic_schedule")
+        if submitted + .01 < browser["chunks"][covered]["receive_offset_ms"]:
+            raise ValueError("schedule_before_receive")
+        covered_samples = sum(s["samples"] for s in source["chunks"][last_covered + 1:covered + 1])
+        covered_duration = covered_samples / RATE * 1000
+        if abs(row["duration_ms"] - covered_duration) > .01:
+            raise ValueError("schedule_coverage_duration_mismatch")
         gaps.append(row["schedule_gap_ms"])
+        last_covered, last_submission = covered, submitted
     ready = browser["ready_to_first_schedule_ms"]
     ready = number(ready) if ready is not None else None
     complete = (source["completed"] and browser["completed"] and not browser["rejected"]
                 and len(work) == len(source["chunks"]) and ready is not None)
     duration = sum(row["samples"] for row in source["chunks"]) / RATE * 1000
+    if complete and last_covered != len(source["chunks"]) - 1:
+        raise ValueError("incomplete_schedule_coverage")
     if complete and abs(sum(row["duration_ms"] for row in browser["schedules"]) - duration) > .01:
         raise ValueError("schedule_duration_mismatch")
     evidence = {

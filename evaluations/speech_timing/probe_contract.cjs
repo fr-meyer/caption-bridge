@@ -6,7 +6,7 @@ const {ChunkTimingProbe}=require('./browser_probe.cjs');
 const playerSource=fs.readFileSync(process.argv[2],'utf8');
 const fixtures=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
 const results=[];
-async function model(source,{trace=true,resumeDelay=0,busyIndex=-1,observerFailure=false}={}){
+async function model(source,{trace=true,resumeDelay=0,busyIndex=-1,observerFailure=false,readonlyStart=false}={}){
   let now=0,timer=0,resume=null,processing=0,starts=0,completes=0;
   const timers=new Map(),nodes=[],errors=[],stats=[];
   const context=vm.createContext({window:{},Float32Array,Uint8Array,DataView,Map,Set,Number,
@@ -18,7 +18,9 @@ async function model(source,{trace=true,resumeDelay=0,busyIndex=-1,observerFailu
     resume:()=>resumeDelay?new Promise(resolve=>{resume={resolve,due:now+resumeDelay};}):Promise.resolve(),
     createBuffer:(_ch,n,rate)=>{const data=new Float32Array(n);return {duration:n/rate,getChannelData:()=>data};},
     createBufferSource:()=>{const node={ended:false,stopped:false,buffer:null,connect(){},disconnect(){},
-      start(at){this.end=(at-700)*1000+this.buffer.duration*1000;},stop(){this.stopped=true;}};nodes.push(node);return node;}};
+      start(at){this.end=(at-700)*1000+this.buffer.duration*1000;},stop(){this.stopped=true;}};
+      if(readonlyStart)Object.defineProperty(node,'start',{value:node.start,writable:false,configurable:false});
+      nodes.push(node);return node;}};
   const player=new context.window.CaptionPcmPlayer({context:()=>audio,streaming:()=>true,canPlay:()=>true,
     clock:()=>1e6+now,onFirstChunk(){},onStart(){starts++;},onComplete(_msg,s){completes++;stats.push(s);},
     onError(_msg,e){errors.push(e);},onLocked(){errors.push('locked');}});
@@ -65,22 +67,29 @@ async function model(source,{trace=true,resumeDelay=0,busyIndex=-1,observerFailu
   return {browser:report,production_stats:stats[0],starts,completes,remaining_bytes:player.bytes};
 }
 (async()=>{
+  const idle={clock:()=>0,receive(){},o:{context(){throw Error('no context admission');},onComplete(){}}};
+  const first=new ChunkTimingProbe({clipId:1,epoch:0}).attach(idle);first.detach();
+  const second=new ChunkTimingProbe({clipId:2,epoch:0}).attach(idle);first.detach();
+  assert.throws(()=>new ChunkTimingProbe({clipId:3,epoch:0}).attach(idle),'stale detach cannot erase current owner');
+  second.detach();second.detach();
+  assert.throws(()=>first.attach(idle),'probe instances cannot restart with stale trace state');
   for(const [name,source,settings] of [
     ['anchored',fixtures.normal,{}],['controller_stall',fixtures.stalled,{}],
     ['resume_delay',fixtures.normal,{resumeDelay:250}],['receive_work',fixtures.normal,{busyIndex:31}],
     ['EOS_short_tail',fixtures.short,{}],['observer_failure',fixtures.normal,{observerFailure:true}],
+    ['readonly_start',fixtures.normal,{readonlyStart:true}],
   ]){
     const observed=await model(source,settings),without=await model(source,{...settings,trace:false,observerFailure:false});
     assert.deepEqual(JSON.parse(JSON.stringify(observed.production_stats)),
       JSON.parse(JSON.stringify(without.production_stats)),'instrumentation preserves production scheduling');
     assert.equal(observed.starts,without.starts);assert.equal(observed.completes,without.completes);
-    if(name!=='observer_failure'){
+    if(!['observer_failure','readonly_start'].includes(name)){
       assert(observed.browser.completed);assert.equal(observed.browser.rejected,0);
       assert.equal(observed.browser.chunks.length,source.chunks.length);
       assert(observed.browser.schedules.every(s=>s.covered_through_chunk_index<source.chunks.length));
     }else assert(observed.browser.rejected>0);
     results.push({case:name,source,...observed,equivalent_without_probe:true});
   }
-  console.log(JSON.stringify({passed:true,cases:results,device:false,provider:false,network:false,
+  console.log(JSON.stringify({passed:true,cases:results,attachment_lifecycle_checks:3,device:false,provider:false,network:false,
     real_browser:false,real_audio:false,clock_origins:'source arbitrary; browser1e6ms; audio700s'}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
