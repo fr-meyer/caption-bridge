@@ -74,6 +74,54 @@ network, SDK or provider request is involved. Optional
 `SPEECH_TIMING_RECEIPT_DIR` saves only numeric synthetic receipts outside the
 source tree.
 
+## Pinned fixture integration
+
+`fixture_adapter.py` provides an explicit `load_qualified_fixture(pack_path)`
+reader for the retained timing-v2 pack. It verifies the receipt's exact source
+head/app tree and all seven helper/manifest/PCM pins. It executes only the
+hash-verified inert fixture module, then rechecks the pack; the launcher,
+runtime and browser actor are never imported. It neither prepares nor downloads
+audio. Receipt verification refers to the old pack's scope and does not qualify
+this new adapter or extend an attended approval.
+
+`TimedFixture(fixture)` preserves the fixture interface used by the qualified
+fake SDK: `fixture.stream(cadence_seconds=0.1)` returns an async context manager
+and iterator yielding `audio_data`. It replaces relative sleeps with the reviewed
+anchored collector, using the identical public PCM and 60 ms final tail. Four
+serial context-managed streams are allowed. Their ordinal maps to clip IDs 1–4
+at epoch zero only under the qualified B/P/P/B protocol before refresh. Overlap,
+extra streams, another cadence or mismatched report identities are rejected.
+Refresh/replay is outside this adapter's scope; no mapping is inferred for it.
+
+The new `fixture_contract.cjs` composes those streams with the unchanged
+production PCM player and observer, using one shared fake context/player and
+four sequential buffered/progressive/progressive/buffered clips. It validates
+start/completion counts, exact scheduled sample bytes, finite numeric trace
+coverage, mode selection and empty buffers/timers after each clip. Input public
+PCM is passed through child stdin and is excluded from result files; clocks,
+nodes and playback are simulated. It does not launch Chrome or a server.
+
+```sh
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 \
+  python -B -m pytest -q -p no:cacheprovider \
+  tests/unit/test_speech_fixture_integration.py
+```
+
+Three integration cases run in ordinary existing CI using generated silence;
+the retained-public-pack case explicitly skips when the asset is absent. To run
+that additional local case, set `SPEECH_TIMING_QUALIFIED_PACK` to the immutable
+timing-v2 folder. No PCM, local receipt, machine path, credentials or attended
+evidence is added to Git. `SPEECH_TIMING_RECEIPT_DIR` optionally saves numeric
+results to an existing directory. The local exact-pack case checks all 296,640
+samples, 124 chunks, the SDK stream interface and the same shared-player quartet.
+
+This is an offline integration candidate. It does not modify the qualified
+helper/browser actor or install an automatic observer into the app. A future
+attended helper needs its own explicit observer attachment/lifecycle integration,
+source review and affected silent-browser qualification. Old attended aggregate
+gap measurements remain unchanged; these fake-clock results cannot establish
+physical latency or a user's mode preference.
+
 ## Remaining gates
 
 This is source preparation, not attended qualification. Before using this
