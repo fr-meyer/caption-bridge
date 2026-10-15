@@ -124,6 +124,39 @@ physical latency or a user's mode preference.
 
 ## Remaining gates
 
+`browser_attachment.cjs` now supplies an explicit before-app factory hook for
+the public-fixture helper. It attaches the reviewed observer to the app's actual
+lazy player, including the first payload when a speaking notice is missing.
+It composes with the existing helper's later prototype observer and follows
+the four serial epoch-zero clip IDs. It never constructs or resumes audio.
+Out-of-order clips or a second player reject timing evidence while application
+playback continues. Disposal restores only the factory/methods still owned by
+the observer; it preserves newer owners.
+
+`ActorTimingBridge(actor, timed_fixture, receipt_dir=existing_directory).attach()`
+wraps an existing **offline** actor's observer installation and observation.
+Pass the same `TimedFixture` instance to the existing fake SDK runtime. The
+original actor still owns all operations and its observations are returned
+unchanged. Completed reports are validated against source streams before the
+bridge saves numeric source/browser rows and classifications. Call
+`bridge.require_quartet()` after the actor finishes and `await bridge.close()` in
+`finally`. Both actor and browser attachments are explicit and single-use.
+Closing retires the browser observer and registers an inert disable script so
+the observer stays retired across refresh regardless of init-script order.
+A second bridge cannot reuse the same actor or page after closure. The
+qualified helper files and public fixture are unchanged; no new launcher
+or automatic application import is added.
+
+The focused `tests/unit/test_speech_actor_attachment.py` uses fake pages and a
+VM running the production player with fake nodes/clocks. It covers the deferred
+factory, existing prototype observer, first payload, shared B/P/P/B quartet,
+sample identity, owner replacement, malformed snapshots and partial evidence.
+The retained-public-pack case runs locally when explicitly selected and skips
+in hosted CI when that unpublished asset is absent. These are eight new source
+contracts, not an actual Chrome/Safari or attended helper qualification. The
+bridge deliberately supports offline actors only until that later scope is
+qualified; it cannot be used to start an attended session.
+
 This is source preparation, not attended qualification. Before using this
 observer in an attended helper, independently review its new integration,
 freeze exact helper/source/fixture hashes, run only the affected silent
