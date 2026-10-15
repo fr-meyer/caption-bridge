@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class AudioCapture:
-    """Captures PCM audio from the default microphone via sounddevice."""
+    """Captures PCM audio from the selected native input via sounddevice."""
 
     def __init__(
         self,
@@ -24,8 +24,10 @@ class AudioCapture:
         metrics_callback: Callable[[int, int], None] | None = None,
         onset_callback: Callable[[bytes], None] | None = None,
         ingress_callback: Callable[[dict[str, int]], None] | None = None,
+        device: int | None = None,
     ) -> None:
         self._sample_rate = sample_rate
+        self._device = device
         self._loop = loop
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(
             maxsize=max_queue_chunks
@@ -109,6 +111,7 @@ class AudioCapture:
     def start(self) -> None:
         blocksize = self._sample_rate // 10  # ~100 ms chunks
         self._stream = sd.RawInputStream(
+            device=self._device,
             samplerate=self._sample_rate,
             channels=1,
             dtype="int16",

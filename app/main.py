@@ -14,6 +14,7 @@ from starlette.staticfiles import StaticFiles
 
 from app import ws
 from app.audio import AudioCapture
+from app.audio_devices import native_input_devices
 from app.boundary import BoundaryDetector
 from app.config import settings
 from app.identity import runtime_identity
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 manager = SessionManager(config=settings)
+manager.input_devices = native_input_devices(settings.audio_sample_rate)
 dispatcher = TranslationDispatcher(session_manager=manager, config=settings)
 manager.set_dispatcher(dispatcher)
 mistral_client = Mistral(api_key=settings.mistral_api_key)
@@ -158,6 +160,7 @@ async def _start_pipeline() -> None:
 
     loop = asyncio.get_running_loop()
     audio = AudioCapture(
+        device=manager.input_devices.capture_device() if manager.input_devices is not None else None,
         sample_rate=settings.audio_sample_rate,
         loop=loop,
         max_queue_chunks=settings.audio_queue_max_chunks,
@@ -471,7 +474,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 
-BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/styles.css"})
+BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/audio-devices.js", "/styles.css"})
 
 
 @app.middleware("http")

@@ -75,6 +75,22 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/pcm-player.js
+          node --check app/static/audio-devices.js
+
+      - name: Test pitch-preserving PCM evaluation
+        if: matrix.python-version == '3.11'
+        timeout-minutes: 1
+        run: >-
+          node --max-old-space-size=128 --test --test-concurrency=1
+          speed-evaluation/pitch/test_wsola.cjs
+          speed-evaluation/pitch/test_transform_client.cjs
+
+      - name: Test offline v0.5 reliability and Windows software contracts
+        if: matrix.python-version == '3.11'
+        timeout-minutes: 2
+        run: >-
+          uv run --python 3.11 python -B evaluations/reliability_v050/run_offline.py
+          --receipt-dir "$RUNNER_TEMP/caption-reliability-v050"
 
   browser-e2e:
     runs-on: ubuntu-latest
@@ -103,3 +119,6 @@ jobs:
 
       - name: Run browser end-to-end contracts
         run: uv run --python 3.13 python -m pytest -q browser_tests --browser chromium
+
+      - name: Test synthetic browser audio routing
+        run: node --test tests/audio-devices.test.cjs

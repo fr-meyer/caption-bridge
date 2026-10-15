@@ -24,6 +24,11 @@
 
     let audioContext = null;
     let pcmPlayer = null;
+    let audioDevices = null;
+    function getAudioContext() {
+        if (!audioContext) audioContext = new AudioContext();
+        return audioContext;
+    }
 
     const appState = {
         status: "idle_blocked",
@@ -316,6 +321,9 @@
 
     function handleMessage(msg) {
         switch (msg.type) {
+            case "input_devices":
+                if (audioDevices) audioDevices.inventory(msg);
+                break;
             case "session_snapshot":
                 handleSnapshot(msg);
                 break;
@@ -389,9 +397,15 @@
 
     function handleSnapshot(msg) {
         if (appState.ownershipBlocked) return;
-        if (msg.connection_lifecycle &&
-            (!handleConnectionLifecycle(msg.connection_lifecycle) || msg.connection_lifecycle.state !== "admitted")) return;
+        const lifecycle = msg.connection_lifecycle || appState.connectionLifecycle;
+        if (!lifecycle || (appState.connectionLifecycle &&
+            lifecycle.connection_id !== appState.connectionLifecycle.connection_id) ||
+            !handleConnectionLifecycle(lifecycle) || lifecycle.state !== "admitted") return;
         appState.connectionState = "connected";
+        if (audioDevices) {
+            audioDevices.snapshot(msg.input_devices, msg.status, msg.session_id);
+            audioDevices.refresh();
+        }
         appState.status = msg.status;
         appState.pipelineDiagnostics = msg.pipeline_diagnostics || null;
         if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
@@ -506,6 +520,7 @@
 
     function handleStatus(msg) {
         appState.status = msg.status;
+        if (audioDevices) audioDevices.updateStatus(msg.status);
 
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
@@ -753,10 +768,7 @@
         pcmPlayer = new window.CaptionPcmPlayer({
             streaming: () => appState.ttsStreaming,
             canPlay: () => !appState.ttsMuted && appState.ttsAudioUnlocked && !appState.ttsCatchUpPending,
-            context: () => {
-                if (!audioContext) audioContext = new AudioContext();
-                return audioContext;
-            },
+            context: getAudioContext,
             onFirstChunk: msg => ack("tts_chunk_received", msg),
             onStart: msg => {
                 appState.ttsSpeakingSeq = msg.seq;
@@ -995,6 +1007,7 @@
     }
 
     function fullRender() {
+        if (audioDevices) audioDevices.updateStatus(appState.status);
         render();
         rebuildCaptionLog();
     }
@@ -1542,6 +1555,7 @@
         });
         els.sessionTerms.addEventListener("click", function () { openTermEditor(null); });
         els.termClose.addEventListener("click", function () { els.termDialog.close(); });
+        els.termDialog.addEventListener("close", restoreTermFocus);
         els.termForm.addEventListener("submit", function (event) {
             event.preventDefault();
             saveCaptionTerm();
@@ -1685,7 +1699,7 @@
 
         els.enableAudioBtn.addEventListener("click", function () {
             if (!audioContext) {
-                audioContext = new AudioContext();
+                getAudioContext();
             }
             audioContext.resume().then(function () {
                 appState.ttsAudioUnlocked = true;
@@ -1853,6 +1867,7 @@
             els.termError.textContent = msg.message;
             els.termError.classList.remove("hidden");
         } else {
+            els.termError.textContent = "";
             els.termError.classList.add("hidden");
             els.termSource.value = "";
             els.termPreferred.value = "";
@@ -1874,14 +1889,31 @@
         els.termKind.value = "target";
         els.termCaption.textContent = entry ? "Original: " + entry.sourceText +
             "\nTranslation: " + (entry.translatedText || "unavailable") : "";
+        els.termError.textContent = "";
         els.termError.classList.add("hidden");
         renderTermEditor();
+        modalReturnFocus.set(els.termDialog, document.activeElement);
         els.termDialog.showModal();
-        els.termSource.focus();
+        (canEditTerms() ? els.termSource : els.termClose).focus();
+    }
+
+    function restoreTermFocus() {
+        if (els.termDialog.open) return;
+        const previous = modalReturnFocus.get(els.termDialog);
+        modalReturnFocus.delete(els.termDialog);
+        if (previous && previous !== document.body && previous.isConnected &&
+            !previous.disabled && previous.getClientRects().length && !previous.closest("[inert]")) {
+            previous.focus();
+        } else {
+            els.statusLabel.focus();
+        }
     }
 
     function renderTermEditor() {
         if (!els.termList) return;
+        const focused = els.termDialog.open && els.termList.contains(document.activeElement)
+            ? document.activeElement : null;
+        let nextFocus = null;
         els.termVersion.textContent = "Session terms v" + terminologyState.version +
             " · " + currentTerms().length + "/20 pairs" +
             (terminologyState.changes >= 100 ? " · 100-change limit reached" : "") +
@@ -1898,7 +1930,12 @@
             const edit = document.createElement("button");
             edit.type = "button";
             edit.textContent = "Edit";
+            edit.setAttribute("aria-label", "Edit term: " + term.source);
+            edit.dataset.termSource = term.source;
+            edit.dataset.termAction = "edit";
             edit.disabled = !canEditTerms();
+            if (focused && focused.dataset.termSource === term.source &&
+                focused.dataset.termAction === "edit" && !edit.disabled) nextFocus = edit;
             edit.addEventListener("click", function () {
                 termContext.captionSeq = null;
                 termContext.editSource = term.source;
@@ -1911,7 +1948,12 @@
             const remove = document.createElement("button");
             remove.type = "button";
             remove.textContent = "Remove";
+            remove.setAttribute("aria-label", "Remove term: " + term.source);
+            remove.dataset.termSource = term.source;
+            remove.dataset.termAction = "remove";
             remove.disabled = !canEditTerms();
+            if (focused && focused.dataset.termSource === term.source &&
+                focused.dataset.termAction === "remove" && !remove.disabled) nextFocus = remove;
             remove.addEventListener("click", function () {
                 termContext.captionSeq = null;
                 sendTermChange(currentTerms().filter(function (item) { return item.source !== term.source; }));
@@ -1921,6 +1963,7 @@
         });
         els.termSave.disabled = !canEditTerms();
         els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
+        if (focused) (nextFocus || els.termClose).focus();
     }
 
     function sendTermChange(entries, undo) {
@@ -2060,7 +2103,8 @@
             translation_model: appState.translationModel,
             translation_reasoning_effort: appState.translationReasoningEffort,
             tts_muted: appState.ttsMuted, glossary: entries,
-            caption_profile: appState.captionProfileId });
+            caption_profile: appState.captionProfileId,
+            input_device: audioDevices ? audioDevices.input : "default" });
     }
 
 
@@ -2233,6 +2277,19 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         cacheDom();
+        audioDevices = new window.CaptionAudioDevices({
+            send: send,
+            context: getAudioContext,
+            canRoute: () => typeof AudioContext !== "undefined" &&
+                typeof AudioContext.prototype.setSinkId === "function",
+            unavailable: () => {
+                appState.ttsMuted = true;
+                applyLocalTtsMuteEffects();
+                send({type: "tts_mute", muted: true});
+                renderTtsControls();
+            },
+        });
+        audioDevices.mount(document);
         loadCaptionsOnlyPreference();
         loadGlossaryPreference();
         loadCaptionProfile();

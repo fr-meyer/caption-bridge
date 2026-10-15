@@ -91,6 +91,8 @@ lint:
 
 check: lint quality-benchmark segmentation-benchmark resilience-soak full-pipeline-scenario test
 	node --check app/static/app.js
+	node --check app/static/audio-devices.js
+	node --test tests/audio-devices.test.cjs
 
 setup-conda:
 	conda env create -f environment.yml
