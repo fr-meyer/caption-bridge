@@ -49,8 +49,9 @@ interval excess; these flags are not exclusive causal categories.
 The original attended quartet only retained aggregate gaps (160/163 ms) and
 human clarity/no-overlap. It cannot be retroactively given this per-chunk
 evidence. Prior relative-cadence and cadence-v3 reviews remain valid for their
-separate helper versions; this portable module does not change that qualified
-helper or add it to PR85.
+separate helper versions. The collector and pinned-fixture integration entered
+`dev` through PR86/PR85; the browser attachment at `51c56bb` remains local.
+Neither changes the immutable qualified helper.
 
 ## Synthetic contracts
 
@@ -157,11 +158,20 @@ contracts, not an actual Chrome/Safari or attended helper qualification. The
 bridge deliberately supports offline actors only until that later scope is
 qualified; it cannot be used to start an attended session.
 
-This is source preparation, not attended qualification. Before using this
-observer in an attended helper, independently review its new integration,
-freeze exact helper/source/fixture hashes, run only the affected silent
-regression and obtain an explicit readiness request. None of those steps
-starts a live session automatically.
+Source preparation at `51c56bb` has eight passing contracts, independent source
+review, and one affected muted-Chrome check using the qualified actor, native
+WebSocket, fake input/SDK/AudioContext and three 100 ms silence chunks per clip.
+That check completed four reports and verified observer retirement and owned
+cleanup in 14.46 seconds. It does not qualify the full public fixture in Chrome,
+an actual AudioContext, physical devices or attended use. Retained receipts stay
+outside Git. Reuse these results while their source and harness hashes match.
+
+The [installation and physical-check plan](acceptance-plan.md) separates ordinary
+Medium use from optional timing research. An attended adapter still needs its own
+implementation, review, exact helper/source/fixture freeze and affected silent
+qualification before a readiness request. Do not bypass the offline-only check
+or relabel a real-device actor as offline. None of those steps starts a session
+automatically.
 
 A future explicitly approved public-fixture session can collect these rows
 and a per-mode human gap/overlap/quality/preference report. Actual audible

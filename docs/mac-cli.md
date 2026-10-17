@@ -34,11 +34,12 @@ off the Mac.
 
 ## Rollback
 
-For the proposed v0.5.0 release, the immediate published rollback is immutable
-`v0.4.0` at `84f7b48e881dec288f60aaa2209f236f8e24ae2e` on `main`.
-Until v0.5.0 is published, v0.4.0 remains current and its rollback is `v0.3.0`
-at `1542b462534590b7183765d9071efff4ae9e65ab`.
-Earlier `v0.2.1`, `v0.2.0` and `v0.1.0` tags remain available.
+As of October 17, 2026, the published release is `v0.5.0` at
+`39ecd3e7e6eafd367877eff3b0a0ef878a17b127`. Its previous published release is
+`v0.4.0` at `84f7b48e881dec288f60aaa2209f236f8e24ae2e`.
+For an installation of a later development candidate, record the actual previous
+installed SHA separately; a published tag is not necessarily that installation's
+immediate rollback. Earlier release tags remain available.
 
 1. Stop the controller.
 2. Restore the prior Mac-local `MISTRAL_TRANSLATE_MODEL` value if the upgrade changed it. This matters when rolling back to a build with a smaller output-token limit.
