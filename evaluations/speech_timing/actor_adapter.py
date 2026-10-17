@@ -125,12 +125,27 @@ class ActorTimingBridge:
             # Init scripts have no individual removal API. On any later
             # navigation, either order is safe: disable runs first and the
             # installer skips, or runs second and immediately disposes it.
+            registration_error = None
             try:
                 await self.actor.page.add_init_script(_DISABLE_SCRIPT)
-            finally:
-                # Failure to cover future documents must not skip disposal of
-                # the current document. Either failure leaves close retryable.
+            except BaseException as error:
+                registration_error = error
+            # Even cancellation must not skip current-document disposal, but a
+            # disposal error must not replace an earlier cancellation/control
+            # exception with an ordinary page error.
+            try:
                 await self.actor.page.evaluate(_DISABLE_SCRIPT)
+            except BaseException as error:
+                if registration_error is not None:
+                    if not isinstance(registration_error, Exception):
+                        raise registration_error from error
+                    raise error from registration_error
+                raise
+            if registration_error is not None:
+                raise registration_error
+        except BaseException:
+            self._retirement_pending = True
+            raise
         finally:
             if self.actor.install_observers is self.install_wrapper:
                 self.actor.install_observers = self.original_install

@@ -152,8 +152,10 @@ Closing attempts current-document disposal even when registering the disable
 script for future documents fails. Python method ownership is restored in either
 case. A page-API failure still raises and leaves retirement pending, so an
 explicit later `close()` can retry both operations; successful closure is
-idempotent. An error is not a successful cleanup receipt. The four fake-page
-retirement regressions use no browser, media, SDK or server.
+idempotent. Cancellation remains primary if current-document disposal also
+fails; the secondary error remains chained. An error is not a successful cleanup
+receipt. The five fake-page retirement regressions use no browser, media, SDK or
+server.
 
 The focused `tests/unit/test_speech_actor_attachment.py` uses fake pages and a
 VM running the production player with fake nodes/clocks. It covers the deferred

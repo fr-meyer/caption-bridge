@@ -1,6 +1,7 @@
 """Faulted observer retirement with inert actor/page objects only."""
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from evaluations.speech_timing.actor_adapter import ActorTimingBridge
@@ -77,6 +78,22 @@ class ActorRetirementTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RetirementFailure):
             await bridge.close()
         self.assertEqual(actor.page.actions, ["register", "dispose"])
+        await self.finish_retry(actor, originals, bridge)
+
+    async def test_registration_cancellation_remains_primary_when_disposal_also_fails(self):
+        page = Page(fail_disposal=True)
+        original_registration = page.add_init_script
+
+        async def cancelled_registration(_script):
+            page.actions.append("register")
+            raise asyncio.CancelledError
+
+        page.add_init_script = cancelled_registration
+        actor, originals, bridge = self.attach(page)
+        with self.assertRaises(asyncio.CancelledError):
+            await bridge.close()
+        self.assertEqual(page.actions, ["register", "dispose"])
+        page.add_init_script = original_registration
         await self.finish_retry(actor, originals, bridge)
 
     async def test_both_failures_remain_retryable_and_preserve_newer_method_owners(self):
