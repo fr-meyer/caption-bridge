@@ -49,8 +49,9 @@ interval excess; these flags are not exclusive causal categories.
 The original attended quartet only retained aggregate gaps (160/163 ms) and
 human clarity/no-overlap. It cannot be retroactively given this per-chunk
 evidence. Prior relative-cadence and cadence-v3 reviews remain valid for their
-separate helper versions; this portable module does not change that qualified
-helper or add it to PR85.
+separate helper versions. The collector and pinned-fixture integration entered
+`dev` through PR86/PR85; the browser attachment at `51c56bb` remains local.
+Neither changes the immutable qualified helper.
 
 ## Synthetic contracts
 
@@ -124,11 +125,62 @@ physical latency or a user's mode preference.
 
 ## Remaining gates
 
-This is source preparation, not attended qualification. Before using this
-observer in an attended helper, independently review its new integration,
-freeze exact helper/source/fixture hashes, run only the affected silent
-regression and obtain an explicit readiness request. None of those steps
-starts a live session automatically.
+`browser_attachment.cjs` now supplies an explicit before-app factory hook for
+the public-fixture helper. It attaches the reviewed observer to the app's actual
+lazy player, including the first payload when a speaking notice is missing.
+It composes with the existing helper's later prototype observer and follows
+the four serial epoch-zero clip IDs. It never constructs or resumes audio.
+Out-of-order clips or a second player reject timing evidence while application
+playback continues. Disposal restores only the factory/methods still owned by
+the observer; it preserves newer owners.
+
+`ActorTimingBridge(actor, timed_fixture, receipt_dir=existing_directory).attach()`
+wraps an existing **offline** actor's observer installation and observation.
+Pass the same `TimedFixture` instance to the existing fake SDK runtime. The
+original actor still owns all operations and its observations are returned
+unchanged. Completed reports are validated against source streams before the
+bridge saves numeric source/browser rows and classifications. Call
+`bridge.require_quartet()` after the actor finishes and `await bridge.close()` in
+`finally`. Both actor and browser attachments are explicit and single-use.
+Closing retires the browser observer and registers an inert disable script so
+the observer stays retired across refresh regardless of init-script order.
+A second bridge cannot reuse the same actor or page after closure. The
+qualified helper files and public fixture are unchanged; no new launcher
+or automatic application import is added.
+
+Closing attempts current-document disposal even when registering the disable
+script for future documents fails. Python method ownership is restored in either
+case. A page-API failure still raises and leaves retirement pending, so an
+explicit later `close()` can retry both operations; successful closure is
+idempotent. Cancellation remains primary if current-document disposal also
+fails; the secondary error remains chained. An error is not a successful cleanup
+receipt. The five fake-page retirement regressions use no browser, media, SDK or
+server.
+
+The focused `tests/unit/test_speech_actor_attachment.py` uses fake pages and a
+VM running the production player with fake nodes/clocks. It covers the deferred
+factory, existing prototype observer, first payload, shared B/P/P/B quartet,
+sample identity, owner replacement, malformed snapshots and partial evidence.
+The retained-public-pack case runs locally when explicitly selected and skips
+in hosted CI when that unpublished asset is absent. These are eight new source
+contracts, not an actual Chrome/Safari or attended helper qualification. The
+bridge deliberately supports offline actors only until that later scope is
+qualified; it cannot be used to start an attended session.
+
+Source preparation at `51c56bb` has eight passing contracts, independent source
+review, and one affected muted-Chrome check using the qualified actor, native
+WebSocket, fake input/SDK/AudioContext and three 100 ms silence chunks per clip.
+That check completed four reports and verified observer retirement and owned
+cleanup in 14.46 seconds. It does not qualify the full public fixture in Chrome,
+an actual AudioContext, physical devices or attended use. Retained receipts stay
+outside Git. Reuse these results while their source and harness hashes match.
+
+The [installation and physical-check plan](acceptance-plan.md) separates ordinary
+Medium use from optional timing research. An attended adapter still needs its own
+implementation, review, exact helper/source/fixture freeze and affected silent
+qualification before a readiness request. Do not bypass the offline-only check
+or relabel a real-device actor as offline. None of those steps starts a session
+automatically.
 
 A future explicitly approved public-fixture session can collect these rows
 and a per-mode human gap/overlap/quality/preference report. Actual audible
