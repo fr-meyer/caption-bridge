@@ -148,6 +148,13 @@ A second bridge cannot reuse the same actor or page after closure. The
 qualified helper files and public fixture are unchanged; no new launcher
 or automatic application import is added.
 
+Closing attempts current-document disposal even when registering the disable
+script for future documents fails. Python method ownership is restored in either
+case. A page-API failure still raises and leaves retirement pending, so an
+explicit later `close()` can retry both operations; successful closure is
+idempotent. An error is not a successful cleanup receipt. The four fake-page
+retirement regressions use no browser, media, SDK or server.
+
 The focused `tests/unit/test_speech_actor_attachment.py` uses fake pages and a
 VM running the production player with fake nodes/clocks. It covers the deferred
 factory, existing prototype observer, first payload, shared B/P/P/B quartet,

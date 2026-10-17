@@ -51,6 +51,7 @@ class ActorTimingBridge:
         self.reports = {}
         self.numeric_traces = {}
         self.attached = False
+        self._retirement_pending = False
         self.used = False
 
     def attach(self):
@@ -117,14 +118,19 @@ class ActorTimingBridge:
         return self
 
     async def close(self):
-        if not self.attached:
+        if not self.attached and not self._retirement_pending:
             return
+        self._retirement_pending = True
         try:
             # Init scripts have no individual removal API. On any later
             # navigation, either order is safe: disable runs first and the
             # installer skips, or runs second and immediately disposes it.
-            await self.actor.page.add_init_script(_DISABLE_SCRIPT)
-            await self.actor.page.evaluate(_DISABLE_SCRIPT)
+            try:
+                await self.actor.page.add_init_script(_DISABLE_SCRIPT)
+            finally:
+                # Failure to cover future documents must not skip disposal of
+                # the current document. Either failure leaves close retryable.
+                await self.actor.page.evaluate(_DISABLE_SCRIPT)
         finally:
             if self.actor.install_observers is self.install_wrapper:
                 self.actor.install_observers = self.original_install
@@ -133,6 +139,7 @@ class ActorTimingBridge:
             self.attached = False
             if _OWNERS.get(self.actor) is self:
                 del _OWNERS[self.actor]
+        self._retirement_pending = False
 
     def require_quartet(self):
         if len(self.reports) != 4 or not all(r["complete"] for r in self.reports.values()):
