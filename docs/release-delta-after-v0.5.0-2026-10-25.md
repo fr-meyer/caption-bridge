@@ -37,11 +37,20 @@ dependency-advisory or physical-acceptance result.
 
 Medium, provider routing and token/deadline behavior are not changed by the
 cross-platform preparation. Buffered speech remains the default; progressive
-playback remains opt-in. Issue #88 ASR diagnostics work is a separate candidate
-and is **not** part of this frozen baseline or this software-workflow change.
-Review its final combined diff and exact-revision checks separately if included
-in a later release candidate; no cause or duration of a historical outage is
-inferred here.
+playback remains opt-in. The baseline comparison above ends at `e25623d`.
+
+The prepared October 25 local combination also includes issue #88's
+[ASR diagnostics and recovery-notice correction](asr-recovery-diagnostics.md),
+source candidate `2c4b1c37d61253e4a75dccef73b2d34d0ab2fb61`. It adds timestamped,
+allowlisted failure/reconnect records with opaque run/attempt correlation,
+duplicate suppression and a truthful automatic-recovery notice. A final
+provider-free Mac run passed 88 focused Python/pipeline/WS cases; four headless
+Mac Chrome cases passed with media APIs and external page requests denied.
+These results do not identify the cause or duration of the October 20 incident,
+qualify a new Linux/Windows head, or update the installed Mac. The combined
+candidate's source identity, constituent reviews and unchanged application tree
+relative to the tested ASR candidate are retained in its local handoff. Hosted
+CI for this new combination remains unrun until its publication is authorized.
 
 ## Automated platform coverage and the actual gap
 
