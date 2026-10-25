@@ -43,7 +43,12 @@ provider clients remain disabled, and the application runtime is unchanged.
 The guard regressions force the Windows-style fallback on the local test host
 and exercise bidirectional IPC, event-loop/server startup, closed listeners,
 and denied external/unowned loopback, datagram and DNS operations. This is
-source/fixture evidence; native Windows results require the hosted Windows job.
+source/fixture evidence. Native Windows execution is now recorded by
+[run40164259241](https://github.com/fr-meyer/caption-bridge/actions/runs/40164259241)
+at `a912ea2f73630dba9c0205e6a33988f3add8c164`: four headless/report tests,
+47 offline tests, one known expected failure, and owned fake-app/browser
+teardown passed. The aggregate changes only documentation from that source;
+its own Ubuntu CI remains pending. See the [source binding and coverage limits](../../docs/release-delta-after-v0.5.0-2026-10-25.md).
 `owned_fallback_ipc_pairs` is a content-free count, not hardware acceptance.
 The three fresh-process headless import regressions use the same guard so
 missing-device/backend behavior can also be tested on Windows.

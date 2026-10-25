@@ -11,6 +11,8 @@ a post-release, nonblocking follow-up under the owner's current direction.
 | Released v0.5.0 | `39ecd3e7e6eafd367877eff3b0a0ef878a17b127` / `8853dd29621f3da02a399034bf4fe82844987722` |
 | Reviewed development baseline | `e25623d0168400f8b1867f6f4ab34ef85fa157fe` / `bc00dc015d58374ec579b9ce6063df8635567197` |
 | Recorded Mac installation | `a746f9aff65ee40ff3943d1137127378e744fae2` / `bc00dc015d58374ec579b9ce6063df8635567197` |
+| Published PR89 with passing Ubuntu CI | `fbb213f4db2247e0d0192ca3802463524e73991c` / `64dcfa6b3aaccb8b0a0ba97301fbcb15bd3e7d37` |
+| Windows-tested harness source | `a912ea2f73630dba9c0205e6a33988f3add8c164` / `64dcfa6b3aaccb8b0a0ba97301fbcb15bd3e7d37` |
 
 The development baseline includes merged PR85, PR86 and PR87. Its exact-head
 Ubuntu [CI39046064304](https://github.com/fr-meyer/caption-bridge/actions/runs/39046064304)
@@ -21,8 +23,9 @@ the released baseline. No new tag or release version is selected here.
 
 The recorded installed application matches the `e25623d` development baseline
 above. Cross-platform workflow/documentation preparation alone needs no update
-or repeat test of ordinary installed Medium. The combined ASR follow-up below
-has application tree `2d47eccbc9047b9ee0a51844ce5d8c0d5e576d8e`, different from
+or repeat test of ordinary installed Medium. PR89 includes the combined ASR
+follow-up and its headless-import fix; its application tree is
+`64dcfa6b3aaccb8b0a0ba97301fbcb15bd3e7d37`, different from
 the installed `bc00dc0` tree; it is prepared source and has not been installed.
 Installed Medium remains unchanged and usable. An equal application tree is
 source identity, not a fresh runtime/settings, dependency-advisory or physical
@@ -52,25 +55,54 @@ duplicate suppression and a truthful automatic-recovery notice. A final
 provider-free Mac run passed 88 focused Python/pipeline/WS cases; five headless
 Mac Chrome cases passed with media APIs and external page requests denied.
 These results do not identify the cause or duration of the October 20 incident,
-qualify a new Linux/Windows head, or update the installed Mac. The combined
-candidate's source identity, constituent reviews, unchanged tested Python backend
-and matching tested frontend hashes are retained in its local handoff. Hosted
-CI for this new combination remains unrun until its publication is authorized.
+qualify another platform by themselves, or update the installed Mac. The later
+headless-import repair defers sounddevice loading until a real device query or
+Start, preserving runtime failure when no backend/device exists. PR89 at
+`fbb213f` subsequently passed the Ubuntu software checks below.
+
+## Exact evidence binding for this aggregate
+
+Ubuntu [run40159366785](https://github.com/fr-meyer/caption-bridge/actions/runs/40159366785)
+passed at PR89 head `fbb213f4db2247e0d0192ca3802463524e73991c`.
+Its checked-out merge commit `add16c8cb135162a986e4399a8ae3a0769da0d38`
+has the same complete Git tree as that head:
+`1030aae45251e33579720ca28b77aebd8315da72`.
+Python 3.11 and 3.13 each passed 530 tests with three recorded skips;
+Chromium passed 62 cases, Node routing 16 and Node pitch evaluation 34.
+
+Native Windows [run40164259241](https://github.com/fr-meyer/caption-bridge/actions/runs/40164259241)
+checked out `a912ea2f73630dba9c0205e6a33988f3add8c164` via a separately
+approved one-shot launcher. Four headless/report cases and 47 offline cases
+passed with one known strict expected failure. The owned fixture server,
+idle public DOM gate and teardown passed; no listeners or temporary browser
+profile remained. The run used Windows Server 2025, Python 3.11.15,
+Node 22.23.4 and PowerShell 7.6.7, with fake media/providers throughout.
+
+PR89 and that Windows source have identical `app/`, dependency and workflow
+bytes. The eight-file difference is the tested Windows IPC/fixture/report
+harness and its tests/documentation. This local aggregate takes that exact
+`a912ea2` source with documentation-only updates; its executable source,
+tests and dependencies are unchanged from the Windows-tested source.
+The one-shot Windows launchers are excluded. Neither prior run is claimed as
+exact-head CI for this aggregate: ordinary aggregate-head Ubuntu CI remains
+pending publication and separate execution approval.
 
 ## Automated platform coverage and the actual gap
 
 | Platform / path | Existing evidence | Remaining automated scope |
 | --- | --- | --- |
-| Ubuntu | Ordinary CI: full Python 3.11/3.13, Chromium, Node routing and bounded offline contracts at the recorded head | Reuse it; a future candidate needs its appropriate exact-head checks |
+| Ubuntu | Passing ordinary CI at `fbb213f`: full Python 3.11/3.13, Chromium, Node routing and bounded offline contracts | Refresh exact-head CI for the aggregate harness/documentation delta |
 | macOS | Retained local fake/stdlib/Node checks and the affected muted Chrome/qualified-actor regression | These retain exact source/harness limits; no new Mac workload is needed for this workflow/document change |
-| Windows current version | PowerShell fixture, copied raw-CDP/redaction/owned-process contracts and Mac-faked app lifespan; native Windows run not recorded | The prepared manual v0.5 job fills the execution route, not the evidence gap until actually run |
+| Windows current version | Passing native Server 2025 run at `a912ea2`: guarded software tests, actual fake-media/provider app lifespan, idle raw-CDP DOM and owned teardown | Software fixture only; native audio, live providers and ordinary Windows controller remain unqualified |
 | Historical Windows v0.2.0 | Separate immutable-release workflow | Preserve it; it does not qualify current v0.5 software |
 
-The current automated gap is native execution of the existing v0.5 Windows
-software fixture. A new manual-only workflow prepares that route without
-duplicating the same fake contracts or expanding automatic Ubuntu CI. It uses
-an explicit candidate SHA, the locked catalog and an existing browser. No hosted
-run, installation or provider call is performed in this preparation.
+The remaining aggregate check is its normal three-job Ubuntu PR workflow.
+No further Windows run is required for these documentation-only changes to
+the tested source. The retained v0.5 manual workflow is still manual-only;
+its presence does not authorize another run. The earlier Windows attempt
+[40163129292](https://github.com/fr-meyer/caption-bridge/actions/runs/40163129292)
+failed after its tests while reporting the OS version; that failure is retained,
+and the success above includes its guarded receipt correction.
 
 The strict expected failure for the ordinary controller's native Windows Python
 path remains open. A successful Windows fixture job must not be advertised as
