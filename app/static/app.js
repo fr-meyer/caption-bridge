@@ -653,6 +653,7 @@
         if (msg.type === "reconnect_cancelled") {
             appState.providerOutage = null;
             renderProviderNotice();
+            renderAsrNotice();
             return;
         }
 
@@ -663,6 +664,7 @@
                 downtime_ms: msg.downtime_ms || 0,
             };
             renderProviderNotice();
+            renderAsrNotice();
             providerNoticeTimer = setTimeout(function () {
                 appState.providerOutage = null;
                 providerNoticeTimer = null;
@@ -681,6 +683,7 @@
             appState.providerOutage = msg;
         }
         renderProviderNotice();
+        renderAsrNotice();
     }
 
     function renderProviderNotice() {
@@ -1077,7 +1080,14 @@
             return;
         }
         els.asrNotice.classList.remove("hidden");
-        if (asr.state === "connecting") {
+        const recovering = appState.status === "reconnecting" ||
+            (appState.providerOutage && appState.providerOutage.outcome === "retrying");
+        if (recovering) {
+            els.asrNotice.textContent = (active ? "Microphone active" : "Microphone stopped") +
+                (asr.state === "ready" ? " · transcription ready; verifying recovery." :
+                    " · transcription interrupted; reconnecting automatically.") +
+                " Existing captions are preserved. Stop is available.";
+        } else if (asr.state === "connecting") {
             els.asrNotice.textContent = (active ? "Microphone active" : "Microphone stopped") +
                 " · connecting to transcription. Wait for transcription readiness before speaking or playing audio. Stop is available.";
         } else if (asr.state === "ready") {

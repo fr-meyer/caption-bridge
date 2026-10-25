@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import struct
 from copy import deepcopy
 from pathlib import Path
@@ -98,6 +99,85 @@ def install_pipeline(monkeypatch, tmp_path, transcribe):
     monkeypatch.setattr(ws, "finish_input", main._finish_input)
     FakeAudio.instances = []
     return manager, reconnect
+
+
+def test_recovered_stream_preserves_order_and_rejects_old_attempt_callbacks(monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    import app.reconnect as reconnect_module
+
+    monkeypatch.setattr(reconnect_module, "_POST_HANDSHAKE_HEALTH_TIMEOUT_S", 0.001)
+    callbacks = []
+
+    async def fake_transcribe(**kwargs):
+        callbacks.append(kwargs)
+        kwargs["on_session_created"]()
+        async for _ in kwargs["audio_stream"]:
+            pass
+
+    async def scenario():
+        manager, reconnect = install_pipeline(monkeypatch, tmp_path, fake_transcribe)
+        monkeypatch.setattr(manager.config, "reconnect_base_backoff_ms", 0)
+        reconnect.get_detector = lambda: main._detector
+        reconnect.finalize_reconnect_fragment = manager.finalize_reconnect_fragment
+        reconnect.start_pipeline = main._start_pipeline
+        reconnect.teardown_pipeline = main._teardown_pipeline
+        reconnect.wait_for_stream = main._wait_for_stream_established
+        await main._start_pipeline()
+        await wait_for(lambda: len(callbacks) == 1)
+        callbacks[0]["on_delta"]("SYNTHETIC first caption.")
+        callbacks[0]["on_delta"]("SYNTHETIC partial fragment")
+        callbacks[0]["on_error"](AsrStreamError("provider_error"))
+        task = reconnect._retry_task
+        assert task is not None
+        await asyncio.wait_for(task, 0.5)
+        assert manager.session.status == "listening" and len(callbacks) == 2
+        callbacks[0]["on_delta"]("SYNTHETIC stale caption.")
+        callbacks[0]["on_error"](AsrStreamError("provider_error"))
+        callbacks[1]["on_delta"]("SYNTHETIC next caption.")
+        assert [s.seq for s in manager.session.segments] == [1, 2, 3]
+        assert [s.segment_kind for s in manager.session.segments] == ["complete", "reconnect_fragment", "complete"]
+        assert [s.source_text for s in manager.session.segments] == [
+            "SYNTHETIC first caption.", "SYNTHETIC partial fragment", "SYNTHETIC next caption.",
+        ]
+        assert manager._reliability.pipeline.errors == 1
+        await ws._handle_stop()
+        assert main._audio is main._transcribe_task is None
+        assert all(a.stopped for a in FakeAudio.instances)
+        assert reconnect._retry_task is None and not manager._reliability.pipeline.capture_active
+
+    asyncio.run(scenario())
+    events = [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+              if r.name == "app.asr_diagnostics"]
+    assert len({e["run_id"] for e in events}) == 1
+    assert len([e for e in events if e["event"] == "stream_failure"]) == 1
+    assert any(e["event"] == "recovered" for e in events)
+    assert "SYNTHETIC" not in caplog.text
+
+
+def test_silence_and_pending_fragment_do_not_report_a_transcription_outage(monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+
+    async def fake_transcribe(**kwargs):
+        kwargs["on_session_created"]()
+        kwargs["on_delta"]("SYNTHETIC pending phrase")
+        async for _ in kwargs["audio_stream"]:
+            pass
+
+    async def scenario():
+        manager, reconnect = install_pipeline(monkeypatch, tmp_path, fake_transcribe)
+        await main._start_pipeline()
+        await wait_for(lambda: manager._reliability.pipeline.state == "ready")
+        await asyncio.sleep(0)
+        assert not manager.session.segments
+        assert manager.session.status == "listening" and reconnect._retry_task is None
+        assert manager._reliability.pipeline.errors == 0
+        await ws._handle_stop()
+
+    asyncio.run(scenario())
+    events = [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+              if r.name == "app.asr_diagnostics"]
+    assert not any(e["event"] in {"stream_failure", "reconnect_started"} for e in events)
+    assert "SYNTHETIC" not in caplog.text
 
 
 async def wait_for(predicate, timeout=0.5):

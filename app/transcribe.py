@@ -22,8 +22,10 @@ try:
 except ImportError:  # pragma: no cover
     UnknownRealtimeEvent = None  # type: ignore[assignment,misc]
 
+from app.asr_diagnostics import AsrDiagnostics
 from app.config import AppConfig
 from app.pipeline_diagnostics import AsrProtocolDiagnostics
+from app.reconnect import classify_reconnect_failure
 
 logger = logging.getLogger(__name__)
 _pending_connection_cleanup: set[asyncio.Task] = set()
@@ -254,6 +256,7 @@ async def transcribe(
                 timed_out |= isinstance(cause, TimeoutError)
                 cause = cause.__cause__
             error = AsrStreamError("initial_timeout" if timed_out else "transport_error")
+            error.__cause__ = exc
     finally:
         for task in tasks:
             if not task.done():
@@ -270,8 +273,9 @@ async def transcribe(
     # Successful Done is announced only after both task outcomes are settled.
     _preserve_cancellation()
     if error is not None:
-        logger.error("Transcription failed: error_type=%s", type(error).__name__)
         if on_error is not None:
             on_error(error)
+        else:
+            AsrDiagnostics().failure(error, attempt_id=0, info=classify_reconnect_failure(error))
     elif received_done and on_done is not None:
         on_done()

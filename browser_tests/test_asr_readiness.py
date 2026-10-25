@@ -80,3 +80,45 @@ def test_failed_snapshot_survives_reload_with_manual_recovery_and_stopped_captur
     page.reload()
     expect(page.locator("#asr-notice")).to_contain_text("Microphone capture stopped")
     expect(page.locator("#status-label")).to_have_text("Transcription failed · session ended")
+
+
+def test_provider_retry_notices_preserve_captions_and_distinguish_recovery_from_browser_loss(page, browser_harness):
+    sockets = []
+    snapshot = _snapshot("restored")
+    snapshot["pipeline_diagnostics"] = diagnostics("ready")
+
+    def connect(route):
+        sockets.append(route)
+        route.send(json.dumps(snapshot))
+
+    page.add_init_script("""window.mediaCalls=0;
+        navigator.mediaDevices.getUserMedia=()=>{mediaCalls++;throw Error('unexpected media');};
+        window.AudioContext=window.webkitAudioContext=function(){mediaCalls++;throw Error('unexpected media');};
+    """)
+    page.route_web_socket("**/ws", connect)
+    page.goto(browser_harness.url)
+    expect(page.locator("#asr-notice")).to_have_text("Microphone active · transcription ready.")
+    expect(page.locator(".caption-entry")).to_have_count(1)
+    # A quiet/pending-caption interval does not itself announce an outage.
+    sockets[-1].send(json.dumps({"type": "source_partial", "text": "Synthetic pending phrase"}))
+    expect(page.locator("#asr-notice")).to_have_text("Microphone active · transcription ready.")
+    sockets[-1].send(json.dumps({"type": "asr_state", **diagnostics("failed", active=False, reason="provider_error")}))
+    sockets[-1].send(json.dumps({"type": "status", "status": "reconnecting"}))
+    sockets[-1].send(json.dumps({"type": "provider_temporarily_unavailable", "service": "transcription", "outcome": "retrying"}))
+    expect(page.locator("#asr-notice")).to_contain_text("Microphone stopped · transcription interrupted; reconnecting automatically")
+    expect(page.locator("#asr-notice")).not_to_contain_text("retry manually")
+    expect(page.locator("#stop-btn")).to_be_enabled()
+    expect(page.locator(".caption-entry")).to_have_count(1)
+    sockets[-1].send(json.dumps({"type": "asr_state", **diagnostics("ready")}))
+    expect(page.locator("#asr-notice")).to_contain_text("verifying recovery")
+    sockets[-1].send(json.dumps({"type": "status", "status": "listening"}))
+    sockets[-1].send(json.dumps({"type": "recovered", "service": "transcription", "attempts": 1, "downtime_ms": 30}))
+    expect(page.locator("#asr-notice")).to_have_text("Microphone active · transcription ready.")
+    expect(page.locator(".caption-entry")).to_have_count(1)
+    sockets[-1].send(json.dumps({"type": "asr_state", **diagnostics("failed", active=False, reason="provider_error")}))
+    sockets[-1].send(json.dumps({"type": "status", "status": "reconnecting"}))
+    sockets[-1].send(json.dumps({"type": "provider_temporarily_unavailable", "service": "transcription", "outcome": "exhausted", "attempts": 2}))
+    sockets[-1].send(json.dumps({"type": "status", "status": "session_ended"}))
+    expect(page.locator("#asr-notice")).to_contain_text("retry manually")
+    expect(page.locator("#status-label")).to_have_text("Transcription failed · session ended")
+    assert page.evaluate("mediaCalls") == 0
