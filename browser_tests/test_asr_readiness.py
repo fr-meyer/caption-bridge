@@ -122,3 +122,28 @@ def test_provider_retry_notices_preserve_captions_and_distinguish_recovery_from_
     expect(page.locator("#asr-notice")).to_contain_text("retry manually")
     expect(page.locator("#status-label")).to_have_text("Transcription failed · session ended")
     assert page.evaluate("mediaCalls") == 0
+
+
+def test_terminal_snapshot_clears_a_retry_notice_from_before_reconnection(page, browser_harness):
+    sockets = []
+    snapshot = _snapshot("restored")
+    snapshot["pipeline_diagnostics"] = diagnostics("ready")
+
+    def connect(route):
+        sockets.append(route)
+        route.send(json.dumps(snapshot))
+
+    page.route_web_socket("**/ws", connect)
+    page.goto(browser_harness.url)
+    sockets[-1].send(json.dumps({"type": "asr_state", **diagnostics("failed", active=False, reason="provider_error")}))
+    sockets[-1].send(json.dumps({"type": "status", "status": "reconnecting"}))
+    sockets[-1].send(json.dumps({"type": "provider_temporarily_unavailable", "service": "transcription", "outcome": "retrying"}))
+    expect(page.locator("#asr-notice")).to_contain_text("reconnecting automatically")
+    # A replacement's authoritative snapshot can arrive without the outage's
+    # terminal/recovered events. Its lifecycle must replace the earlier notice.
+    snapshot.update(status="session_ended", ended_at="2026-01-01T00:01:00Z",
+                    pipeline_diagnostics=diagnostics("failed", active=False, reason="provider_error"))
+    sockets[-1].send(json.dumps(snapshot))
+    expect(page.locator("#asr-notice")).to_contain_text("retry manually", timeout=1000)
+    expect(page.locator("#provider-notice")).to_have_class("provider-notice hidden")
+    expect(page.locator(".caption-entry")).to_have_count(1)

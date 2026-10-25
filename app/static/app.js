@@ -408,9 +408,13 @@
         }
         appState.status = msg.status;
         appState.pipelineDiagnostics = msg.pipeline_diagnostics || null;
-        if (msg.status === "idle_blocked" || msg.status === "idle_ready") {
-            appState.providerOutage = null;
+        if (providerNoticeTimer) {
+            clearTimeout(providerNoticeTimer);
+            providerNoticeTimer = null;
         }
+        // A snapshot is authoritative even if this page missed the outage's
+        // recovered/terminal events. Do not carry a stale retry notice forward.
+        appState.providerOutage = msg.status === "reconnecting" ? { outcome: "retrying" } : null;
         if (msg.tts_epoch != null) {
             appState.currentTtsEpoch = msg.tts_epoch;
         }
@@ -1080,8 +1084,7 @@
             return;
         }
         els.asrNotice.classList.remove("hidden");
-        const recovering = appState.status === "reconnecting" ||
-            (appState.providerOutage && appState.providerOutage.outcome === "retrying");
+        const recovering = appState.status === "reconnecting";
         if (recovering) {
             els.asrNotice.textContent = (active ? "Microphone active" : "Microphone stopped") +
                 (asr.state === "ready" ? " · transcription ready; verifying recovery." :
