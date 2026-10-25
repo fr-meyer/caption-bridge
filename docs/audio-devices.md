@@ -58,7 +58,8 @@ and speech still requires the replacement document's Enable audio gesture.
 New Session resets both transient choices to defaults. No choice, device label
 or identifier is saved to browser storage, transcript exports, recovery journals,
 or aggregate diagnostics. Device lists are displayed only in the local loopback
-UI. Physical routing and intelligibility require separate attended acceptance.
+UI. Physical routing and intelligibility remain separately attended post-release
+follow-ups; they are nonblocking under the owner's current release direction.
 
 Output transitions retain the last successfully applied route even if a later
 reset fails. Device lists from before a chooser or sink change are discarded;
@@ -85,8 +86,10 @@ Silent synthetic browser checks exercise shared-context routing, active/queued
 source cancellation on output removal, Catch up, stale-epoch rejection and Replay
 in buffered and progressive modes. They also check native selection through
 Start, page replacement and New Session. These checks do not certify physical
-routing, browser permission prompts, native Safari or Windows hardware. An
-attended routing and intelligibility check remains before deploying this feature.
+routing, browser permission prompts, native Safari or Windows hardware. Attended
+routing and intelligibility checks are post-release and nonblocking following
+the owner's October 19 direction. Required source review, software CI and separate
+promotion/installation scope remain in the [release procedure](operations.md#release-procedure).
 
 API references: [native sounddevice metadata/format checks](https://python-sounddevice.readthedocs.io/en/0.5.5/api/checking-hardware.html),
 [browser device exposure](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices),
