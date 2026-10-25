@@ -52,6 +52,8 @@ dependencies on a native Windows runner, uses its existing Chrome/Edge and Node,
 and runs with read-only repository access. It installs no browser, passes no
 provider secrets, does not click Start and does not use the ordinary lifecycle
 controller as a substitute for owned fixture-process teardown.
+Pytest's `-ra` summary retains actual skip/expected-failure reasons in the job
+log before the fixture removes its temporary state.
 
 No dispatch, hosted setup or Windows execution has occurred for this change.
 Publishing or making the manual workflow available does not authorize a run.
