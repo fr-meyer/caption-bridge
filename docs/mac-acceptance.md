@@ -1,6 +1,11 @@
 # Mac acceptance checklist
 
-Use this checklist before merging a reliability change from `dev` to `main`.
+Use this checklist when a post-release Mac device/listening follow-up is chosen.
+Following the owner's October 19, 2026 direction, these checks are nonblocking
+and are not a prerequisite for `dev` to `main` promotion. This replaces the
+checklist's former pre-promotion timing; historical results keep their original
+scope. Required software checks, CI, source review and separately authorized
+promotion remain governed by the [release procedure](operations.md#release-procedure).
 Run it on the Mac that owns the microphone and speakers; keep development and
 automated validation on GCP.
 

@@ -289,14 +289,23 @@ audit evidence.
 
 ## Release procedure
 
+Policy clarification, October 25, 2026: following the owner's October 19
+direction, physical device and listening tests are post-release, nonblocking
+follow-ups for the supported Mac product. This supersedes older wording that
+made those tests a prerequisite for promotion, including the timing of the
+[Mac acceptance checklist](mac-acceptance.md). Existing acceptance records keep
+their original exact-source scope. Required software checks, CI and source
+review still apply; main/master promotion, tagging and installation retain their
+separate requested scope.
+
 1. Develop and validate on a GCP `agent/*` or feature branch.
 2. Run `uv sync --frozen` and `make check`.
 3. Open a draft PR into `dev` and require CI.
-4. After acceptance, merge into `dev`.
+4. After required source review and software checks pass, merge into `dev`.
 5. Open a release PR from `dev` to `main`.
 6. Reconcile issues whose fixes were previously merged only into `dev`.
-7. Promote or tag a candidate only after its required Mac acceptance gate passes
-   at the exact commit.
+7. Promote or tag only the reviewed candidate after its required exact-commit
+   software checks pass and that promotion or tag is separately authorized.
 8. P1.4 is already closed by the exact-candidate five-minute run in issue #35.
    A two-hour run under [`mac-soak.md`](mac-soak.md) is optional, non-blocking
    endurance evidence. Record its content-free result only when that run is chosen.
