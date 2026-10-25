@@ -19,10 +19,14 @@ evidence for that commit, not CI for a later diagnostics or workflow change.
 Package version remains 0.5.0; `pyproject.toml` and `uv.lock` are unchanged from
 the released baseline. No new tag or release version is selected here.
 
-The recorded installed application already matches this development application.
-This inventory creates no reason to update or retest ordinary installed Medium.
-An equal application tree is source identity, not a fresh runtime/settings,
-dependency-advisory or physical-acceptance result.
+The recorded installed application matches the `e25623d` development baseline
+above. Cross-platform workflow/documentation preparation alone needs no update
+or repeat test of ordinary installed Medium. The combined ASR follow-up below
+has application tree `8301deac6fde446cf2ae4726721b88ad6080ad50`, different from
+the installed `bc00dc0` tree; it is prepared source and has not been installed.
+Installed Medium remains unchanged and usable. An equal application tree is
+source identity, not a fresh runtime/settings, dependency-advisory or physical
+acceptance result. No installation or runtime test is performed by this inventory.
 
 ## Behavior and source changes since the release
 
