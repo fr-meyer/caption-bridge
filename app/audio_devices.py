@@ -117,9 +117,23 @@ class InputDevices:
 
 
 def native_input_devices(sample_rate: int = 16000) -> InputDevices:
-    import sounddevice as sd
+    """Construct the catalog without initializing PortAudio before a query."""
+    def query_devices():
+        import sounddevice as sd
 
-    return InputDevices(sd.query_devices, lambda: int(sd.default.device[0]), sd.check_input_settings,
+        return sd.query_devices()
+
+    def default_input():
+        import sounddevice as sd
+
+        return int(sd.default.device[0])
+
+    def check_input_settings(**kwargs):
+        import sounddevice as sd
+
+        return sd.check_input_settings(**kwargs)
+
+    return InputDevices(query_devices, default_input, check_input_settings,
                         sample_rate)
 
 

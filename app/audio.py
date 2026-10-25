@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
-
-import sounddevice as sd
+from typing import TYPE_CHECKING
 
 from app.pipeline_diagnostics import pcm16_metrics
+
+if TYPE_CHECKING:
+    import sounddevice as sd
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,8 @@ class AudioCapture:
         self._loop.call_soon_threadsafe(self._enqueue_chunk, chunk, frames, True)
 
     def start(self) -> None:
+        import sounddevice as sd
+
         blocksize = self._sample_rate // 10  # ~100 ms chunks
         self._stream = sd.RawInputStream(
             device=self._device,
