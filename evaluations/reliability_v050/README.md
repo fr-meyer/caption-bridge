@@ -47,3 +47,9 @@ source/fixture evidence; native Windows results require the hosted Windows job.
 `owned_fallback_ipc_pairs` is a content-free count, not hardware acceptance.
 The three fresh-process headless import regressions use the same guard so
 missing-device/backend behavior can also be tested on Windows.
+
+Receipt generation reads the host family from `sys.platform`; it does not
+probe the Windows OS version or authorize another child process. A separate
+fresh-process receipt regression keeps the real IO guards installed and
+rejects any OS-version probe while stubbing suite execution. That regression
+does not count its stub as a test-suite pass.

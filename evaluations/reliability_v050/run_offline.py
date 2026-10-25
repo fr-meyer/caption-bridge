@@ -129,7 +129,11 @@ def main():
         "python_version": platform.python_version(),
         "sdk_version": version("mistralai"),
         "package_version": "0.5.0",
-        "host_platform": platform.system(),
+        # platform.system() may spawn an OS-version command on Windows.
+        # This receipt needs only the host family, without probing the system.
+        "host_platform": {"win32": "Windows", "darwin": "Darwin", "linux": "Linux"}.get(
+            sys.platform, sys.platform
+        ),
         "source_head": subprocess.run(
             ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
             capture_output=True,
