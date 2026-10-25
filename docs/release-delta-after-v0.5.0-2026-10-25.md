@@ -22,7 +22,7 @@ the released baseline. No new tag or release version is selected here.
 The recorded installed application matches the `e25623d` development baseline
 above. Cross-platform workflow/documentation preparation alone needs no update
 or repeat test of ordinary installed Medium. The combined ASR follow-up below
-has application tree `8301deac6fde446cf2ae4726721b88ad6080ad50`, different from
+has application tree `2d47eccbc9047b9ee0a51844ce5d8c0d5e576d8e`, different from
 the installed `bc00dc0` tree; it is prepared source and has not been installed.
 Installed Medium remains unchanged and usable. An equal application tree is
 source identity, not a fresh runtime/settings, dependency-advisory or physical
@@ -45,15 +45,16 @@ playback remains opt-in. The baseline comparison above ends at `e25623d`.
 
 The prepared October 25 local combination also includes issue #88's
 [ASR diagnostics and recovery-notice correction](asr-recovery-diagnostics.md),
-source candidate `2c4b1c37d61253e4a75dccef73b2d34d0ab2fb61`. It adds timestamped,
+backend candidate `2c4b1c37d61253e4a75dccef73b2d34d0ab2fb61`, with frontend
+snapshot correction `85be9c2bdc732e4798a44baa18d55cfdc0b0468c`. It adds timestamped,
 allowlisted failure/reconnect records with opaque run/attempt correlation,
 duplicate suppression and a truthful automatic-recovery notice. A final
-provider-free Mac run passed 88 focused Python/pipeline/WS cases; four headless
+provider-free Mac run passed 88 focused Python/pipeline/WS cases; five headless
 Mac Chrome cases passed with media APIs and external page requests denied.
 These results do not identify the cause or duration of the October 20 incident,
 qualify a new Linux/Windows head, or update the installed Mac. The combined
-candidate's source identity, constituent reviews and unchanged application tree
-relative to the tested ASR candidate are retained in its local handoff. Hosted
+candidate's source identity, constituent reviews, unchanged tested Python backend
+and matching tested frontend hashes are retained in its local handoff. Hosted
 CI for this new combination remains unrun until its publication is authorized.
 
 ## Automated platform coverage and the actual gap
