@@ -1,0 +1,107 @@
+name: Windows v0.5 software (one shot)
+
+# Only an explicitly approved creation of this isolated branch starts a job.
+# The candidate checkout below is pinned separately from this launcher commit.
+on:
+  push:
+    branches:
+      - agent/windows-v050-receipt-once-20261025
+    paths:
+      - .github/workflows/windows-v0.5.0-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-v050-once-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  current-windows-software:
+    if: github.event.created == true
+    name: Current candidate on native Windows, fake media/providers
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CAPTION_EXPECTED_SHA: a912ea2f73630dba9c0205e6a33988f3add8c164
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTEST_ADDOPTS: "-ra"
+      UV_NO_PROGRESS: "1"
+
+    steps:
+      - name: Require an immutable candidate identity
+        run: |
+          if ($env:CAPTION_EXPECTED_SHA -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'Expected SHA must be exactly 40 lowercase hex characters.'
+          }
+
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CAPTION_EXPECTED_SHA }}
+          path: source
+          persist-credentials: false
+
+      - name: Install uv for this hosted software job
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          enable-cache: false
+          working-directory: source
+
+      - name: Prepare the locked test environment
+        working-directory: source
+        run: |
+          uv python install 3.11
+          if ($LASTEXITCODE -ne 0) { throw 'Python setup failed.' }
+          uv sync --frozen --python 3.11
+          if ($LASTEXITCODE -ne 0) { throw 'Locked dependency setup failed.' }
+
+      - name: Record software identity and select an existing browser
+        working-directory: source
+        run: |
+          $python = Join-Path (Get-Location).Path '.venv\Scripts\python.exe'
+          & $python -B -m app.identity --json
+          if ($LASTEXITCODE -ne 0) { throw 'Software identity failed.' }
+          "Image $env:ImageOS $env:ImageVersion" | Write-Output
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python identity failed.' }
+          node --version
+          if ($LASTEXITCODE -ne 0) { throw 'An existing Node runtime is required.' }
+          $browser = @(
+            (Join-Path ${env:ProgramFiles} 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $browser) { throw 'An existing Chrome or Edge executable is required.' }
+          "CAPTION_EXISTING_BROWSER=$browser" >> $env:GITHUB_ENV
+          "PowerShell $($PSVersionTable.PSVersion)" | Write-Output
+
+      - name: Test headless imports and guarded receipt generation
+        working-directory: source
+        run: |
+          $python = Join-Path (Get-Location).Path '.venv\Scripts\python.exe'
+          & $python -B -m pytest -q -p no:cacheprovider tests/unit/test_headless_audio_import.py tests/unit/test_offline_receipt_metadata.py
+          if ($LASTEXITCODE -ne 0) { throw 'Headless import or receipt regressions failed.' }
+
+      - name: Run the existing current-version Windows software fixture
+        working-directory: source
+        run: |
+          ./scripts/windows_v050_software_acceptance.ps1 `
+            -RepoRoot (Get-Location).Path `
+            -ExpectedSha $env:CAPTION_EXPECTED_SHA `
+            -PythonPath (Join-Path (Get-Location).Path '.venv\Scripts\python.exe') `
+            -ChromiumPath $env:CAPTION_EXISTING_BROWSER
+
+      - name: Label the completed software result
+        run: |
+          @"
+          Native Windows software fixture passed at $env:CAPTION_EXPECTED_SHA.
+          Existing bounded contracts and fake app/idle DOM/owned teardown passed.
+          Physical input/output, audibility, live providers and the ordinary
+          Mac/POSIX controller's native Windows lifecycle remain unqualified.
+          This job installs no browser and changes no application defaults.
+          "@ >> $env:GITHUB_STEP_SUMMARY
