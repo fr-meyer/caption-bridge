@@ -18,6 +18,7 @@ function model() {
         var sockets = [], timers = new Map(), timerCounter = 0, received = [], playbackCancels = 0;
         var location = {protocol:'http:', host:'synthetic.invalid'};
         var ws = null, reconnectTimer = null, reconnectAttempt = 0, isFirstConnect = true;
+        var providerNoticeTimer = null;
         var activeGlossary = null, confirmedTargetLanguage = 'en', audioDevices = null;
         var appState = { connectionState:'connecting', connectionLifecycle:null, ownershipBlocked:false,
             status:'idle_ready', pipelineDiagnostics:null, ttsMuted:false, ttsAudioUnlocked:true,
