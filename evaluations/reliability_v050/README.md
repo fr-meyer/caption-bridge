@@ -21,3 +21,29 @@ authorized execution; the workflow's existence is not a Windows pass.
 Physical device/listening and endurance checks are post-release, nonblocking
 follow-ups. Neither the local runner nor this prepared job changes normal
 Medium use, starts native audio or calls a provider.
+
+
+## Windows asyncio IPC in the software harness
+
+`scripts/software_network_guard.py` keeps public TCP connect/connect_ex,
+UDP sendto (and sendmsg where available), bind and DNS resolution denied.
+On Windows, where CPython3.11 has no native socketpair, its replacement
+constructs a private IPv4 pair using a fresh owned loopback listener. The
+connection destination is derived exclusively from that listener; both peer
+endpoints are checked and the temporary listener is closed. It never relaxes
+the global connection guard, including during pair construction.
+
+The fixture server receives a prebound guard-owned loopback socket. Only that
+registered socket, with matching descriptor and bound address, may listen;
+other sockets cannot bind/listen/connect even to that port. The fixture uses
+stdlib asyncio for consistent software coverage. Explicit repository-path
+bootstrap supports direct execution by the PowerShell harness. Real audio and
+provider clients remain disabled, and the application runtime is unchanged.
+
+The guard regressions force the Windows-style fallback on the local test host
+and exercise bidirectional IPC, event-loop/server startup, closed listeners,
+and denied external/unowned loopback, datagram and DNS operations. This is
+source/fixture evidence; native Windows results require the hosted Windows job.
+`owned_fallback_ipc_pairs` is a content-free count, not hardware acceptance.
+The three fresh-process headless import regressions use the same guard so
+missing-device/backend behavior can also be tested on Windows.

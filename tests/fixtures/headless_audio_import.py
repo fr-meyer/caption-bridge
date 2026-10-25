@@ -6,7 +6,6 @@ import asyncio
 import builtins
 import json
 import os
-import socket
 import subprocess
 import sys
 from types import ModuleType
@@ -29,9 +28,9 @@ def forbidden(*_args, **_kwargs):
     raise AssertionError("external_io_denied")
 
 
-socket.socket.connect = forbidden
-socket.socket.connect_ex = forbidden
-socket.socket.sendto = forbidden
+from scripts.software_network_guard import SoftwareNetworkGuard  # noqa: E402
+
+SoftwareNetworkGuard(forbidden).install()
 subprocess.Popen = forbidden
 
 
