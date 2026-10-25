@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -64,6 +65,37 @@ def install_client(monkeypatch, connect):
         async def __aexit__(self, *_args):
             return False
     monkeypatch.setattr(module, "Mistral", FakeClient)
+
+
+@pytest.mark.parametrize("callback_owner", [True, False])
+def test_transcribe_failure_has_one_log_owner_without_provider_details(monkeypatch, caplog, callback_owner):
+    caplog.set_level(logging.INFO)
+
+    async def scenario():
+        socket = FakeSocket(fail_send=True)
+
+        async def connect(**_kwargs):
+            return connection_for(socket)
+
+        install_client(monkeypatch, connect)
+        errors = []
+
+        async def audio():
+            yield b"\x00\x00"
+
+        await asyncio.wait_for(module.transcribe(audio(), AppConfig(_env_file=None),
+            on_delta=lambda _text: None, on_error=errors.append if callback_owner else None), 0.2)
+        assert socket.closed
+        assert len(errors) == (1 if callback_owner else 0)
+
+    asyncio.run(scenario())
+    assert not any("Transcription failed:" in r.getMessage() for r in caplog.records)
+    events = [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+              if r.name == "app.asr_diagnostics"]
+    assert len(events) == (0 if callback_owner else 1)
+    if events:
+        assert events[0]["event"] == "stream_failure" and events[0]["reason"] == "send_failed"
+    assert "SECRET" not in caplog.text and "PRIVATE-ID" not in caplog.text
 
 
 def test_successful_sdk_send_byte_accounting_and_content_free_event_types(monkeypatch):

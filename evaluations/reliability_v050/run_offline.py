@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import platform
-import socket
 import subprocess
 import sys
 import time
@@ -42,6 +41,8 @@ def install_guards():
     sys.path.insert(0, str(ROOT))
     from pydantic_settings.sources import DotEnvSettingsSource
 
+    from scripts.software_network_guard import SoftwareNetworkGuard
+
     DotEnvSettingsSource._read_env_files = lambda _self: {}
     sd = ModuleType("sounddevice")
     for name in (
@@ -54,9 +55,7 @@ def install_guards():
     ):
         setattr(sd, name, forbidden("native_device"))
     sys.modules["sounddevice"] = sd
-    socket.socket.connect = forbidden("network")
-    socket.socket.connect_ex = forbidden("network")
-    socket.socket.sendto = forbidden("network")
+    network_guard = SoftwareNetworkGuard(forbidden("network")).install()
     original_popen = subprocess.Popen
 
     def popen(argv, *args, **kwargs):
@@ -66,6 +65,7 @@ def install_guards():
         return original_popen(argv, *args, **kwargs)
 
     subprocess.Popen = popen
+    return network_guard
 
 
 class Outcome:
@@ -93,10 +93,11 @@ def main():
     os.environ["RELIABILITY_V050_RECEIPTS"] = str(args.receipt_dir.resolve())
     if resource is not None:
         resource.setrlimit(resource.RLIMIT_CPU, (15, 15))
-    install_guards()
+    network_guard = install_guards()
     import pytest
 
     selected = [
+        "tests/unit/test_software_network_guard.py",
         "evaluations/reliability_v050/test_endurance.py",
         "evaluations/reliability_v050/test_windows_software.py",
         "tests/unit/test_reconnect.py",
@@ -128,7 +129,11 @@ def main():
         "python_version": platform.python_version(),
         "sdk_version": version("mistralai"),
         "package_version": "0.5.0",
-        "host_platform": platform.system(),
+        # platform.system() may spawn an OS-version command on Windows.
+        # This receipt needs only the host family, without probing the system.
+        "host_platform": {"win32": "Windows", "darwin": "Darwin", "linux": "Linux"}.get(
+            sys.platform, sys.platform
+        ),
         "source_head": subprocess.run(
             ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
             capture_output=True,
@@ -139,6 +144,7 @@ def main():
             Path(pipeline_diagnostics.__file__).read_bytes()
         ).hexdigest(),
         "denied_boundary_calls": DENIED,
+        "owned_fallback_ipc_pairs": network_guard.fallback_pairs_created,
         "real_provider_calls": 0,
         "native_device_calls": 0,
         "browser_processes": 0,

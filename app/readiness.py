@@ -6,8 +6,6 @@ import asyncio
 import logging
 import platform
 
-import sounddevice as sd
-
 from app.config import AppConfig
 from app.state import ReadinessCheck, SessionManager
 
@@ -27,6 +25,8 @@ def _check_api_key(config: AppConfig) -> ReadinessCheck:
 def _check_mic_available() -> ReadinessCheck:
     """Check whether at least one input device is visible to PortAudio."""
     try:
+        import sounddevice as sd
+
         devices = sd.query_devices()
         if isinstance(devices, dict):
             has_input = devices.get("max_input_channels", 0) > 0

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -136,7 +137,8 @@ def test_permission_readiness_is_getter_only(monkeypatch, status, ready):
 
     monkeypatch.setattr(readiness.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(audio_devices, "microphone_authorization", lambda: status)
-    monkeypatch.setattr(readiness.sd, "RawInputStream", lambda **_: pytest.fail("No input before Start"))
+    backend = SimpleNamespace(RawInputStream=lambda **_: pytest.fail("No input before Start"))
+    monkeypatch.setitem(sys.modules, "sounddevice", backend)
     assert readiness._check_mic_permission().ready is ready
 
 
@@ -157,7 +159,8 @@ def test_capture_receives_selected_native_index_with_one_original_stream(monkeyp
 
     calls = []
     stream = SimpleNamespace(start=lambda: calls.append("start"), stop=lambda: None, close=lambda: None)
-    monkeypatch.setattr(audio.sd, "RawInputStream", lambda **kw: (calls.append(kw), stream)[1])
+    backend = SimpleNamespace(RawInputStream=lambda **kw: (calls.append(kw), stream)[1])
+    monkeypatch.setitem(sys.modules, "sounddevice", backend)
     loop = asyncio.new_event_loop()
     try:
         capture = audio.AudioCapture(16000, loop, device=7)

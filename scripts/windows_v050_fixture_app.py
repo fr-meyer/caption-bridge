@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import socket
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -104,30 +103,30 @@ def build_app(runtime_root: Path, port: int):
 
 
 def main():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.software_network_guard import SoftwareNetworkGuard
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         raise SystemExit("software_fixture_port_invalid")
-    original_connect = socket.socket.connect
+    def deny(*_args, **_kwargs):
+        raise RuntimeError("software_fixture_outbound_denied")
 
-    def connect(sock, address):
-        if not isinstance(address, tuple) or address[:2] != ("127.0.0.1", args.port):
-            raise RuntimeError("software_fixture_outbound_denied")
-        return original_connect(sock, address)
+    guard = SoftwareNetworkGuard(deny).install()
+    try:
+        listener = guard.create_listener(args.port)
+        app, _calls = build_app(args.runtime_root, args.port)
+        import uvicorn
 
-    socket.socket.connect = connect
-    socket.socket.connect_ex = lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError("software_fixture_outbound_denied")
-    )
-    socket.socket.sendto = lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError("software_fixture_outbound_denied")
-    )
-    app, _calls = build_app(args.runtime_root, args.port)
-    import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=args.port, loop="asyncio", log_level="warning"
+        )
+        uvicorn.Server(config).run(sockets=[listener])
+    finally:
+        guard.close()
 
 
 if __name__ == "__main__":
