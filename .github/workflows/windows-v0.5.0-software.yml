@@ -1,8 +1,10 @@
-name: Windows v0.5 software (manual)
+name: Windows current-candidate software
 
-# Preparation only: this workflow never runs for a push or pull request.
-# A future dispatch performs hosted setup and needs its own execution scope.
+# Current-head hosted software checks, no physical media or providers.
 on:
+  pull_request:
+  push:
+    branches: [main, dev]
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -26,7 +28,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      CAPTION_EXPECTED_SHA: ${{ inputs.expected_sha }}
+      CAPTION_EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
       PYTHONDONTWRITEBYTECODE: "1"
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       PYTEST_ADDOPTS: "-ra"
@@ -42,7 +44,7 @@ jobs:
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ inputs.expected_sha || github.sha }}
           path: source
           persist-credentials: false
 
