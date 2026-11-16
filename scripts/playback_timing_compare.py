@@ -14,7 +14,7 @@ from pathlib import Path
 
 def metrics(rows):
     waits, gaps, overlaps = [], [], []
-    previous = None
+    frontier = previous_start = None
     for row in rows:
         if set(row) != {"clip_id", "ready_ms", "start_ms", "end_ms"}:
             raise ValueError("unexpected observation fields")
@@ -24,10 +24,15 @@ def metrics(rows):
         if not ready <= start <= end:
             raise ValueError("invalid event order")
         waits.append(start - ready)
-        if previous is not None:
-            gaps.append(max(0, start - previous))
-            overlaps.append(max(0, previous - start))
-        previous = end
+        if previous_start is not None and start < previous_start:
+            raise ValueError("observations must be ordered by scheduled start")
+        if frontier is not None:
+            gaps.append(max(0, start - frontier))
+            # Sum excess scheduled duration, including nested/triple overlap,
+            # without mistaking an earlier long clip for silence.
+            overlaps.append(max(0, min(end, frontier) - start))
+        frontier = end if frontier is None else max(frontier, end)
+        previous_start = start
     if not waits:
         raise ValueError("empty observations")
     ordered = sorted(waits)

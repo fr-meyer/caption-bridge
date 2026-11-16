@@ -116,6 +116,7 @@ def main():
     started = time.perf_counter()
     status = pytest.main(["-q", "-p", "no:cacheprovider", *selected], plugins=[outcome])
     from app import pipeline_diagnostics
+    from app.identity import PACKAGE_VERSION
 
     assert Path(pipeline_diagnostics.__file__).resolve().is_relative_to(ROOT)
     result = {
@@ -128,7 +129,7 @@ def main():
         "duration_seconds": round(time.perf_counter() - started, 3),
         "python_version": platform.python_version(),
         "sdk_version": version("mistralai"),
-        "package_version": "0.5.0",
+        "package_version": PACKAGE_VERSION,
         # platform.system() may spawn an OS-version command on Windows.
         # This receipt needs only the host family, without probing the system.
         "host_platform": {"win32": "Windows", "darwin": "Darwin", "linux": "Linux"}.get(

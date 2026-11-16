@@ -23,15 +23,20 @@ unmerged implementation merely because its metadata remained open.
 - Existing Linux Python 3.11/3.13 jobs: lint, tests, quality/segmentation,
   1,000-segment translation simulation, six-segment pipeline, JS syntax.
 - Existing Linux Chromium job: browser contracts.
-- Windows: reuse the existing guarded v0.5 software workflow/PowerShell fixture
-  on current pull-request/push heads (Python 3.11), retaining manual exact-SHA
-  dispatch. Existing native run a912ea2 is historical, not this candidate.
+- Windows: reuse the existing guarded software workflow/PowerShell fixture
+  on current pull-request/push refs (Python 3.11), retaining manual exact-SHA
+  dispatch. PR checkout uses GitHub's synthetic merge SHA, not the PR head.
+  Retain that SHA separately from the associated check-run head identity. Existing native run a912ea2 is historical, not this candidate.
 - New macOS Python 3.13 job: software lifecycle, content-free health, reconnect
   contracts and fake-provider pipeline. Neither job is native audio routing
   certification or production Windows support.
   The immutable windows-v0.2.0 workflow remains unchanged historical evidence.
-- Manual Candidate endurance workflow: select the reviewed candidate branch
-  and record the resolved commit. Run once on the exact final candidate.
+- Candidate endurance: before default-branch publication, an exact-branch
+  push trigger is available only on `agent/caption-unified-completion-20261116`;
+  the reviewed qualification commit message must contain `[endurance]`. Ordinary
+  repair pushes skip the job. Manual dispatch becomes available after the
+  workflow exists on the default branch. Record the actual checkout/report SHA.
+  Run once on the exact final candidate.
   No automatic cancellation; job timeout 140 minutes, aggregate artifact 7 days.
   Only checkout read permission, no secrets or provider credentials required.
 
@@ -54,8 +59,9 @@ provider IO, dotenv secrets and unapproved child processes. It repeatedly
 exercises the existing application pipeline with injected
 translation timeout/capacity failure, ASR reconnect failure/recovery, bounded
 browser queue pressure, owner conflict/replacement, audio relock, drain/export
-and teardown. It fails on a failed scenario, a 45-second cycle timeout or live
-async tasks left after teardown. The same event loop survives all cycles;
+and teardown. It fails on a failed scenario, a cooperative 45-second cycle cancellation
+deadline or live async tasks left after teardown. Cancellation-resistant
+teardown may exceed that deadline; the hosted job has a 140-minute outer bound. The same event loop survives all cycles;
 application sessions reset. This is continuous repeated lifecycle/fault load,
 NOT one 120-minute user session, a physical Mac soak, audible playback or real
 provider transport validation. It does not establish a resident-memory ceiling.
@@ -88,7 +94,9 @@ a small aggregate summary adapter, not a replacement observer or fake baseline.
 Input schema: fixture_id plus baseline/candidate ordered row arrays. Each row
 has exactly clip_id, ready_ms, start_ms, end_ms. Identical unique ordered clip
 IDs are required. No caption/audio/device fields. Outputs: count, median/p95
-ready-to-scheduled-start wait, summed gaps and overlaps. These are SOFTWARE
+ready-to-scheduled-start wait, playback occupancy gaps and excess scheduled
+duration (total clip duration minus the occupied interval union). Starts must
+be nondecreasing; nested overlaps cannot create false silence. These are SOFTWARE
 SCHEDULING metrics only. Same IDs alone do not prove same audio: operator must
 verify fixture identity. Pre-register baseline-relative numeric limits after
 baseline capture and before candidate assessment. No invented latency target,

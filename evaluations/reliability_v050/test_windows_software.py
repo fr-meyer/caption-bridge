@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from app.identity import PACKAGE_VERSION
 from app.lifecycle import LifecycleController, RuntimePaths
 from scripts.windows_v050_fixture_app import build_app
 
@@ -28,7 +29,7 @@ def embedded(source):
 def test_current_windows_harness_matches_version_and_preserves_legacy_gate():
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     source = NEW.read_text()
-    assert version == "0.5.0" and f"$identity.package_version -ne '{version}'" in source
+    assert version == PACKAGE_VERSION and f"$identity.package_version -ne '{version}'" in source
     assert "$identity.package_version -ne '0.2.0'" in OLD.read_text()
     assert embedded(source) == embedded(OLD.read_text())
     assert (

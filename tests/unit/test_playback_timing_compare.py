@@ -15,6 +15,15 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(result["median_wait_ms"], 2)
         self.assertEqual(result["p95_wait_ms"], 3)
 
+    def test_nested_intervals_have_no_false_silence(self):
+        result = metrics([row(1, 0, 0, 100), row(2, 0, 10, 20), row(3, 0, 30, 40)])
+        self.assertEqual(result["gap_ms"], 0)
+        self.assertEqual(result["overlap_ms"], 20)
+
+    def test_out_of_order_starts_rejected(self):
+        with self.assertRaises(ValueError):
+            metrics([row(1, 0, 10, 20), row(2, 0, 5, 6)])
+
     def test_mismatched_inputs_rejected(self):
         with self.assertRaises(ValueError):
             compare(dict(fixture_id="public-v1", baseline=[row(1, 0, 0, 1)],
