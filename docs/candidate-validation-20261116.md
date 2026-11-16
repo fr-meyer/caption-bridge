@@ -1,8 +1,11 @@
 # Next-candidate validation, 2026-11-16
 
-Status: tools/protocol prepared, acceptance PENDING. No new version, release,
-provider, installation, microphone session or activation is claimed here.
-Baseline is published v0.5.0, main merge
+Status: application software qualification PASS for exact `75836a6`, with
+seven successful checks, zero-known-vulnerability audits and an actual
+120-minute provider-free run. Final release-record and promotion checks are
+tracked separately in [source acceptance](release-readiness-0.6.0.md).
+No installed activation, microphone session, live-provider or physical
+acceptance is claimed here. Historical published baseline is v0.5.0, main merge
 39ecd3e7e6eafd367877eff3b0a0ef878a17b127 (PR #84).
 
 ## Dependency remediation
@@ -13,9 +16,11 @@ a successful security receipt. Targeted resolution updates certifi to
 2026.10.19 and opentelemetry-api to 1.45.2, with its matching semantic
 conventions package to 0.66b2. The other 49 locked packages and Mistral SDK
 2.9.3 stay unchanged. `requirements.txt` mirrors the three updated pins.
-Resolution alone is not successful audit or compatibility evidence; the
-updated candidate must pass both audits and its full software suite. The
-installed owner environment is not modified by this source repair.
+Resolution alone is not successful audit or compatibility evidence. Exact
+`75836a6` subsequently passed both retained audits and the full software
+suite. The final promoted head must pass its own required checks; results
+are not silently transferred to changed source. The installed owner
+environment is not modified by this source repair.
 
 ## Reconciled source gap map
 

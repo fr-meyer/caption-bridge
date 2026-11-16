@@ -1,6 +1,6 @@
 # Release notes
 
-## v0.6.0 candidate (unpublished)
+## v0.6.0
 
 - Consolidate development changes since v0.5.0: explicit native input and
   shared-context output controls, correlated ASR recovery diagnostics and
@@ -12,14 +12,19 @@
 - Remove device-query exception contents from readiness logs and cover actual
   deferred-connect/close and readiness failure paths with privacy regressions.
 - Update certifi to 2026.10.19 and opentelemetry-api to 1.45.2 with matching
-  semantic conventions 0.66b2, subject to final dependency/compatibility checks.
+  semantic conventions 0.66b2. Frozen-runtime and nine-marker-resolution
+  dependency audits are part of the release gate.
 - Add current-head Windows/macOS provider-free software lifecycle CI and a
   manual, real-wall-clock 120-minute application fault-cycle workflow.
 - Add aggregate-only scheduling comparison and explicit human/meeting gates.
 - Preserve provider/default choices. Research is not live-provider acceptance.
 
-These entries describe candidate source, not successful CI, publication,
-installation or physical acceptance. See [candidate validation](docs/candidate-validation-20261116.md).
+This is a source-only release scope. The qualified application completed
+seven checks and a real 120-minute provider-free repeated fault-cycle run;
+see [source acceptance](docs/release-readiness-0.6.0.md) for immutable evidence
+and the final promotion gate. Source publication is verified separately from
+installation. No physical, live-provider or meeting acceptance is implied.
+See [validation scope](docs/candidate-validation-20261116.md).
 
 ## v0.5.0 - 2026-10-13
 
