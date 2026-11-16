@@ -1,10 +1,19 @@
 # Release notes
 
-## v0.5.0 candidate — unreleased
+## Next candidate (version selected after integration, unpublished)
 
-This proposed minor release prepares the source integrated by PR #82 into
-`dev` at `a5e81b6bcc8a3eecec88d38283c3099a38c79257`. Published `main` remains
-v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
+- Add current-head Windows/macOS provider-free software lifecycle CI and a
+  manual, real-wall-clock 120-minute application fault-cycle workflow.
+- Add aggregate-only scheduling comparison and explicit human/meeting gates.
+- Preserve provider/default choices. Research is not live-provider acceptance.
+
+These entries describe candidate source, not successful CI, publication,
+installation or physical acceptance. See [candidate validation](docs/candidate-validation-20261116.md).
+
+## v0.5.0 - 2026-10-13
+
+Published baseline: main merge `39ecd3e7e6eafd367877eff3b0a0ef878a17b127`
+through PR #84. See the historical [release-readiness record](docs/release-readiness-0.5.0.md).
 
 - Select translation models and caption timing profiles before Start or in
   Settings. Medium is the startup default; explicit environment overrides win.
@@ -42,8 +51,9 @@ reliability claim. This documentation update changes no accepted application
 bytes and requires no repeated audio test. Exact publication-head CI and review
 remain required before release promotion.
 
-The proposed immediate rollback is immutable v0.4.0. Publication, any Mac-local
-model override change and activation remain separate from this local candidate.
+The rollback from v0.5.0 is immutable v0.4.0. For the next candidate, retain
+v0.5.0 and its accepted configuration as the immediate rollback. Installation,
+model override changes and activation remain separately gated.
 
 ## v0.4.0 - 2026-09-28
 
