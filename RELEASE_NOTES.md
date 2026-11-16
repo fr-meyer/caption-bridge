@@ -48,11 +48,12 @@ local. Controlled network interruption was deferred with its reason recorded.
 These results establish the attended owner Mac cases, without a GLM/Large 4,
 physical Windows, VoiceOver, progressive-playback listening or long-session
 reliability claim. This documentation update changes no accepted application
-bytes and requires no repeated audio test. Exact publication-head CI and review
-remain required before release promotion.
+bytes and required no repeated audio test. The publication-head CI/review
+requirement belonged to that release; the next candidate needs its own evidence.
 
 The rollback from v0.5.0 is immutable v0.4.0. For the next candidate, retain
-v0.5.0 and its accepted configuration as the immediate rollback. Installation,
+v0.5.0 as a published fallback and preserve the actual previous installed SHA/
+configuration separately (a later development build may also report 0.5.0). Installation,
 model override changes and activation remain separately gated.
 
 ## v0.4.0 - 2026-09-28

@@ -49,11 +49,18 @@ def main():
         parser.error("minutes must be in (0,120]")
     logging.disable(logging.CRITICAL)
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    from evaluations.reliability_v050.run_offline import DENIED, install_guards
+
+    guard = install_guards()
     try:
         report = asyncio.run(endurance(args.minutes * 60, application_cycle))
+        report["denied_io_attempts"] = len(DENIED)
+        report["passed"] = report["passed"] and not DENIED
     except Exception as exc:
         # Never retain exception messages, which might include runtime content.
         report = dict(passed=False, failure_type=type(exc).__name__)
+    finally:
+        guard.close()
     report.update(commit=sha, requested_minutes=args.minutes,
                   scope="provider-free repeated application fault cycles",
                   physical_acceptance=False)

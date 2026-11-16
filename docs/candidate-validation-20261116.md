@@ -5,14 +5,30 @@ provider, installation, microphone session or activation is claimed here.
 Baseline is published v0.5.0, main merge
 39ecd3e7e6eafd367877eff3b0a0ef878a17b127 (PR #84).
 
+## Reconciled source gap map
+
+Fresh broker-imported dev is 8d98a0b8d5a81ddfb78ad0ab30ee05de33efa7e9
+(PR #89, October 25), not the published main boundary. Reused, not rebuilt:
+ASR diagnostics, routing, terminology focus repairs, offline reliability guard/
+cycles, current-version manual Windows harness, per-chunk timing observers and
+WSOLA research. The gap was automatic current-head Windows execution, macOS
+software CI, actual wall-clock endurance orchestration, current acceptance
+protocols and provider design refresh. This lane adds only those pieces and a
+small aggregate scheduling comparator. Existing evaluation directories and all
+application code are unchanged by this lane. No old draft PR is treated as
+unmerged implementation merely because its metadata remained open.
+
 ## Automated matrix (#23)
 
 - Existing Linux Python 3.11/3.13 jobs: lint, tests, quality/segmentation,
   1,000-segment translation simulation, six-segment pipeline, JS syntax.
 - Existing Linux Chromium job: browser contracts.
-- New current-head Windows/macOS Python 3.13 jobs: software lifecycle,
-  content-free health, reconnect contracts and fake-provider application
-  scenario. This is NOT native audio routing or production Windows support.
+- Windows: reuse the existing guarded v0.5 software workflow/PowerShell fixture
+  on current pull-request/push heads (Python 3.11), retaining manual exact-SHA
+  dispatch. Existing native run a912ea2 is historical, not this candidate.
+- New macOS Python 3.13 job: software lifecycle, content-free health, reconnect
+  contracts and fake-provider pipeline. Neither job is native audio routing
+  certification or production Windows support.
   The immutable windows-v0.2.0 workflow remains unchanged historical evidence.
 - Manual Candidate endurance workflow: select the reviewed candidate branch
   and record the resolved commit. Run once on the exact final candidate.
@@ -33,7 +49,9 @@ Run:
     uv run --python 3.13 python -m scripts.candidate_endurance --minutes 120 --output acceptance/endurance.json
 
 The tool measures monotonic real elapsed time, not simulated segment count.
-It repeatedly exercises the existing application pipeline with injected
+It reuses the existing reliability runner guards to deny native audio, network,
+provider IO, dotenv secrets and unapproved child processes. It repeatedly
+exercises the existing application pipeline with injected
 translation timeout/capacity failure, ASR reconnect failure/recovery, bounded
 browser queue pressure, owner conflict/replacement, audio relock, drain/export
 and teardown. It fails on a failed scenario, a 45-second cycle timeout or live
@@ -61,6 +79,9 @@ fixture checksum and baseline/candidate SHAs privately with the report. Capture
 only actual scheduler event timestamps in milliseconds relative to run start,
 not inferred or fabricated audio starts. Adapter/instrumentation and measured
 observations remain pending; this lane provides the comparator, not measurements.
+Reuse evaluations/speech_timing (FixtureDelivery, ChunkTimingProbe, pinned
+fixture/actor adapters and classify) for actual collection. The comparator is
+a small aggregate summary adapter, not a replacement observer or fake baseline.
 
     uv run python -m scripts.playback_timing_compare observations.json
 
@@ -96,8 +117,11 @@ prove second-operator onboarding or VoiceOver. Current result: NOT PERFORMED.
 
 ## Meeting readiness, November 17 (KST)
 
-1. By 13:00 gather exact-head CI/review/endurance evidence. Preserve the accepted
-   v0.5.0 tree, lock/configuration and local environment, no overwrite upgrade.
+1. By 13:00 gather exact-head CI/review/endurance evidence. Preserve the actual
+   installed SHA/application-tree/configuration, not just package version
+   (development builds also say 0.5.0), plus immutable v0.5.0 fallback. The
+   October 25 inventory records an installed a746f9a/bc00dc0 tree; parent must
+   revalidate it before any meeting preparation. No overwrite upgrade.
 2. With separately authorized operator, verify candidate identity, loopback-only
    launch, stopped capture, browser connectivity and graceful Stop. Confirm no
    automatic startup or provider/model change. A no-capture check is not live

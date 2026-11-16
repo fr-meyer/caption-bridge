@@ -24,6 +24,8 @@ jobs:
           uv run --python 3.13 python -m pytest -q
           tests/unit/test_candidate_endurance.py tests/unit/test_playback_timing_compare.py
           tests/unit/test_reconnect.py tests/unit/test_full_pipeline_scenario.py
+      - name: Smoke guarded application cycles before the long run
+        run: uv run --python 3.13 python -m scripts.candidate_endurance --minutes 0.05 --output acceptance/smoke.json
       - name: Continuous 120-minute application fault cycles
         run: uv run --python 3.13 python -m scripts.candidate_endurance --minutes 120 --output acceptance/endurance.json
       - name: Retain aggregate report only
