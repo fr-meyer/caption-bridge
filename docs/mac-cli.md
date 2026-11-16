@@ -41,6 +41,10 @@ For an installation of a later development candidate, record the actual previous
 installed SHA separately; a published tag is not necessarily that installation's
 immediate rollback. Earlier release tags remain available.
 
+For the next candidate preserve both the recorded installed build/configuration
+and immutable v0.5.0 fallback. Fresh readiness must be checked before the meeting;
+historical acceptance is not a current health check.
+
 1. Stop the controller.
 2. Restore the prior Mac-local `MISTRAL_TRANSLATE_MODEL` value if the upgrade changed it. This matters when rolling back to a build with a smaller output-token limit.
 3. Check out that tag or SHA in a clean tree.

@@ -61,12 +61,14 @@ pwsh -NoProfile -File scripts/windows_v050_software_acceptance.ps1 `
 
 Any future run must preserve exact source identity, report software-fixture success with zero native/provider calls, leave no application/CDP listeners or profile, and retain only content-free reports. The recorded native execution met those gates; this example does not authorize another hosted run.
 
-## Prepared manual automation for the current version
+## Current-candidate software automation
 
-The new `.github/workflows/windows-v0.5.0-software.yml` has only a manual
-`workflow_dispatch` trigger. Unlike the retained v0.2.0 workflow, it checks out
-an explicit reviewed 40-character candidate SHA and invokes the existing v0.5.0
-PowerShell fixture. A future approved job prepares Python 3.11 and the frozen
+Update 2026-11-16: the owner-approved unified plan authorizes standard hosted
+current-candidate CI. The existing `.github/workflows/windows-v0.5.0-software.yml`
+now runs on pull requests and main/dev pushes, binding the checkout and harness
+to github.sha. Its manual trigger still requires an explicit reviewed
+40-character candidate SHA. It reuses the existing v0.5.0 PowerShell fixture;
+the historical v0.2.0 workflow remains unchanged. A future approved job prepares Python 3.11 and the frozen
 dependencies on a native Windows runner, uses its existing Chrome/Edge and Node,
 and runs with read-only repository access. It installs no browser, passes no
 provider secrets, does not click Start and does not use the ordinary lifecycle
@@ -76,9 +78,10 @@ log before the fixture removes its temporary state.
 
 The recorded success used a separately approved one-shot branch launcher,
 not dispatch of this retained manual workflow. The one-shot launchers are not
-included in the aggregate. Publishing or making the manual workflow available
-does not authorize a run. If a new execution is separately requested, check availability on the
-repository's default branch and name the immutable candidate SHA. Retain the
+included in the aggregate. Workflow availability alone is not a pass. The
+November 16 authority covers standard hosted software execution, not physical
+Windows or provider calls. For manual dispatch, check default-branch workflow
+availability and name the immutable reviewed candidate SHA. Retain the
 job URL, source identity, actual test/skips/expected-failure output and the
 fixture's final stage-only software/cleanup results. The passing run covers
 the native Windows software fixture; it does not prove native capture,

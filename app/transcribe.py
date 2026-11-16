@@ -48,8 +48,8 @@ async def _dispose_pending_connection(task: asyncio.Task) -> None:
     try:
         connection = await task
         await connection.close()
-    except Exception as exc:
-        logger.debug("ASR connection cleanup: error_type=%s", type(exc).__name__)
+    except Exception:
+        logger.debug("ASR connection cleanup failed")
 
 
 def _safe_count(value: object) -> int | None:

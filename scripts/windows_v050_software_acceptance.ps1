@@ -122,7 +122,7 @@ try {
             ConvertFrom-Json
         if (
             $identity.service -ne 'caption-bridge' -or
-            $identity.package_version -ne '0.5.0' -or
+            $identity.package_version -ne '0.6.0' -or
             $identity.git_sha.ToLowerInvariant() -ne $ExpectedSha.ToLowerInvariant() -or
             $identity.git_dirty -ne $false
         ) {

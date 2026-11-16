@@ -9,6 +9,10 @@ promotion remain governed by the [release procedure](operations.md#release-proce
 Run it on the Mac that owns the microphone and speakers; keep development and
 automated validation on GCP.
 
+Meeting activation still requires separately authorized current actual-device
+evidence. Use hosted CI for software checks and the
+[current protocol](candidate-validation-20261116.md) for the November 17 meeting.
+
 Do not paste captions, provider responses, API keys, or exported transcript
 content into the acceptance record.
 
@@ -124,7 +128,12 @@ the [CLI support scope](mac-cli.md). Record them as unperformed when they have
 not occurred; do not claim screen-reader certification or new-operator evidence.
 
 
-## Draft integration #64 and startup choice #68
+## Historical draft integration #64 and startup choice #68
+
+Historical context: #64 is superseded and Medium shipped in v0.5.0. The
+following old candidate instructions do not describe an unshipped feature.
+The October 13 acceptance record is the baseline; changes need their own
+affected evidence. Preserve recorded deferrals and use the current protocol.
 
 This is the remaining physical gate for the combined profile/model/thinking
 candidate. Passing GCP CI or the earlier native Safari synthetic fixture does

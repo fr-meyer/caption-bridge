@@ -2,6 +2,9 @@
 
 Status: research only, 2026-09-24. Related: [issue #13](https://github.com/fr-meyer/caption-bridge/issues/13). The production translation path and its Mistral default are unchanged.
 
+Current-source design update: [November 16 provider verdicts](provider-research-20261116.md).
+The historical results below are not repeated or promoted to current-provider acceptance.
+
 ## Decision
 
 The preview model accepted streamed Korean audio and returned translated audio plus input and output transcript events in four short GCP trials. That establishes the transport shape, but does not establish caption quality. The first clearer sample missed a time-detail check; a later clean numbers sample passed all three checks, while the same sample with synthetic noise missed its subject check. **No-go for integration in the current cycle:** leave the model disabled and the Mistral path unchanged. These small keyword checks are diagnostic only, not a general accuracy verdict.

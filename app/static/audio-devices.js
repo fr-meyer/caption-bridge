@@ -127,41 +127,9 @@
             }
         }
         async revealOutputs() {
-            if (!this.canRoute() || this.media?.selectAudioOutput || !this.media?.getUserMedia ||
-                this.outputBusy || this.choosingOutput || this.revealingOutputs || this.permissionCleanupFailed) return;
-            const session = this.session;
-            let stream = null;
-            this.revealingOutputs = true;
-            ++this.refreshRevision;
+            // Output discovery must never open a second microphone pipeline.
+            this.notice = "Additional outputs require browser output-selection support. Use system/browser sound settings; no microphone was opened.";
             this.render();
-            try {
-                let granted = false;
-                try { granted = (await this.permissions?.query({name: "microphone"}))?.state === "granted"; }
-                catch (_) { /* Explicit click still permits a browser permission request. */ }
-                if (!granted) stream = await this.media.getUserMedia({audio: true, video: false});
-                if (session === this.session) this.notice = "";
-            } catch (_) {
-                if (session === this.session) this.notice = "Browser microphone permission was not granted. Additional outputs remain hidden.";
-            } finally {
-                // Never connect, inspect, record or transmit this temporary permission stream.
-                if (stream) {
-                    let tracks = [];
-                    try { tracks = stream.getTracks(); }
-                    catch (_) { this.permissionCleanupFailed = true; }
-                    for (const track of tracks) {
-                        try { track.stop(); }
-                        catch (_) { this.permissionCleanupFailed = true; }
-                        if (track.readyState !== "ended") this.permissionCleanupFailed = true;
-                    }
-                }
-                this.revealingOutputs = false;
-                ++this.refreshRevision;
-                this.refreshPending = false;
-                if (this.permissionCleanupFailed) {
-                    this.notice = "Temporary browser microphone closure was not confirmed. Close this page before continuing.";
-                } else if (session === this.session) await this.refreshOutputs();
-                this.render();
-            }
         }
         async setOutput(id, label) {
             if (!this.canRoute()) {
@@ -230,11 +198,11 @@
                 select.disabled = !this.canRoute() || this.outputBusy || this.choosingOutput || this.revealingOutputs;
             });
             this.document.querySelectorAll("[data-reveal-audio-outputs]").forEach(button => {
-                button.hidden = !this.canRoute() || Boolean(this.media?.selectAudioOutput) || !this.media?.getUserMedia;
+                button.hidden = true; // No microphone-permission fallback for output discovery.
                 button.disabled = this.outputBusy || this.choosingOutput || this.revealingOutputs || this.permissionCleanupFailed;
             });
             this.document.querySelectorAll("[data-output-permission-hint]").forEach(element => {
-                element.hidden = !this.canRoute() || Boolean(this.media?.selectAudioOutput) || !this.media?.getUserMedia;
+                element.hidden = true;
             });
             this.document.querySelectorAll("[data-audio-device-status]").forEach(element => {
                 const input = this.activeInput ? "Capture input: " + this.activeInput + ". " :

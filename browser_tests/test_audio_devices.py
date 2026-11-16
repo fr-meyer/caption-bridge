@@ -199,7 +199,7 @@ def test_selected_sink_routes_pcm_replay_and_removal_cancels_every_source(
     assert (complete["clip_id"], complete["tts_epoch"], complete["seq"]) == (103, 1, 1)
 
 
-def test_explicit_output_discovery_prompts_then_stops_temporary_input(page: Page, browser_harness: BrowserHarness):
+def test_output_discovery_uses_system_guidance_without_permission_stream(page: Page, browser_harness: BrowserHarness):
     browser_harness.configure("audio_devices")
     page.add_init_script("""
         window.__permissionRequests = 0; window.__permissionStops = 0;
@@ -227,20 +227,15 @@ def test_explicit_output_discovery_prompts_then_stops_temporary_input(page: Page
     assert page.evaluate("window.__permissionRequests") == 0
     expect(page.locator("[data-choose-audio-output]").first).to_be_hidden()
     button = page.locator("[data-reveal-audio-outputs]").first
-    expect(button).to_be_visible()
-    expect(page.locator("[data-output-permission-hint]").first).to_contain_text("never recorded or sent")
-    button.click()
-    expect(page.locator("#idle-output-device option", has_text="Synthetic extra output")).to_have_count(1)
-    assert page.evaluate("window.__permissionRequests") == page.evaluate("window.__permissionStops") == 1
-    order = page.evaluate("window.__permissionOrder")
-    assert order.index("permission") < order.index("stop") < len(order)-1
+    expect(button).to_be_hidden()
+    expect(page.locator("#idle-output-help")).to_contain_text("system/browser audio settings")
+    assert page.evaluate("window.__permissionRequests") == 0
+    assert page.evaluate("window.__permissionStops") == 0
     expect(page.locator("#idle-input-device")).to_have_value("native-b")
     expect(page.locator("#idle-output-device")).to_have_value("")
-    button.click()
-    assert page.evaluate("window.__permissionRequests") == 1
 
 
-def test_output_discovery_denial_is_visible_without_changing_route(page: Page, browser_harness: BrowserHarness):
+def test_no_output_chooser_never_requests_permission_or_changes_route(page: Page, browser_harness: BrowserHarness):
     browser_harness.configure("audio_devices")
     page.add_init_script("""
         window.__permissionRequests=0;
@@ -252,8 +247,28 @@ def test_output_discovery_denial_is_visible_without_changing_route(page: Page, b
         }});
     """)
     page.goto(browser_harness.url, wait_until="domcontentloaded")
-    page.locator("[data-reveal-audio-outputs]").first.click()
-    expect(page.locator("[data-audio-device-status]").first).to_contain_text("permission was not granted")
-    assert "PRIVATE" not in page.locator("[data-audio-device-status]").first.inner_text()
-    assert page.evaluate("window.__permissionRequests") == 1
+    expect(page.locator("[data-reveal-audio-outputs]").first).to_be_hidden()
+    expect(page.locator("#idle-output-help")).to_contain_text("system/browser audio settings")
+    assert page.evaluate("window.__permissionRequests") == 0
     expect(page.locator("#idle-output-device")).to_have_value("")
+
+
+def test_output_discovery_never_requests_browser_microphone(page: Page):
+    """Even direct fallback invocation cannot open a browser microphone."""
+    from pathlib import Path
+
+    page.goto("about:blank")
+    page.add_script_tag(path=str(Path(__file__).parents[1] / "app/static/audio-devices.js"))
+    result = page.evaluate("""async () => {
+        let captures = 0;
+        const router = new CaptionAudioDevices({
+            canRoute: () => true,
+            context: () => ({setSinkId: async () => {}}),
+            send() {}, unavailable() {},
+            media: {getUserMedia: () => {captures++; throw new Error('forbidden');}},
+        });
+        await router.revealOutputs();
+        return {captures, notice: router.notice};
+    }""")
+    assert result["captures"] == 0
+    assert "no microphone was opened" in result["notice"]
