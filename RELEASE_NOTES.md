@@ -1,6 +1,13 @@
 # Release notes
 
-## Next candidate (version selected after integration, unpublished)
+## v0.6.0 candidate (unpublished)
+
+- Consolidate development changes since v0.5.0: explicit native input and
+  shared-context output controls, correlated ASR recovery diagnostics and
+  authoritative browser recovery notices, terminology focus fixes, isolated
+  pitch-preserving evaluation and per-chunk timing tools.
+- Never open a browser microphone merely to discover speech outputs. Use the
+  output-only chooser when supported, permitted outputs or system settings.
 
 - Add current-head Windows/macOS provider-free software lifecycle CI and a
   manual, real-wall-clock 120-minute application fault-cycle workflow.
