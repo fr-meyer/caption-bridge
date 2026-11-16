@@ -22,6 +22,12 @@ unmerged implementation merely because its metadata remained open.
 
 - Existing Linux Python 3.11/3.13 jobs: lint, tests, quality/segmentation,
   1,000-segment translation simulation, six-segment pipeline, JS syntax.
+- Linux Python 3.11: audit the frozen production closure exported from `uv.lock`
+  with pinned `pip-audit==2.10.1`, hashes required and no dependency resolution.
+  Advisory lookup is online on the hosted runner; a service failure or reported
+  vulnerability fails the job. Retain the JSON report. This is known-advisory
+  coverage for the Linux/Python 3.11 runtime closure, not a source security audit
+  or proof covering native library, platform-exclusive or development packages.
 - Existing Linux Chromium job: browser contracts.
 - Windows: reuse the existing guarded software workflow/PowerShell fixture
   on current pull-request/push refs (Python 3.11), retaining manual exact-SHA
