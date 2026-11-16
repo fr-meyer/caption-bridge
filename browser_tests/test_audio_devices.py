@@ -257,3 +257,22 @@ def test_output_discovery_denial_is_visible_without_changing_route(page: Page, b
     assert "PRIVATE" not in page.locator("[data-audio-device-status]").first.inner_text()
     assert page.evaluate("window.__permissionRequests") == 1
     expect(page.locator("#idle-output-device")).to_have_value("")
+
+
+def test_output_discovery_never_requests_browser_microphone(page: Page):
+    """Even direct fallback invocation cannot open a browser microphone."""
+    from pathlib import Path
+
+    page.goto("about:blank")
+    page.add_script_tag(path=str(Path(__file__).parents[1] / "app/static/audio-devices.js"))
+    result = page.evaluate("""async () => {
+        let captures = 0;
+        const router = new CaptionAudioDevices({
+            canRoute: () => true,
+            media: {getUserMedia: () => {captures++; throw new Error('forbidden');}},
+        });
+        await router.revealOutputs();
+        return {captures, notice: router.notice};
+    }""")
+    assert result["captures"] == 0
+    assert "no microphone was opened" in result["notice"]
