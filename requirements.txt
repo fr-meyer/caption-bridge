@@ -9,7 +9,7 @@ anyio==4.14.2
     #   httpx
     #   starlette
     #   watchfiles
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
@@ -43,11 +43,11 @@ jsonpath-python==1.1.6
     # via mistralai
 mistralai==2.9.3
     # via caption-bridge
-opentelemetry-api==1.44.0
+opentelemetry-api==1.45.2
     # via
     #   mistralai
     #   opentelemetry-semantic-conventions
-opentelemetry-semantic-conventions==0.65b0
+opentelemetry-semantic-conventions==0.66b2
     # via mistralai
 orjson==3.12.0
     # via caption-bridge

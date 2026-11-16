@@ -9,6 +9,10 @@
 - Never open a browser microphone merely to discover speech outputs. Use the
   output-only chooser when supported, permitted outputs or system settings.
 
+- Remove device-query exception contents from readiness logs and cover actual
+  deferred-connect/close and readiness failure paths with privacy regressions.
+- Update certifi to 2026.10.19 and opentelemetry-api to 1.45.2 with matching
+  semantic conventions 0.66b2, subject to final dependency/compatibility checks.
 - Add current-head Windows/macOS provider-free software lifecycle CI and a
   manual, real-wall-clock 120-minute application fault-cycle workflow.
 - Add aggregate-only scheduling comparison and explicit human/meeting gates.

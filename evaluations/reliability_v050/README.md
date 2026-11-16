@@ -13,8 +13,9 @@ Reports identify actual skips and expected failures. The Windows lock-byte initi
 The source files and synthetic fixture counts are bounded. Do not interpret 64 callback cycles, 24 fake SDK connections or 512 fake PCM clips as elapsed two-hour endurance. The source module paths, versions, generated PCM hash and content-free cleanup counters are recorded separately from the physical Windows plan in `docs/windows-0.5.0-offline-and-physical-plan.md`.
 
 The ordinary Ubuntu CI already runs these contracts. The separate
-`.github/workflows/windows-v0.5.0-software.yml` prepares a **manual-only** native
-Windows execution of the existing PowerShell fixture at an explicit commit.
+`.github/workflows/windows-v0.5.0-software.yml` runs the native Windows fixture
+on pull requests and main/dev pushes, with exact-SHA manual dispatch retained.
+PR evidence records GitHub's synthetic merge SHA, not the PR head.
 It reuses these tests rather than adding another set of simulated platform
 checks. Hosted Python/dependency setup and any dispatch require separately
 authorized execution; the workflow's existence is not a Windows pass.

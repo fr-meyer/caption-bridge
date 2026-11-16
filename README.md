@@ -74,6 +74,10 @@ conda env create -f environment.yml
 conda activate caption-bridge
 ```
 
+This compatibility route supports Python 3.11–3.13, but resolves the conda
+environment independently. It is not the frozen, audited `uv.lock` runtime.
+Prefer the uv setup above for a reproducible release installation.
+
 ## Run
 Run the live service on the Mac that owns the microphone:
 

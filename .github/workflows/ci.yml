@@ -167,3 +167,31 @@ jobs:
           tests/unit/test_reconnect.py tests/unit/test_full_pipeline_scenario.py
       - name: Run provider-free pipeline scenario
         run: uv run --python 3.13 python -m scripts.full_pipeline_scenario --json
+
+  dependency-audit:
+    name: Locked dependency audit (9 marker resolutions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          enable-cache: false
+      - name: Audit Python 3.11–3.13 on Linux, macOS and Windows markers
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          uv --version
+          sha256sum uv.lock
+          make dependency-audit 2>&1 | tee "$RUNNER_TEMP/dependency-audit.txt"
+      - name: Retain the dependency audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: locked-dependency-audit-nine-resolutions
+          path: ${{ runner.temp }}/dependency-audit.txt
+          retention-days: 7
+          if-no-files-found: warn

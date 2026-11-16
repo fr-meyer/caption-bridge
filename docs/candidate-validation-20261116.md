@@ -5,6 +5,18 @@ provider, installation, microphone session or activation is claimed here.
 Baseline is published v0.5.0, main merge
 39ecd3e7e6eafd367877eff3b0a0ef878a17b127 (PR #84).
 
+## Dependency remediation
+
+The first runtime audit at candidate `4463334` failed: four advisories across
+certifi 2026.7.22 and opentelemetry-api 1.44.0. Do not reuse that candidate as
+a successful security receipt. Targeted resolution updates certifi to
+2026.10.19 and opentelemetry-api to 1.45.2, with its matching semantic
+conventions package to 0.66b2. The other 49 locked packages and Mistral SDK
+2.9.3 stay unchanged. `requirements.txt` mirrors the three updated pins.
+Resolution alone is not successful audit or compatibility evidence; the
+updated candidate must pass both audits and its full software suite. The
+installed owner environment is not modified by this source repair.
+
 ## Reconciled source gap map
 
 Fresh broker-imported dev is 8d98a0b8d5a81ddfb78ad0ab30ee05de33efa7e9
@@ -22,6 +34,10 @@ unmerged implementation merely because its metadata remained open.
 
 - Existing Linux Python 3.11/3.13 jobs: lint, tests, quality/segmentation,
   1,000-segment translation simulation, six-segment pipeline, JS syntax.
+- Run the existing `make dependency-audit` target on hosted CI: nine frozen
+  marker resolutions (Python 3.11/3.12/3.13 × Linux/macOS/Windows), using uv
+  0.12.0 and retaining the result. These are advisory/marker checks, not native
+  execution of all nine environments. Record the candidate and lock hash.
 - Linux Python 3.11: audit the frozen production closure exported from `uv.lock`
   with pinned `pip-audit==2.10.1`, hashes required and no dependency resolution.
   Advisory lookup is online on the hosted runner; a service failure or reported

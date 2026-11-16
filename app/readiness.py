@@ -34,8 +34,8 @@ def _check_mic_available() -> ReadinessCheck:
             has_input = any(
                 d.get("max_input_channels", 0) > 0 for d in devices
             )
-    except Exception as exc:
-        logger.debug("mic_available check failed: %s", exc)
+    except Exception:
+        logger.debug("Microphone availability check failed")
         has_input = False
 
     return ReadinessCheck(
