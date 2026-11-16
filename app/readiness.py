@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
-import sounddevice as sd
+import platform
 
 from app.config import AppConfig
 from app.state import ReadinessCheck, SessionManager
@@ -26,6 +25,8 @@ def _check_api_key(config: AppConfig) -> ReadinessCheck:
 def _check_mic_available() -> ReadinessCheck:
     """Check whether at least one input device is visible to PortAudio."""
     try:
+        import sounddevice as sd
+
         devices = sd.query_devices()
         if isinstance(devices, dict):
             has_input = devices.get("max_input_channels", 0) > 0
@@ -33,8 +34,8 @@ def _check_mic_available() -> ReadinessCheck:
             has_input = any(
                 d.get("max_input_channels", 0) > 0 for d in devices
             )
-    except Exception as exc:
-        logger.debug("mic_available check failed: %s", exc)
+    except Exception:
+        logger.debug("Microphone availability check failed")
         has_input = False
 
     return ReadinessCheck(
@@ -46,28 +47,19 @@ def _check_mic_available() -> ReadinessCheck:
 
 
 def _check_mic_permission() -> ReadinessCheck:
-    """Try to open a short raw input stream to verify OS-level permission."""
+    """Check existing authorization without opening input before Start."""
+    if platform.system() != "Darwin":
+        return ReadinessCheck(name="Microphone Permission", key="mic_permission", ready=True,
+                              detail="Input access is checked when Start opens the microphone")
+    from app.audio_devices import microphone_authorization
+
     try:
-        stream = sd.RawInputStream(
-            samplerate=16000, channels=1, dtype="int16", blocksize=1600
-        )
-        stream.start()
-        stream.stop()
-        stream.close()
-        return ReadinessCheck(
-            name="Microphone Permission",
-            key="mic_permission",
-            ready=True,
-            detail="Ready",
-        )
-    except Exception as exc:
-        logger.debug("mic_permission check failed: %s", exc)
-        return ReadinessCheck(
-            name="Microphone Permission",
-            key="mic_permission",
-            ready=False,
-            detail=str(exc)[:120],
-        )
+        ready = microphone_authorization() == 3
+    except Exception:
+        ready = False
+    return ReadinessCheck(name="Microphone Permission", key="mic_permission", ready=ready,
+                          detail="Authorized; input opens on Start" if ready
+                          else "Existing microphone permission unavailable")
 
 
 class ReadinessPoller:

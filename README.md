@@ -2,6 +2,8 @@
 
 Mac-local live transcription, translation, captions, and optional spoken readback for seminars.
 
+Published baseline: **v0.5.0**. The next candidate is not published or activated by this documentation. See [candidate validation and pending acceptance](docs/candidate-validation-20261116.md).
+
 ## Architecture and operating model
 
 - The application runtime is Mac-local because microphone capture and macOS permission prompts must remain on the Mac.
@@ -12,7 +14,7 @@ Mac-local live transcription, translation, captions, and optional spoken readbac
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11 through 3.13 (3.14 is not supported)
 - PortAudio
 - `uv` 0.12.x for locked development and CI
 
@@ -71,6 +73,10 @@ so no manual system-level setup is required.
 conda env create -f environment.yml
 conda activate caption-bridge
 ```
+
+This compatibility route supports Python 3.11–3.13, but resolves the conda
+environment independently. It is not the frozen, audited `uv.lock` runtime.
+Prefer the uv setup above for a reproducible release installation.
 
 ## Run
 Run the live service on the Mac that owns the microphone:

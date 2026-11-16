@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal
 
+from app.asr_diagnostics import AsrDiagnostics, safe_asr_reason
+
 if TYPE_CHECKING:
     from app.boundary import BoundaryDetector
     from app.config import AppConfig
@@ -61,28 +63,45 @@ def get_reconnect_metrics() -> dict[str, int | str | None]:
 def _coerce_int(value: object) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
-    try:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 4:
         return int(value)
-    except (TypeError, ValueError):
-        return None
+    return None
 
 
 def _extract_close_code(exc: Exception) -> int | None:
     direct = _coerce_int(getattr(exc, "code", None))
-    if direct is not None:
+    if direct is not None and 1000 <= direct <= 4999:
         return direct
     for attr in ("rcvd", "sent"):
         frame = getattr(exc, attr, None)
         code = _coerce_int(getattr(frame, "code", None))
-        if code is not None:
+        if code is not None and 1000 <= code <= 4999:
             return code
     return None
 
 
 def classify_reconnect_failure(exc: Exception) -> ReconnectFailureInfo:
     """Classify without retaining exception text or provider response bodies."""
+    seen = set()
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        info = _classify_direct_failure(current)
+        if info.category != "unknown":
+            return info
+        current = current.__cause__ or current.__context__
+    return ReconnectFailureInfo(category="unknown", recoverable=True)
+
+
+def _classify_direct_failure(exc: BaseException) -> ReconnectFailureInfo:
     close_code = _extract_close_code(exc)
     status_code = _coerce_int(getattr(exc, "status_code", None))
+    if status_code is not None and not 100 <= status_code <= 599:
+        status_code = None
 
     if close_code == 1012:
         return ReconnectFailureInfo(
@@ -123,6 +142,8 @@ class ReconnectionManager:
         self._retry_task: asyncio.Task[None] | None = None
         self._attempt_id: int = 0
         self._attempt_failed: asyncio.Event = asyncio.Event()
+        self._attempt_summary: tuple[ReconnectFailureInfo, str] | None = None
+        self.diagnostics = AsrDiagnostics()
 
         self.get_detector: Callable[[], BoundaryDetector | None] | None = None
         self.teardown_pipeline: Callable[[], Awaitable[None]] | None = None
@@ -138,27 +159,40 @@ class ReconnectionManager:
     def attempt_failed(self) -> asyncio.Event:
         return self._attempt_failed
 
-    def signal_attempt_failed(self) -> None:
+    def signal_attempt_failed(self, exc: Exception | None = None) -> None:
         """Signal that the current reconnect attempt failed post-handshake."""
+        if exc is not None and self._attempt_summary is None:
+            self._attempt_summary = (classify_reconnect_failure(exc), safe_asr_reason(exc))
         self._attempt_failed.set()
+
+    def record_stream_failure(self, exc: Exception, attempt_id: int) -> bool:
+        return self.diagnostics.failure(exc, attempt_id=attempt_id,
+                                        info=classify_reconnect_failure(exc))
+
+    def begin_run(self) -> None:
+        # A cancelled older retry may settle after the next Start. Give each
+        # run its own sink so that its terminal event keeps the old correlation.
+        self.diagnostics = AsrDiagnostics()
 
     def on_connection_error(self, exc: Exception) -> None:
         if self._sm.session.status not in ("listening", "reconnecting"):
             return
+        self.record_stream_failure(exc, self._attempt_id)
         if self._retry_task is not None and not self._retry_task.done():
             if self._sm.session.status == "reconnecting":
                 logger.info("Failure during active reconnect attempt")
-                self._attempt_failed.set()
+                self.signal_attempt_failed(exc)
             else:
                 logger.info("Reconnect already in progress")
             return
-        self._retry_task = asyncio.create_task(self._reconnect_loop(exc))
+        self._retry_task = asyncio.create_task(self._reconnect_loop(exc, started=time.monotonic()))
 
     def cancel(self) -> None:
         if self._retry_task is not None:
             self._retry_task.cancel()
             self._retry_task = None
         self._attempt_failed.clear()
+        self._attempt_summary = None
 
     def _emit_unavailable(
         self,
@@ -183,11 +217,18 @@ class ReconnectionManager:
             },
         )
 
-    async def _reconnect_loop(self, exc: Exception) -> None:
-        started = time.monotonic()
+    async def _reconnect_loop(self, exc: Exception, *, started: float | None = None) -> None:
+        if started is None:
+            started = time.monotonic()
         attempts = 0
         initial_info = classify_reconnect_failure(exc)
         last_info = initial_info
+        last_reason = safe_asr_reason(exc)
+        diagnostics = self.diagnostics
+        attempt_id = self._attempt_id
+        diagnostics.failure(exc, attempt_id=attempt_id, info=initial_info)
+        diagnostics.emit("reconnect_started", attempt_id=attempt_id,
+                              reason=last_reason, info=initial_info)
         _reconnect_metrics.cycles_started += 1
 
         try:
@@ -219,6 +260,9 @@ class ReconnectionManager:
                     attempts=0,
                     downtime_ms=downtime_ms,
                 )
+                diagnostics.emit("permanent", attempt_id=attempt_id,
+                                      reason=last_reason, info=initial_info,
+                                      downtime_ms=downtime_ms)
                 self._sm.set_status("session_ended")
                 return
 
@@ -238,8 +282,13 @@ class ReconnectionManager:
                 await asyncio.sleep(delay_ms / 1000)
                 attempts += 1
                 self._attempt_id += 1
+                attempt_id = self._attempt_id
                 _reconnect_metrics.attempts += 1
                 self._attempt_failed.clear()
+                self._attempt_summary = None
+                diagnostics.emit("reconnect_attempt", attempt_id=attempt_id,
+                                      reason=last_reason, info=last_info, attempt=attempts,
+                                      downtime_ms=int((time.monotonic() - started) * 1000))
                 self._sm._emit(
                     "reconnect_attempt",
                     {
@@ -285,18 +334,21 @@ class ReconnectionManager:
                             "downtime_ms": downtime_ms,
                         },
                     )
+                    diagnostics.emit("recovered", attempt_id=attempt_id,
+                                          attempt=attempts, downtime_ms=downtime_ms)
                     return
                 except asyncio.CancelledError:
                     raise
                 except Exception as retry_exc:
-                    last_info = classify_reconnect_failure(retry_exc)
-                    logger.warning(
-                        "Reconnect attempt failed: attempt=%d category=%s close_code=%s status_code=%s",
-                        attempts,
-                        last_info.category,
-                        last_info.close_code,
-                        last_info.status_code,
-                    )
+                    if self._attempt_summary is not None:
+                        last_info, last_reason = self._attempt_summary
+                    else:
+                        last_info, last_reason = classify_reconnect_failure(retry_exc), safe_asr_reason(retry_exc)
+                    diagnostics.failure(retry_exc, attempt_id=attempt_id,
+                                             info=last_info, reason=last_reason)
+                    diagnostics.emit("reconnect_attempt_failed", attempt_id=attempt_id,
+                                          reason=last_reason, info=last_info, attempt=attempts,
+                                          downtime_ms=int((time.monotonic() - started) * 1000))
                     await self.teardown_pipeline()
                     if not last_info.recoverable:
                         break
@@ -319,6 +371,8 @@ class ReconnectionManager:
                 attempts=attempts,
                 downtime_ms=downtime_ms,
             )
+            diagnostics.emit(outcome, attempt_id=attempt_id, reason=last_reason,
+                                  info=last_info, attempt=attempts, downtime_ms=downtime_ms)
             self._sm.set_status("session_ended")
         except asyncio.CancelledError:
             downtime_ms = int((time.monotonic() - started) * 1000)
@@ -333,5 +387,6 @@ class ReconnectionManager:
                     "downtime_ms": downtime_ms,
                 },
             )
-            logger.info("Reconnect loop cancelled")
+            diagnostics.emit("cancelled", attempt_id=attempt_id,
+                                  attempt=attempts, downtime_ms=downtime_ms)
             raise

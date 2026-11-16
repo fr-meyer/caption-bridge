@@ -110,6 +110,18 @@
             <button id="glossary-clear" class="btn-secondary" type="button">Clear terms</button>
             <p id="glossary-error" class="export-error hidden" role="alert"></p>
         </details>
+        <div class="drawer-section audio-device-controls">
+            <label class="drawer-label" for="idle-input-device">Microphone input</label>
+            <select id="idle-input-device" class="drawer-select" data-native-input></select>
+            <label class="drawer-label" for="idle-output-device">Spoken readback output</label>
+            <select id="idle-output-device" class="drawer-select" data-browser-output aria-describedby="idle-output-help idle-audio-device-status"></select>
+            <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
+            <button class="btn-secondary" type="button" data-choose-audio-output aria-describedby="idle-output-help idle-audio-device-status" hidden>Choose speech output</button>
+            <button class="btn-secondary" type="button" data-reveal-audio-outputs aria-describedby="idle-output-permission-hint idle-audio-device-status" hidden>Show more outputs</button></div>
+            <small id="idle-output-help">Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small id="idle-output-permission-hint" data-output-permission-hint hidden>Additional outputs require browser output-selection support. Use system/browser sound settings; no browser microphone is opened.</small>
+            <small id="idle-audio-device-status" data-audio-device-status role="status"></small>
+        </div>
         <button id="start-btn" class="start-btn" disabled>Start</button>
         <div id="idle-hint" class="idle-hint">Resolve checklist blockers to enable Start.</div>
     </div>
@@ -156,6 +168,18 @@
             <span class="drawer-label">Target Language</span>
             <select id="drawer-target-select" class="drawer-select" aria-label="Target language"></select>
             <span id="drawer-lang-error" class="export-error hidden"></span>
+        </div>
+        <div class="drawer-section audio-device-controls">
+            <label class="drawer-label" for="drawer-input-device">Microphone input</label>
+            <select id="drawer-input-device" class="drawer-select" data-native-input></select>
+            <label class="drawer-label" for="drawer-output-device">Spoken readback output</label>
+            <select id="drawer-output-device" class="drawer-select" data-browser-output aria-describedby="drawer-output-help drawer-audio-device-status"></select>
+            <div><button class="btn-secondary" type="button" data-refresh-audio-devices>Refresh devices</button>
+            <button class="btn-secondary" type="button" data-choose-audio-output aria-describedby="drawer-output-help drawer-audio-device-status" hidden>Choose speech output</button>
+            <button class="btn-secondary" type="button" data-reveal-audio-outputs aria-describedby="drawer-output-permission-hint drawer-audio-device-status" hidden>Show more outputs</button></div>
+            <small id="drawer-output-help">Only permitted browser outputs are listed. Use system/browser audio settings for more devices.</small>
+            <small id="drawer-output-permission-hint" data-output-permission-hint hidden>Additional outputs require browser output-selection support. Use system/browser sound settings; no browser microphone is opened.</small>
+            <small id="drawer-audio-device-status" data-audio-device-status role="status"></small>
         </div>
         <div class="drawer-section">
             <label class="drawer-label" for="drawer-model-select">Translation model</label>
@@ -222,9 +246,9 @@
             <label for="term-kind">Correction type</label>
             <select id="term-kind"><option value="target">Preferred translation</option><option value="source">Misheard source term</option></select>
             <label for="term-source">Source term</label>
-            <input id="term-source" maxlength="160" required autocomplete="off">
+            <input id="term-source" maxlength="160" required autocomplete="off" aria-describedby="term-help term-error">
             <label for="term-preferred">Correct term or preferred rendering</label>
-            <input id="term-preferred" maxlength="160" required autocomplete="off">
+            <input id="term-preferred" maxlength="160" required autocomplete="off" aria-describedby="term-help term-error">
             <p id="term-error" class="export-error hidden" role="alert"></p>
             <div class="modal-actions">
                 <button id="term-save" class="btn-primary" type="submit">Save for future captions</button>
@@ -234,6 +258,7 @@
         </form>
     </dialog>
     <script src="/pcm-player.js"></script>
+    <script src="/audio-devices.js" defer></script>
     <script src="/app.js" defer></script>
 </body>
 </html>

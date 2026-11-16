@@ -13,12 +13,13 @@ from mistralai.client import Mistral
 from starlette.staticfiles import StaticFiles
 
 from app import ws
+from app.asr_diagnostics import safe_asr_reason
 from app.audio import AudioCapture
+from app.audio_devices import native_input_devices
 from app.boundary import BoundaryDetector
 from app.config import settings
 from app.identity import runtime_identity
 from app.journal import SessionJournal, run_recovery
-from app.pipeline_diagnostics import ASR_REASONS
 from app.profiles import resolve_profile
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 manager = SessionManager(config=settings)
+manager.input_devices = native_input_devices(settings.audio_sample_rate)
 dispatcher = TranslationDispatcher(session_manager=manager, config=settings)
 manager.set_dispatcher(dispatcher)
 mistral_client = Mistral(api_key=settings.mistral_api_key)
@@ -73,6 +75,7 @@ def _on_session_created(generation: int | None = None) -> None:
     _stream_established = True
     _has_verified_session = True
     manager.set_asr_state("ready")
+    reconnect_manager.diagnostics.emit("stream_ready", attempt_id=reconnect_manager.current_attempt_id)
     _stream_ready.set()
 
 
@@ -98,11 +101,10 @@ async def _watch_initial_establishment(generation: int) -> None:
     except Exception as exc:
         if not _is_current_pipeline(generation):
             return
-        reason = "initial_timeout" if isinstance(exc, TimeoutError) else getattr(exc, "reason", "transport_error")
-        if reason not in ASR_REASONS:
-            reason = "transport_error"
+        reason = "initial_timeout" if isinstance(exc, TimeoutError) else safe_asr_reason(exc)
         if isinstance(exc, TimeoutError):
-            manager.record_asr_error()
+            if reconnect_manager.record_stream_failure(AsrStreamError(reason), reconnect_manager.current_attempt_id):
+                manager.record_asr_error()
         manager.set_asr_state("failed", reason)
         await _stop_pipeline()
         if manager.session.status in ("listening", "reconnecting"):
@@ -153,11 +155,13 @@ async def _start_pipeline() -> None:
     initial = manager.session.status != "reconnecting"
     if initial:
         _has_verified_session = False
+        reconnect_manager.begin_run()
     _stream_ready.clear()
     _stream_error = None
 
     loop = asyncio.get_running_loop()
     audio = AudioCapture(
+        device=manager.input_devices.capture_device() if manager.input_devices is not None else None,
         sample_rate=settings.audio_sample_rate,
         loop=loop,
         max_queue_chunks=settings.audio_queue_max_chunks,
@@ -194,6 +198,7 @@ async def _start_pipeline() -> None:
     _detector = detector
     manager.set_capture_active(True)
     manager.set_asr_state("connecting")
+    reconnect_manager.diagnostics.emit("stream_connecting", attempt_id=reconnect_manager.current_attempt_id)
 
     if manager.session.status != "reconnecting":
         manager.set_status("listening")
@@ -308,6 +313,8 @@ def _on_transcription_done(attempt_id: int, generation: int | None = None) -> No
         return
     if _pipeline_stopping and not _input_finishing:
         return
+    if manager.session.status == "reconnecting" and attempt_id != reconnect_manager.current_attempt_id:
+        return
     _stream_completed = True
 
     if _input_finishing:
@@ -319,7 +326,8 @@ def _on_transcription_done(attempt_id: int, generation: int | None = None) -> No
         _stream_ready.set()
 
     if not _has_verified_session and not _pipeline_stopping:
-        manager.record_asr_error()
+        if reconnect_manager.record_stream_failure(AsrStreamError("closed_before_ready"), attempt_id):
+            manager.record_asr_error()
         return
 
     if _pipeline_stopping:
@@ -331,32 +339,22 @@ def _on_transcription_done(attempt_id: int, generation: int | None = None) -> No
         return
 
     if manager.session.status == "reconnecting":
-        if attempt_id != reconnect_manager.current_attempt_id:
-            logger.debug(
-                "Ignoring stale stream-done from old attempt %d (current: %d)",
-                attempt_id,
-                reconnect_manager.current_attempt_id,
-            )
-            return
         if _detector is not None:
             remaining = _detector.flush_reconnect_fragment()
             if remaining:
                 manager.finalize_reconnect_fragment(remaining)
-        logger.warning(
-            "Unexpected stream done during reconnect attempt %d "
-            "— signaling attempt failure",
-            reconnect_manager.current_attempt_id,
-        )
-        _stream_error = RuntimeError(
-            "Stream closed unexpectedly during reconnect"
-        )
-        reconnect_manager.signal_attempt_failed()
+        _stream_error = AsrStreamError("stream_done")
+        if reconnect_manager.record_stream_failure(_stream_error, attempt_id):
+            manager.record_asr_error()
+        reconnect_manager.signal_attempt_failed(_stream_error)
         return
 
-    logger.warning("Transcription stream ended unexpectedly — triggering reconnect")
+    error = AsrStreamError("stream_done")
+    if reconnect_manager.record_stream_failure(error, attempt_id):
+        manager.record_asr_error()
     manager.set_asr_state("failed", "stream_done")
     reconnect_manager.on_connection_error(
-        RuntimeError("Transcription stream ended unexpectedly")
+        error
     )
 
 
@@ -366,9 +364,11 @@ def _on_transcription_error(exc: Exception, attempt_id: int, generation: int | N
         return
     if _pipeline_stopping and not _input_finishing:
         return
+    if manager.session.status == "reconnecting" and attempt_id != reconnect_manager.current_attempt_id:
+        return
     _stream_completed = True
-    manager.record_asr_error()
-    logger.error("Transcription error: error_type=%s", type(exc).__name__)
+    if reconnect_manager.record_stream_failure(exc, attempt_id):
+        manager.record_asr_error()
     if not _stream_ready.is_set():
         _stream_error = exc
         _stream_ready.set()
@@ -376,26 +376,15 @@ def _on_transcription_error(exc: Exception, attempt_id: int, generation: int | N
     if not _has_verified_session:
         return
 
-    reason = getattr(exc, "reason", "transport_error")
+    reason = safe_asr_reason(exc)
     if _input_finishing:
-        _complete_finished_input("failed", reason if reason in ASR_REASONS else "transport_error")
+        _complete_finished_input("failed", reason)
         return
-    manager.set_asr_state("failed", reason if reason in ASR_REASONS else "transport_error")
+    manager.set_asr_state("failed", reason)
 
     if manager.session.status == "reconnecting":
-        if attempt_id != reconnect_manager.current_attempt_id:
-            logger.debug(
-                "Ignoring stale error from old attempt %d (current: %d)",
-                attempt_id,
-                reconnect_manager.current_attempt_id,
-            )
-            return
-        logger.warning(
-            "Error during reconnect attempt %d — signaling attempt failure",
-            reconnect_manager.current_attempt_id,
-        )
         _stream_error = exc
-        reconnect_manager.signal_attempt_failed()
+        reconnect_manager.signal_attempt_failed(exc)
         return
 
     reconnect_manager.on_connection_error(exc)
@@ -471,7 +460,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="CaptionBridge", lifespan=lifespan)
 
-BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/styles.css"})
+BROWSER_ASSET_PATHS = frozenset({"/", "/app.js", "/pcm-player.js", "/audio-devices.js", "/styles.css"})
 
 
 @app.middleware("http")

@@ -1,4 +1,10 @@
-# Proposed v0.5.0 release readiness
+# Historical v0.5.0 release-readiness preparation
+
+Status correction, 2026-11-16: v0.5.0 was published through PR #84, main
+merge `39ecd3e7e6eafd367877eff3b0a0ef878a17b127`. The dated preparation
+record below is historical, not the current release gate or a pending
+v0.5 publication request. Next-candidate rollback is v0.5.0. Use
+[candidate validation](candidate-validation-20261116.md) for current gates.
 
 This local preparation starts from merged `dev`
 `a5e81b6bcc8a3eecec88d38283c3099a38c79257`. It proposes a minor version for

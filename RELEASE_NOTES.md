@@ -1,10 +1,35 @@
 # Release notes
 
-## v0.5.0 candidate — unreleased
+## v0.6.0
 
-This proposed minor release prepares the source integrated by PR #82 into
-`dev` at `a5e81b6bcc8a3eecec88d38283c3099a38c79257`. Published `main` remains
-v0.4.0. See the [release-readiness record](docs/release-readiness-0.5.0.md).
+- Consolidate development changes since v0.5.0: explicit native input and
+  shared-context output controls, correlated ASR recovery diagnostics and
+  authoritative browser recovery notices, terminology focus fixes, isolated
+  pitch-preserving evaluation and per-chunk timing tools.
+- Never open a browser microphone merely to discover speech outputs. Use the
+  output-only chooser when supported, permitted outputs or system settings.
+
+- Remove device-query exception contents from readiness logs and cover actual
+  deferred-connect/close and readiness failure paths with privacy regressions.
+- Update certifi to 2026.10.19 and opentelemetry-api to 1.45.2 with matching
+  semantic conventions 0.66b2. Frozen-runtime and nine-marker-resolution
+  dependency audits are part of the release gate.
+- Add current-head Windows/macOS provider-free software lifecycle CI and a
+  manual, real-wall-clock 120-minute application fault-cycle workflow.
+- Add aggregate-only scheduling comparison and explicit human/meeting gates.
+- Preserve provider/default choices. Research is not live-provider acceptance.
+
+This is a source-only release scope. The qualified application completed
+seven checks and a real 120-minute provider-free repeated fault-cycle run;
+see [source acceptance](docs/release-readiness-0.6.0.md) for immutable evidence
+and the final promotion gate. Source publication is verified separately from
+installation. No physical, live-provider or meeting acceptance is implied.
+See [validation scope](docs/candidate-validation-20261116.md).
+
+## v0.5.0 - 2026-10-13
+
+Published baseline: main merge `39ecd3e7e6eafd367877eff3b0a0ef878a17b127`
+through PR #84. See the historical [release-readiness record](docs/release-readiness-0.5.0.md).
 
 - Select translation models and caption timing profiles before Start or in
   Settings. Medium is the startup default; explicit environment overrides win.
@@ -39,11 +64,13 @@ local. Controlled network interruption was deferred with its reason recorded.
 These results establish the attended owner Mac cases, without a GLM/Large 4,
 physical Windows, VoiceOver, progressive-playback listening or long-session
 reliability claim. This documentation update changes no accepted application
-bytes and requires no repeated audio test. Exact publication-head CI and review
-remain required before release promotion.
+bytes and required no repeated audio test. The publication-head CI/review
+requirement belonged to that release; the next candidate needs its own evidence.
 
-The proposed immediate rollback is immutable v0.4.0. Publication, any Mac-local
-model override change and activation remain separate from this local candidate.
+The rollback from v0.5.0 is immutable v0.4.0. For the next candidate, retain
+v0.5.0 as a published fallback and preserve the actual previous installed SHA/
+configuration separately (a later development build may also report 0.5.0). Installation,
+model override changes and activation remain separately gated.
 
 ## v0.4.0 - 2026-09-28
 
