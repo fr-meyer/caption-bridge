@@ -260,15 +260,26 @@ jobs:
                   return result
               packet = json.loads(raw, object_pairs_hook=unique,
                                   parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite")))
-              # Exact handoff: native commit 9fccb8d, harness/controller schema 5.
+              # Exact handoff: ef46b32 diagnostics, schema 5 success unchanged.
+              failed = isinstance(packet, dict) and "failure" in packet
+              fields = {"schema", "qualification", "images", "rows"}
+              if failed:
+                  if receipt["returncode"] == 0:
+                      raise ValueError("failure_packet_with_zero_exit")
+                  fields.add("failure")
               # Parent-death row proves aggregate parent-or-deadline retirement only.
               expected_modes = {"deadline", "guardian_a", "guardian_b", "helper", "suspend", "parent_death"}
               if (not isinstance(packet, dict)
-                      or set(packet) != {"schema", "qualification", "images", "rows"}
+                      or set(packet) != fields
                       or type(packet["schema"]) is not int or packet["schema"] != 5
                       or packet["qualification"] != "NO_AUDIO_ONLY"
-                      or packet["images"] != receipt["image_hashes"]
-                      or not isinstance(packet["rows"], list) or len(packet["rows"]) != 6):
+                      or not isinstance(packet["images"], dict)
+                      or any(key not in receipt["image_hashes"] or value != receipt["image_hashes"][key]
+                             for key, value in packet["images"].items())
+                      or (not failed and packet["images"] != receipt["image_hashes"])
+                      or not isinstance(packet["rows"], list)
+                      or (not failed and len(packet["rows"]) != 6)
+                      or (failed and len(packet["rows"]) > 6)):
                   raise ValueError("harness_shape")
               modes = set()
               for row in packet["rows"]:
@@ -315,8 +326,45 @@ jobs:
                           or any(type(v) is not int or not 1 < v <= 2147483647 for v in pids)
                           or len(set(pids)) != 3):
                       raise ValueError("harness_pid_identity")
-              if modes != expected_modes:
+              if not failed and modes != expected_modes:
                   raise ValueError("harness_incomplete")
+              if failed:
+                  failure = packet["failure"]
+                  if (not isinstance(failure, dict)
+                          or set(failure) != {"mode", "stage", "error_class", "controller_wait", "startup", "terminal"}
+                          or (failure["mode"] is not None and failure["mode"] not in expected_modes)
+                          or failure["stage"] not in {"signature", "state_matrix", "capture_reject", "startup",
+                                                      "communicate", "wait_status", "retirement"}
+                          or failure["error_class"] not in {"AssertionError", "TimeoutExpired", "JSONDecodeError",
+                                                            "RuntimeError", "CalledProcessError", "OSError", "Other"}
+                          or (failure["controller_wait"] is not None
+                              and (type(failure["controller_wait"]) is not int
+                                   or not -255 <= failure["controller_wait"] <= 255))):
+                      raise ValueError("failure_projection")
+                  startup = failure["startup"]
+                  if startup is not None:
+                      if (not isinstance(startup, dict) or set(startup) != {"event", "pids"}
+                              or startup["event"] != "started" or not isinstance(startup["pids"], list)
+                              or len(startup["pids"]) != 3
+                              or any(type(v) is not int or not 1 < v <= 2147483647 for v in startup["pids"])
+                              or len(set(startup["pids"])) != 3):
+                          raise ValueError("failure_startup")
+                  terminal = failure["terminal"]
+                  if terminal is not None:
+                      if (not isinstance(terminal, dict)
+                              or set(terminal) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
+                              or type(terminal["schema"]) is not int or terminal["schema"] != 5
+                              or type(terminal["noaudio_exit"]) is not int or not 0 <= terminal["noaudio_exit"] <= 255
+                              or terminal["terminal"] != "HOLD"):
+                          raise ValueError("failure_terminal")
+                      for key in ("pids", "wait_status"):
+                          values = terminal[key]
+                          if (not isinstance(values, list) or len(values) != 3
+                                  or any(type(v) is not int for v in values)):
+                              raise ValueError("failure_terminal_values")
+                      if (any(not (v == -1 or 1 < v <= 2147483647) for v in terminal["pids"])
+                              or any(not -1 <= v <= 65535 for v in terminal["wait_status"])):
+                          raise ValueError("failure_terminal_bounds")
               return packet
           try:
               for path in sorted(Path("native/caption_helper").glob("*")):
