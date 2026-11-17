@@ -41,3 +41,36 @@ Alarm is a process timer, not an external monotonic absolute-deadline guardian o
 Production capture/audio closure, trusted guardians, fixed-role image/receipt trust, independent
 review and later human readiness/capture authority remain unimplemented gates. Existing attended
 preflight is deliberately untouched. No receipt from this helper grants launch authority.
+
+## Followup supervision proof (no audio)
+
+Build identity inspector separately with existing tools:
+clang -Wall -Wextra -Werror native/caption_helper/identity.c -framework Security -framework CoreFoundation -o identity
+Run the two native/ qualification Python scripts from a NEW directory holding build/ and identity.
+
+--probe-supervised ABSOLUTE_TICKS uses mach_continuous_time (includes system sleep), checks
+before each 10ms poll, and exits 72 once deadline is reached. A SIGSTOPed helper cannot run;
+on resume it checks the already-expired deadline before other work. This is not a guarantee
+of physical resource closure while OS-suspended, nor a real-time scheduling bound.
+
+Parent-side Security.framework checks live SecCode by direct owned child PID, strict signature
+validity, actual executable URL and CodeDirectory unique hash. sysctl KERN_PROC_PID records birth
+and parent PID before/after interrogation. Direct child stays unreaped, preventing PID reuse.
+These observations are not an atomic exec lock or an audit-token attestation. No inherited
+socketpair peer identity is used. Role guardians currently remain forked bounded harness children,
+not independently signed role executables: guardian code identity remains a real gate.
+
+Descriptor custody: all three pipe pairs start noninheritable; each forked guardian closes all
+readers and every writer except its single assigned role. Spawn closes all descriptors except
+mapped read ends 0/1/2. Parent closes guardian writer copies immediately. Controller-death test
+uses a dedicated sole writer process while the outer harness retains child reap ownership.
+It tests controller-role death, not death of helper's direct spawning parent. No lifeline writer
+is inherited by the helper. Guardian death A/B, controller-role death, deadline and suspended
+helper deadline were exercised successfully. The five-case matrix and controller-death harness
+are qualification tools, not a production controller or trusted launcher.
+
+Remaining: independently signed guardian roles, authenticated parent-death monitor, atomic
+postspawn exec/event binding, exact role birth/image pins and trustworthy receipt consumption.
+Current identity inspector emits observed code hash/path comparison; it does NOT authorize any
+operation and the Python harness must compare expected CodeDirectory hash. Existing native
+admission remains false. No audio code, microphone entitlement or capture path has been added.

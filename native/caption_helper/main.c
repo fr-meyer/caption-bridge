@@ -15,7 +15,9 @@ static int number(const char *s, int min, int max) {
     char *end; errno=0; long n=strtol(s,&end,10);
     return errno || !*s || *end || n<min || n>max ? -1 : (int)n;
 }
+int caption_supervised(const char *arg);
 int main(int argc,char **argv) {
+    if(argc==3 && !strcmp(argv[1],"--probe-supervised")) return caption_supervised(argv[2]);
     /* The only interfaces are explicitly harmless qualification probes. */
     if(argc==3 && !strcmp(argv[1],"--probe-loopback")) {
         int port=number(argv[2],1,65535); if(port<0) return 64;

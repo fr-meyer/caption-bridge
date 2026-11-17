@@ -17,7 +17,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
-/usr/bin/clang -Wall -Wextra -Werror -Os "$ROOT/native/caption_helper/main.c" -o "$APP/Contents/MacOS/CaptionHelper"
+/usr/bin/clang -Wall -Wextra -Werror -Os "$ROOT/native/caption_helper/main.c" "$ROOT/native/caption_helper/supervised.c" -o "$APP/Contents/MacOS/CaptionHelper"
 /usr/bin/codesign --sign - --options runtime --timestamp=none --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$APP"
 /usr/bin/codesign --verify --strict --verbose=2 "$APP"
 /usr/bin/codesign -d --entitlements :- "$APP"
