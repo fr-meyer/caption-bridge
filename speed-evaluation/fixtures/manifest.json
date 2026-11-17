@@ -22,9 +22,13 @@
       "license": "public-domain-author-dedication",
       "source": "https://commons.wikimedia.org/wiki/File:En-us-hello.ogg",
       "download_url": "https://upload.wikimedia.org/wikipedia/commons/5/52/En-us-hello.ogg",
-      "status": "download_blocked_timeout_then_HTTP_error",
-      "sha256": null,
-      "pcm_sha256": null
+      "status": "original_provisioned_not_decoded",
+      "sha256": "ade8485f1cfd454e27ec1bb93cc0234d3187b2507230f72e96f46ac686e82972",
+      "pcm_sha256": null,
+      "path": "en-hello.ogg",
+      "bytes": 9036,
+      "modifications": "none",
+      "source_verified_date": "2026-11-17"
     }
   ]
 }

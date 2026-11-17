@@ -10,9 +10,10 @@ versions. The media license is separate from repository code licensing.
 
 English greeting candidate: hello, Dvortygirl, author public-domain dedication
 with unconditional-use fallback as stated on its Commons source page:
-https://commons.wikimedia.org/wiki/File:En-us-hello.ogg . Page verified, but
-bounded binary retrieval failed (timeout then HTTP error). No English audio or
-hash is invented. Provision it later and verify exact bytes before collection.
+https://commons.wikimedia.org/wiki/File:En-us-hello.ogg . Page reverified 2026-11-17 and original Ogg retrieved in one bounded request.
+Unmodified original: 9036 bytes, SHA256 in manifest.json. Earlier retrieval
+failures in FILE-ONLY-RECEIPT.md are historical, not erased. This resolves asset
+provisioning only, not the full multi-sentence public speech corpus criterion.
 
 Neither recording was played or decoded here. No ffmpeg, soundfile, numpy or
 local speech synthesizer was available; no dependencies were installed. Native
