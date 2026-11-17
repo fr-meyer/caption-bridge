@@ -17,9 +17,16 @@
 #include <errno.h>
 #include <poll.h>
 struct capability { uint64_t deadline; int32_t parent; uint32_t role; };
-static int reap_owned(pid_t pid) {
+static const char *failure_stage="NONE";
+static int failure_role=0,failure_code=0;
+static int saved_status[3]={-1,-1,-1},cleanup_killed[3]={0,0,0};
+static int reap_owned(pid_t pid,int role) {
+ int status=-1;pid_t r=waitpid(pid,&status,WNOHANG);
+ if(r==pid){saved_status[role-1]=status;return 1;}
+ if(r<0 && errno!=EINTR)return 0;
  if(kill(pid,SIGKILL)<0 && errno!=ESRCH)return 0;
- for(int i=0;i<1000;i++){pid_t r=waitpid(pid,NULL,WNOHANG);if(r==pid)return 1;if(r<0 && errno!=EINTR)return 0;usleep(1000);}
+ cleanup_killed[role-1]=1;
+ for(int i=0;i<1000;i++){r=waitpid(pid,&status,WNOHANG);if(r==pid){saved_status[role-1]=status;return 1;}if(r<0 && errno!=EINTR)return 0;usleep(1000);}
  return 0;
 }
 static int verify(pid_t pid,const char *path,int role) {
@@ -29,11 +36,11 @@ static int verify(pid_t pid,const char *path,int role) {
  if(!url || !number){if(url)CFRelease(url);if(number)CFRelease(number);return 0;}
  const void *k[]={kSecGuestAttributePid},*v[]={number};
  CFDictionaryRef attrs=CFDictionaryCreate(NULL,k,v,1,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
- int good=0;
+ int good=0;OSStatus status=0;
  if(!attrs){CFRelease(number);CFRelease(url);return 0;}
- if(SecStaticCodeCreateWithPath(url,0,&disk) || SecStaticCodeCheckValidity(disk,kSecCSStrictValidate,NULL))goto done;
- if(SecCodeCopyGuestWithAttributes(NULL,attrs,0,&live) || SecCodeCheckValidity(live,kSecCSStrictValidate,NULL))goto done;
- if(SecCodeCopySigningInformation(disk,kSecCSSigningInformation,&di) || SecCodeCopySigningInformation(live,kSecCSSigningInformation,&li))goto done;
+ if((status=SecStaticCodeCreateWithPath(url,0,&disk)) || (status=SecStaticCodeCheckValidity(disk,kSecCSStrictValidate,NULL)))goto done;
+ if((status=SecCodeCopyGuestWithAttributes(NULL,attrs,0,&live)) || (status=SecCodeCheckValidity(live,kSecCSStrictValidate,NULL)))goto done;
+ if((status=SecCodeCopySigningInformation(disk,kSecCSSigningInformation,&di)) || (status=SecCodeCopySigningInformation(live,kSecCSSigningInformation,&li)))goto done;
  CFTypeRef a=CFDictionaryGetValue(di,kSecCodeInfoUnique),b=CFDictionaryGetValue(li,kSecCodeInfoUnique);
  CFTypeRef ai=CFDictionaryGetValue(di,kSecCodeInfoIdentifier),bi=CFDictionaryGetValue(li,kSecCodeInfoIdentifier);
  if(a && b && ai && bi && CFEqual(a,b) && CFEqual(ai,bi) && CFGetTypeID(b)==CFDataGetTypeID() && CFGetTypeID(bi)==CFStringGetTypeID()) {
@@ -44,6 +51,7 @@ static int verify(pid_t pid,const char *path,int role) {
   }
  }
 done:
+ failure_code=good?0:(status?status:-10001);
  if(di)CFRelease(di);if(li)CFRelease(li);if(disk)CFRelease(disk);if(live)CFRelease(live);
  CFRelease(attrs);CFRelease(number);CFRelease(url);return good;
 }
@@ -52,6 +60,7 @@ static pid_t owned_identity[3]={-1,-1,-1};
 static pid_t retained[3]={-1,-1,-1};
 static void close_owned(int *fd){if(*fd>=0){if(close(*fd)<0)closure_error=1;*fd=-1;}}
 static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int role,uint64_t deadline) {
+ failure_stage="SPAWN_SETUP";failure_role=role;failure_code=0;errno=0;
  int ready_pipe[2]={-1,-1};int ready_writer=-1;
  int cap[2]={-1,-1},mapped[5]={-1,-1,-1,-1,-1};pid_t pid=-1;
  posix_spawn_file_actions_t f;posix_spawnattr_t attr;int fi=0,ai=0,ok=0;
@@ -67,9 +76,11 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  if(posix_spawn_file_actions_adddup2(&f,ready_writer,8))goto done;
  if(posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT))goto done;
  char *args[]={(char *)path,NULL};char *environment[]={NULL};
- if(posix_spawn(&pid,path,&f,&attr,args,environment)) {pid=-1;goto done;}
+ if((failure_code=posix_spawn(&pid,path,&f,&attr,args,environment))) {pid=-1;goto done;}
  owned_identity[role-1]=pid;retained[role-1]=pid;
+ failure_stage="IDENTITY_VERIFY";failure_code=-10002;
  if(!verify(pid,path,role))goto done;
+ failure_stage="CAPABILITY";failure_code=0;errno=0;
  struct capability capability={deadline,getpid(),(uint32_t)role};
  size_t offset=0;
  while(offset<sizeof(capability)){
@@ -78,20 +89,24 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  }
  if(kill(pid,SIGCONT)<0)goto done;
  close_owned(&ready_pipe[1]);
+ failure_stage="READY_ACK";failure_code=0;errno=0;
  struct {int32_t pid;uint32_t role;} ready={0};size_t received=0;
  while(received<sizeof(ready) && mach_continuous_time()<deadline){
   struct pollfd fready={.fd=ready_pipe[0],.events=POLLIN|POLLHUP};
   int n=poll(&fready,1,10);if(n<0 && errno==EINTR)continue;if(n<0)goto done;
-  if(n>0){ssize_t count=read(ready_pipe[0],(char *)&ready+received,sizeof(ready)-received);if(count<0 && errno==EINTR)continue;if(count<=0)goto done;received+=(size_t)count;}
+  if(n>0){ssize_t count=read(ready_pipe[0],(char *)&ready+received,sizeof(ready)-received);if(count<0 && errno==EINTR)continue;if(count<=0){failure_code=count==0?-10007:errno;goto done;}received+=(size_t)count;}
  }
- if(received!=sizeof(ready) || ready.pid!=pid || ready.role!=(uint32_t)role)goto done;
+ if(received!=sizeof(ready)){failure_code=-10003;goto done;}
+ if(ready.pid!=pid || ready.role!=(uint32_t)role){failure_code=-10004;goto done;}
  ok=1;
 done:
+ if(!ok && !failure_code)failure_code=errno?errno:-10005;
+ if(ok){failure_stage="NONE";failure_role=0;failure_code=0;}
  if(fi && posix_spawn_file_actions_destroy(&f))closure_error=1;
  if(ai && posix_spawnattr_destroy(&attr))closure_error=1;
  for(int i=0;i<2;i++){close_owned(&cap[i]);close_owned(&ready_pipe[i]);}
  for(int i=0;i<5;i++)close_owned(&mapped[i]);close_owned(&ready_writer);
- if(!ok && pid>0){if(!reap_owned(pid))closure_error=1;else retained[role-1]=-1;pid=-1;}
+ if(!ok && pid>0){if(!reap_owned(pid,role))closure_error=1;else retained[role-1]=-1;pid=-1;}
  return pid;
 }
 int main(int argc,char **argv) {
@@ -152,11 +167,13 @@ int main(int argc,char **argv) {
 cleanup:
  for(int i=0;i<3;i++)identities[i]=owned_identity[i];
  for(int i=0;i<3;i++)for(int j=0;j<2;j++)close_owned(&lifelines[i][j]);
- for(int i=0;i<3;i++)if(retained[i]>0){if(!reap_owned(retained[i]))result=70;else retained[i]=-1;}
+ for(int i=0;i<3;i++)if(retained[i]>0){if(!reap_owned(retained[i],i+1))result=70;else retained[i]=-1;}
+ for(int i=0;i<3;i++)if(saved_status[i]!=-1)statuses[i]=saved_status[i];
  /* Synthetic only; native stop/drain/dispose proof cannot be asserted by this controller. */
  cb_stop(&state,mach_continuous_time(),false,false,false);
  if(closure_error)result=70;
  for(int i=0;i<3;i++)if(identities[i]>0){errno=0;if(kill(identities[i],0)==0 || errno!=ESRCH)result=70;}
- if(printf("{\"schema\":5,\"noaudio_exit\":%d,\"terminal\":\"HOLD\",\"pids\":[%d,%d,%d],\"wait_status\":[%d,%d,%d]}\n",result,identities[0],identities[1],identities[2],statuses[0],statuses[1],statuses[2])<0)return 70;
+ if(result && !strcmp(failure_stage,"NONE")){failure_stage="OWNED_REAP";failure_code=-10006;}
+ if(printf("{\"schema\":6,\"noaudio_exit\":%d,\"terminal\":\"HOLD\",\"pids\":[%d,%d,%d],\"wait_status\":[%d,%d,%d],\"failure_stage\":\"%s\",\"failure_role\":%d,\"failure_code\":%d,\"cleanup_killed\":[%d,%d,%d]}\n",result,identities[0],identities[1],identities[2],statuses[0],statuses[1],statuses[2],failure_stage,failure_role,failure_code,cleanup_killed[0],cleanup_killed[1],cleanup_killed[2])<0)return 70;
  return result;
 }

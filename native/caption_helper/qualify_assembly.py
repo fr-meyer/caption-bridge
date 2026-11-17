@@ -42,12 +42,22 @@ def validate_startup(value):
 
 
 def validate_terminal(value):
-    keys = {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
+    keys = {
+        "schema",
+        "noaudio_exit",
+        "terminal",
+        "pids",
+        "wait_status",
+        "failure_stage",
+        "failure_role",
+        "failure_code",
+        "cleanup_killed",
+    }
     if not isinstance(value, dict) or set(value) != keys:
         return None
     if (
         type(value["schema"]) is not int
-        or value["schema"] != 5
+        or value["schema"] != 6
         or type(value["noaudio_exit"]) is not int
         or value["terminal"] != "HOLD"
         or not valid_pids(value["pids"], True)
@@ -57,6 +67,28 @@ def validate_terminal(value):
         not isinstance(value["wait_status"], list)
         or len(value["wait_status"]) != 3
         or not all(type(n) is int and -1 <= n <= 65535 for n in value["wait_status"])
+    ):
+        return None
+    if value["failure_stage"] not in (
+        "NONE",
+        "SPAWN_SETUP",
+        "IDENTITY_VERIFY",
+        "CAPABILITY",
+        "READY_ACK",
+        "OWNED_REAP",
+    ):
+        return None
+    if (
+        type(value["failure_role"]) is not int
+        or not 0 <= value["failure_role"] <= 3
+        or type(value["failure_code"]) is not int
+        or not -(2**31) <= value["failure_code"] < 2**31
+    ):
+        return None
+    if (
+        not isinstance(value["cleanup_killed"], list)
+        or len(value["cleanup_killed"]) != 3
+        or not all(type(n) is int and n in (0, 1) for n in value["cleanup_killed"])
     ):
         return None
     return value
@@ -143,6 +175,12 @@ def execute(root_arg, state):
                 state["terminal"] = terminal
                 state["stage"] = "wait_status"
                 assert child.returncode == 0 and terminal["noaudio_exit"] == 0
+                assert (
+                    terminal["failure_stage"] == "NONE"
+                    and terminal["failure_role"] == 0
+                    and terminal["failure_code"] == 0
+                    and terminal["cleanup_killed"] == [0, 0, 0]
+                )
                 assert terminal["terminal"] == "HOLD" and terminal["pids"] == owned
                 statuses = terminal["wait_status"]
                 for i, status in enumerate(statuses):

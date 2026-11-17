@@ -150,3 +150,14 @@ state_matrix,capture_reject,startup,communicate,wait_status,retirement. error_cl
 to AssertionError,TimeoutExpired,JSONDecodeError,RuntimeError,CalledProcessError,OSError,Other.
 startup/terminal are strictly whitelisted existing receipts or null. No exception text, raw
 streams, paths, argv or environment is emitted. Failure exits1 and emits one JSON object.
+
+Native terminal schema6 replaces schema5 only for terminal records. Mandatory added keys:
+failure_stage (NONE/SPAWN_SETUP/IDENTITY_VERIFY/CAPABILITY/READY_ACK/OWNED_REAP),
+failure_role (0..3), failure_code (signed32), cleanup_killed (three integer 0/1 flags).
+Success is NONE/0/0 and [0,0,0]. Aggregate envelope remains schema5, startup unchanged.
+Security API failure_code preserves OSStatus; internal codes: -10001 identity/pin mismatch,
+-10002 allocation, -10003 READY deadline, -10004 READY identity mismatch, -10005 generic
+setup/I/O without errno, -10006 retirement, -10007 READY EOF. Other I/O failures retain errno.
+wait_status now preserves actual failed-start child reap status; cleanup_killed distinguishes
+cleanup-sent SIGKILL from a status already available before cleanup. These are diagnostics,
+not qualification or capture authority. Native compile/runtime remains hosted-CI-only.

@@ -23,7 +23,15 @@ class DiagnosticsTests(unittest.TestCase):
 
     def test_early_hold_and_wrong_wait_mode(self):
         terminal = dict(
-            schema=5, noaudio_exit=70, terminal="HOLD", pids=[21, -1, -1], wait_status=[-1, -1, -1]
+            schema=6,
+            failure_stage="READY_ACK",
+            failure_role=1,
+            failure_code=-10003,
+            cleanup_killed=[0, 0, 0],
+            noaudio_exit=70,
+            terminal="HOLD",
+            pids=[21, -1, -1],
+            wait_status=[-1, -1, -1],
         )
 
         def failure(root, state):
@@ -44,7 +52,11 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIsNone(
             q.validate_terminal(
                 dict(
-                    schema=5,
+                    schema=6,
+                    failure_stage="READY_ACK",
+                    failure_role=1,
+                    failure_code=-10003,
+                    cleanup_killed=[0, 0, 0],
                     noaudio_exit=70,
                     terminal="HOLD",
                     pids=[21, -1, -1],
