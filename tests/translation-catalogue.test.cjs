@@ -46,3 +46,18 @@ test('thinking control uses supplied execution capabilities, not model-name gues
   assert.equal(context.supportsHighReasoning('mistral-large-latest'), false);
   assert.equal(context.supportsHighReasoning('invented-latest'), false);
 });
+test('metadata refresh never resets player, speed, captions or requested identity', () => {
+  const state = {translationModel: 'retired', segments: [{seq: 9}],
+    ttsMuted: true, ttsEpoch: 7, playbackRate: 1.25};
+  const originalSegments = state.segments;
+  const context = {appState: state, populateModelDropdowns() {}, populateThinkingDropdowns() {}};
+  vm.createContext(context);
+  vm.runInContext(code('handleMessage'), context);
+  context.handleMessage({type: 'translation_catalogue', available_translation_models: [],
+    translation_catalogue: {fresh: false, error: 'catalogue_refresh_failed'}});
+  assert.equal(state.segments, originalSegments);
+  assert.equal(state.translationModel, 'retired');
+  assert.equal(state.ttsMuted, true);
+  assert.equal(state.ttsEpoch, 7);
+  assert.equal(state.playbackRate, 1.25);
+});

@@ -142,9 +142,9 @@ class TranslationDispatcher:
 
     def _translation_timeout_ms(self) -> int:
         model = self._request_model.get() or self._config.translate_model
-        if model in {"mistral-large-4", "mistral-large-latest"}:
+        if model in {"mistral-large-4", "mistral-large-4-0", "mistral-large-latest"}:
             return self._config.translation_large_timeout_ms
-        if model == "zai-glm-5-3":
+        if model in {"zai-glm-5-3", "zai-glm-5-3-flash", "deepseek-v4-1-flash-1017"}:
             return self._config.translation_glm_timeout_ms
         return self._config.translation_timeout_ms
 

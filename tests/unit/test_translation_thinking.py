@@ -259,7 +259,7 @@ def test_glm_empty_response_preserves_finish_reason_in_export_and_recovery(
         await dispatcher.drain()
         segment = manager.session.segments[0]
         assert segment.translation_status == "failed"
-        assert segment.failure_reason == "provider_no_text"
+        assert segment.failure_reason == "provider_output_limit"
         assert segment.translation_finish_reason == "length"
         assert segment.translation_completion_tokens == 4096
         data = json.loads((Path(export_session(manager.session, config)) / "transcript.json").read_text())

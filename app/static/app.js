@@ -322,8 +322,7 @@
     function handleMessage(msg) {
         switch (msg.type) {
             case "translation_catalogue":
-                appState.translationCatalogue = msg.translation_catalogue || {};
-        appState.availableTranslationModels = msg.available_translation_models || [];
+                appState.availableTranslationModels = msg.available_translation_models || [];
                 appState.translationCatalogue = msg.translation_catalogue || {};
                 populateModelDropdowns();
                 populateThinkingDropdowns();
@@ -441,6 +440,7 @@
         appState.endedAt = msg.ended_at || null;
 
         appState.availableTargetLanguages = msg.available_target_languages || [];
+        appState.translationCatalogue = msg.translation_catalogue || {};
         appState.availableTranslationModels = msg.available_translation_models || [];
         appState.translationModel = msg.translation_model ||
             (appState.availableTranslationModels[0] && appState.availableTranslationModels[0].id) ||
@@ -1497,6 +1497,9 @@
     function renderModelSelectors() {
         var experimental = true;
         var note = "Model metadata must be current. Source tests do not qualify live latency or quality.";
+        if (/^(zai-|deepseek-)/.test(appState.translationModel)) {
+            note += " Experimental caption qualification: may miss or delay captions; no automatic fallback.";
+        }
         var meta = appState.translationCatalogue || {};
         note += meta.error ? " Refresh failed; stale choices are disabled." :
             (meta.fresh ? " Account metadata verified (cached for five minutes)." : " Account metadata not current; refresh required.");
@@ -1508,7 +1511,8 @@
             return model.id === appState.translationModel;
         });
         els.translationModelStatus.textContent = "Translation: " +
-            (selected ? selected.label : appState.translationModel);
+            (selected ? selected.label : appState.translationModel) +
+            (selected && selected.enabled === false ? " (unavailable: " + (selected.reason || "unverified") + ")" : "");
         els.translationModelStatus.classList.toggle("hidden",
             !["listening", "reconnecting", "stopping", "session_ended"].includes(appState.status));
         if (els.drawerModelSelect) {

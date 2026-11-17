@@ -17,13 +17,14 @@ from app.config import settings
 from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
+from app.model_lifecycle import refresh_public_lifecycle
 from app.profiles import resolve_profile
 from app.state import RecoveryNotice, SessionManager
 from app.translation_models import (
     EXECUTION_POLICIES,
     LIFECYCLE,
-    catalogue,
     available_translation_models,
+    catalogue,
     validate_reasoning_effort,
     validate_translation_model,
 )
@@ -399,7 +400,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         async def _refresh_models() -> None:
             if catalogue_loader is not None:
-                await catalogue.refresh(catalogue_loader, LIFECYCLE, EXECUTION_POLICIES)
+                lifecycle = dict(LIFECYCLE)
+                async def load_metadata():
+                    async with asyncio.TaskGroup() as group:
+                        account = group.create_task(catalogue_loader())
+                        public = group.create_task(refresh_public_lifecycle(LIFECYCLE))
+                    lifecycle.clear()
+                    lifecycle.update(public.result())
+                    return account.result()
+                previous = catalogue.verified_at
+                await catalogue.refresh(load_metadata, lifecycle, EXECUTION_POLICIES)
+                if catalogue.verified_at != previous and catalogue.error is None:
+                    catalogue.public_verified_at = time.time()
             if _owns_connection(connection):
                 _enqueue_outbound(outbound_queue, {
                     "type": "translation_catalogue",

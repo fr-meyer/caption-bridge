@@ -1,43 +1,47 @@
-# Translation catalogue source checkpoint (#96)
+# Translation catalogue source evidence (#96)
 
-This is an **incomplete integration candidate**, not E1–E4 acceptance or a deployment recommendation. No account metadata request, inference, credential loading, capture, playback or device operation was performed. Additional provider spend: US$0.
+Source implementation completed in the exclusive E worktree. Not a deployment or live qualification claim. No authenticated account request, inference, capture, device operation or provider spend occurred. Only unauthenticated official public model cards were read.
 
-## Implemented path
+## Catalogue and lifecycle
 
-The existing provider boundary now exposes explicit metadata-only enumeration. An explicit idle/drawer refresh command fetches it with a five-second timeout, single in-flight task and five-minute success/failure cooldown. Disconnect cancels the owned refresh; refresh does not replace the session snapshot or disturb playback. Catalogue entries preserve disabled reasons, requested identities and historical session revisions. Stale metadata cannot authorize new selections or future dispatches. Configured models do not bypass eligibility. Existing ASR/TTS/startup-family settings remain unchanged.
+Account enumeration is metadata-only and separate from inference. Reconciliation checks completion_chat, lifecycle, account deprecation timestamps, duplicate/conflicting cards, verified aliases and explicit execution policies. Unknown compatible families remain visible and disabled with a concrete reason. Embedding/OCR/transcription/TTS-only endpoints are excluded from translation choices. Account metadata cannot independently prove lifecycle or live quality.
 
-Reconciliation enumerates all returned account models, including unknown hosted families. It checks text-chat capability, independent lifecycle evidence and execution policy, deduplicates declared families and prefers verified official aliases (including aliases listed on account cards). Without an alias it selects the newest verified release. Unknown/conflicting lifecycle and unknown execution contracts remain visible but disabled. Alias target metadata is separate from provider-resolved provenance. An echoed requested ID is not retained as a resolved-version claim.
+Verified official cards (https://docs.mistral.ai/models/):
 
-Large has a bounded 4096-token/20-second source policy, independent of the GLM timeout. Medium/Small ordinary requests remain 200 tokens, high 1024; GLM retains 4096. These are bounded source policies, **not demonstrated live quality/latency fixes**. Length-capped empty and partial responses fail as output-limit errors before ordinary empty classification. Refusal, observable reasoning-only, unsupported/unavailable errors have distinct fixed reasons. Reasoning content is never extracted or retained. Future dispatches fail closed after catalogue expiry/retirement, without fallback. In-flight work keeps its dispatch identity.
+| Card suffix | Literal model names / alias | Current status | Source output cap |
+| --- | --- | --- | --- |
+| mistral-large-4-0 | mistral-large-4, mistral-large-4-0, mistral-large-latest | GA | 4096 |
+| mistral-small-4-0-26-03 | mistral-small-2603, mistral-small-latest | GA | 200/default, 1024/high |
+| mistral-medium-3-5-26-04 | mistral-medium-3-5, mistral-medium-latest | Deprecated | unavailable |
+| zai-glm-5-3 | zai-glm-5-3 | GA | 4096/default or high |
+| zai-glm-5-3-flash | zai-glm-5-3-flash | GA | 4096/default |
+| deepseek-v4-flash-1017 | deepseek-v4-1-flash-1017 | GA | 4096/default |
+| codestral-25-08 | codestral-2508, codestral-latest | GA | 200/default |
+| ministral-3-3b-25-12 | ministral-3b-2512, ministral-3b-latest | GA | 200/default |
+| ministral-3-8b-25-12 | ministral-8b-2512, ministral-8b-latest | GA | 200/default |
+| ministral-3-14b-25-12 | ministral-14b-2512, ministral-14b-latest | GA | 200/default |
+| voxtral-small-25-07 | voxtral-small-2507, voxtral-small-latest | GA | 200/default |
 
-## Public evidence and material conflict
+Public refresh of all 11 cards passed on 2026-11-17. Medium's precise current model-card Deprecated badge supersedes older capability guides mentioning its alias. Startup remains Medium, visibly unavailable; no silent family switch. Historical Large 3 and GLM 5.2 remain deprecated, not revived through replacement cards. Magistral Small 1.2 card was also checked and is deprecated. Other returned account chat families without verified evidence remain explicitly unknown/unavailable, not silently eligible. The catalogue does not claim these 11 cards exhaust future account inventories.
 
-Read unauthenticated official documentation on 2026-11-17:
+Explicit refresh runs bounded public and account metadata in parallel with sibling cancellation: public requests have four-second per-request limits, three concurrent requests, 3MB response ceiling, eight-second aggregate deadline; complete refresh ten seconds. Success/failure cooldown is five minutes. Disconnect cancels ownership. Public evidence has a seven-day freshness ceiling (initial packet expires 2026-11-24); successful public refresh renews it. Refresh emits a catalogue-only event, not a player-resetting session snapshot.
 
-- https://docs.mistral.ai/api/endpoint/models: account availability enumeration, not lifecycle proof.
-- https://docs.mistral.ai/models: current featured Large 4, Small 4 and GLM 5.3; explicit deprecated/retired section.
-- https://docs.mistral.ai/models/mistral-large-4-0: GA, chat completions.
-- https://docs.mistral.ai/models/zai-glm-5-3: GA third-party hosted model, chat completions.
-- https://docs.mistral.ai/inference/conversations/function-calling: explicit official Large/Small aliases. Its Medium alias still points at Medium 3.5, while the overview lists Medium 3.5 under deprecated/retired models.
+Execution policies are application budgets, not provider capacity or verified live latency/cost. Large uses a bounded 20-second source timeout; existing other timeout policies remain. No undocumented high effort is sent for newly included families. Account reasoning capability is required for offered high settings. Observable reasoning-only/refusal, empty capped output, partial truncated output, ordinary empty output, timeout and provider errors have distinct fixed reasons. Internal reasoning is never extracted or retained. Echoed requested aliases are not claimed as resolved versions. Future dispatch rechecks eligibility without fallback; already dispatched work preserves its identity.
 
-**Medium is intentionally preserved as startup identity but marked lifecycle-conflicting.** Neither silently changing the family nor treating its current alias target as verified would respect the task. The coordinator must reconcile authoritative current alias-target/lifecycle evidence before enabling it. This does not change an accepted installation.
+## Executed verification
 
-Public pages were partly truncated and are not an exhaustive lifecycle inventory. Consequently new account families can be enumerated but remain disabled with a concrete reason until their lifecycle and execution policy are verified. The checked public evidence expires 2026-11-24 UTC. There is no invented catalogue-wide active fallback.
+- Full provider-free Python source/regression run: **715 passed, 3 skipped, 22 subtests passed**; two warnings (existing malformed-export fixture and Starlette/httpx deprecation).
+- Expanded original 20-case backend matrix now covers 11 models × 5 response states: **55 passed** (included above).
+- All Node suites: **20 passed**, including six catalogue/UI control regressions.
+- Ruff over app, tests and browser_tests; JS syntax; git diff whitespace checks: passed.
+- Browser suite attempted: **67 setup errors**, no browser assertions executed. Both ambient/default and explicit channel attempts select unavailable system Chrome. The owned downloaded Chromium also lacks host runtime libraries (glib, NSS, X11, Cairo, Pango, ALSA and others). No prohibited system installation was performed. Four new catalogue Playwright cases are collected but not claimed passed.
 
-## Verification actually executed
+## Remaining external evidence
 
-- Stdlib unittest catalogue suite: **9 tests passed**, including parameterized subcases for capability/lifecycle/policy states, alias/no-alias, duplicate/conflicting metadata, new hosted families, stale/failure refresh, retirement, timeout and cancellation.
-- Node DOM-control unit suite: **5 tests passed**, covering disabled reasons, restored retired identity and metadata-driven thinking capabilities. These are JS unit tests, not native browser evidence.
-- Python compileall for changed application/new tests: passed.
-- node --check app/static/app.js: passed.
-- git diff --check: passed.
+1. Dependency-backed browser execution on the existing hosted runner, with its supported browser runtime. Exact command after the existing locked dependency/browser setup:       uv run pytest browser_tests --browser chromium -q --tb=short
 
-Initial catalogue test had an incorrectly constructed capability fixture; corrected fixture and rerun passed. Initial Node test string escaping failed before execution; repaired and rerun passed. No failed run is claimed as passed.
+   Focused new coverage: uv run pytest browser_tests/test_translation_catalogue.py -q --tb=short
+2. Independent review and exact integrated-head existing CI, owned by coordinator. No CI edits or GitHub publication in E.
+3. Separately authorized actual account metadata/SDK qualification and bounded live acceptance. Source fixtures do not establish account entitlement, prices, model answer quality or low-latency suitability.
 
-## Remaining gates / do not call #96 complete
-
-1. The available Python runtime lacks pytest and application dependencies; installs were prohibited for this lane. The added 20-case provider execution matrix and four Playwright cases are **written but not run**. Full existing provider/translation/session/browser regressions still need execution in the coordinator's authorized dependency-backed/CI environment.
-2. Existing tests assume the historical hard-coded four-model catalogue and fabricated echoed-alias resolution. They need explicit synthetic current account/lifecycle fixtures and updated assertions. This branch is not claimed compatible with those old test assumptions or ready to merge.
-3. Complete the verified public lifecycle/execution-policy inventory, especially newly hosted families (GLM Flash/DeepSeek and other compatible account results). Unknown contracts are surfaced rather than guessed or falsely qualified. This is a real remaining E1 acceptance item, not merely live E6 qualification.
-4. Verify actual account catalogue/SDK behavior separately, without inference, only under the coordinator's separately recorded metadata authorization. No account entitlement is claimed here.
-5. Independent review, exact-head dependency-backed regressions/CI, and parent integration/publication remain outstanding. No GitHub write or release was attempted.
+Disposable .venv-e and .tools-e are untracked and excluded from source commits. Lockfiles and CI workflows are unchanged.

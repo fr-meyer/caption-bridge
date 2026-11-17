@@ -86,8 +86,11 @@ class MistralTranslationProvider:
         text = extract_translation_text(choice.message.content)
         content = choice.message.content
         if not text and finish_reason != "length" and isinstance(content, list):
-            if any((chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None))
-                   == "thinking" for chunk in content):
+            types = {(chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None))
+                     for chunk in content}
+            if "refusal" in types:
+                finish_reason = "refusal"
+            elif "thinking" in types:
                 finish_reason = "reasoning_only"
         return TranslationResponse(
             text=text,

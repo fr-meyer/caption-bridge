@@ -40,6 +40,14 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in result], ["dated"])
         self.assertEqual(result[0]["version_policy"], "versioned")
 
+    def test_corroborating_alias_cards_are_not_conflicting(self):
+        version = dict(row("snapshot"), aliases=["official"])
+        alias = dict(row("official"), name="Alias display name")
+        evidence = {"snapshot": active(), "official": active(alias="official")}
+        result = reconcile([version, alias], evidence, {"snapshot": {}, "official": {}})
+        self.assertEqual([item["id"] for item in result], ["official"])
+        self.assertTrue(result[0]["enabled"])
+
     def test_alias_list_requires_verified_target(self):
         account = dict(row("snapshot"), aliases=["official", "invented-latest"])
         evidence = {"snapshot": active(), "official": active(alias="official")}

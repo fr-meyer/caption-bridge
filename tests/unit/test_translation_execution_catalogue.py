@@ -4,17 +4,21 @@ import time
 
 import pytest
 
+from app import translation_models
 from app.config import AppConfig
 from app.providers import TranslationResponse
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
 from app.translation_catalogue import ModelCatalogue
-from app import translation_models
 
 
 @pytest.mark.parametrize("model,limit", [
     ("mistral-medium-latest", 200), ("mistral-small-latest", 200),
     ("mistral-large-latest", 4096), ("zai-glm-5-3", 4096),
+    ("zai-glm-5-3-flash", 4096), ("deepseek-v4-1-flash-1017", 4096),
+    ("codestral-latest", 200), ("ministral-3b-latest", 200),
+    ("ministral-8b-latest", 200), ("ministral-14b-latest", 200),
+    ("voxtral-small-latest", 200),
 ])
 @pytest.mark.parametrize("text,finish,reason", [
     ("", "length", "provider_output_limit"),
@@ -26,6 +30,7 @@ from app import translation_models
 def test_bounded_errors_and_return_to_medium(tmp_path, monkeypatch, model, limit, text, finish, reason):
     cache = ModelCatalogue()
     cache.verified_at = time.monotonic()
+    cache.public_verified_at = time.time()
     cache.entries = [dict(id=key, label=key, enabled=True, efforts=["default"])
                      for key in {model, "mistral-medium-latest"}]
     monkeypatch.setattr(translation_models, "catalogue", cache)

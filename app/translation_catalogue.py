@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 
 
 class ModelCatalogue:
     def __init__(self, ttl=300, timeout=5, clock=time.monotonic):
         self.ttl, self.timeout, self.clock = ttl, timeout, clock
         self.verified_at = self.attempted_at = None
+        self.verified_at_utc = None
+        self.public_verified_at = None
         self.error = None
         self.entries = []
         self._lock = asyncio.Lock()
@@ -33,11 +36,22 @@ class ModelCatalogue:
                 self.error = "catalogue_refresh_failed"
                 return
             self.entries, self.verified_at, self.error = entries, self.clock(), None
+            self.verified_at_utc = datetime.now(timezone.utc).isoformat()
 
     def snapshot(self):
         fresh = self.fresh and self.error is None
-        return {"fresh": fresh, "last_verified": self.verified_at, "error": self.error,
-                "models": [dict(row, enabled=row["enabled"] and fresh) for row in self.entries]}
+        models = []
+        for row in self.entries:
+            reason = row.get("reason")
+            if not fresh:
+                reason = reason or "account_catalogue_stale"
+            deprecation = row.get("account_deprecation_at")
+            if deprecation and deprecation <= time.time():
+                reason = "account_deprecated"
+            models.append(dict(row, enabled=row["enabled"] and fresh and reason is None,
+                               reason=reason))
+        return {"fresh": fresh, "last_verified": self.verified_at_utc,
+                "error": self.error, "public_verified_at": self.public_verified_at, "models": models}
 
 
 def reconcile(rows, lifecycle, policies):
@@ -59,10 +73,32 @@ def reconcile(rows, lifecycle, policies):
     selected, disabled = {}, []
     for model, duplicates in by_id.items():
         row, evidence = duplicates[0], lifecycle.get(model, {})
+        targets = {item["catalogue_target"] for item in duplicates if item.get("catalogue_target")}
+        if targets:
+            row = dict(row, catalogue_target=sorted(targets)[0])
+        conflicts = len(targets) > 1 or any(
+            item.get("capabilities") != duplicates[0].get("capabilities") or
+            item.get("deprecation") != duplicates[0].get("deprecation") for item in duplicates)
         reason = None
-        if any(item != row for item in duplicates):
+        deprecation = None
+        if row.get("deprecation"):
+            try:
+                parsed = datetime.fromisoformat(str(row["deprecation"]).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                deprecation = parsed.timestamp()
+                if deprecation <= time.time():
+                    reason = "account_deprecated"
+            except (ValueError, TypeError, OverflowError):
+                reason = "account_lifecycle_unverified"
+        capabilities = row.get("capabilities") or {}
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        if reason:
+            pass
+        elif conflicts:
             reason = "conflicting_account_metadata"
-        elif row.get("capabilities", {}).get("completion_chat") is not True:
+        elif capabilities.get("completion_chat") is not True:
             reason = "text_chat_not_supported"
         elif evidence.get("status") != "active":
             reason = "lifecycle_" + evidence.get("status", "unknown")
@@ -74,8 +110,12 @@ def reconcile(rows, lifecycle, policies):
                 "enabled": reason is None, "reason": reason,
                 "qualification": "source_only_not_live_qualified",
                 "catalogue_target": row.get("catalogue_target"),
+                "account_deprecation_at": deprecation,
+                "public_status": evidence.get("status", "unknown"),
+                "lifecycle_source": evidence.get("source"),
                 "version_policy": "official_alias" if evidence.get("alias") == model else "versioned",
-                "efforts": policies.get(model, {}).get("efforts", ["default"])}
+                "efforts": [effort for effort in policies.get(model, {}).get("efforts", ["default"])
+                            if effort != "high" or capabilities.get("reasoning") is True]}
         if reason:
             disabled.append(item)
             continue
