@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import tempfile
 import time
 from collections import Counter, defaultdict
@@ -588,23 +589,55 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
                 )
             )
     finally:
-        if detector is not None:
-            detector.reset()
-        if dispatcher is not None:
-            await dispatcher.drain()
-        if tts is not None:
-            await tts.stop()
-        if manager is not None:
-            manager._cancel_elapsed_ticker()
-            manager._cancel_grace_task()
-        reconnect_module._POST_HANDSHAKE_HEALTH_TIMEOUT_S = old_health_timeout
-        reconnect_module._reconnect_metrics = old_reconnect_metrics
-        ws_module._ws_metrics = old_ws_metrics
-        ws_module.manager = old_ws_manager
-        ws_module.settings = old_ws_settings
-        ws_module.catalogue = old_ws_catalogue
-        ws_module._active_connection = old_active_connection
-        ws_module._connection_counter = old_connection_counter
+        # Preserve the body/first teardown failure while still attempting every
+        # cleanup stage. In particular cancellation must not skip global restore.
+        cleanup_error = sys.exception()
+        try:
+            if detector is not None:
+                try:
+                    detector.reset()
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+            for component, method in ((dispatcher, "drain"), (tts, "stop")):
+                if component is not None:
+                    try:
+                        async with asyncio.timeout(7):
+                            await getattr(component, method)()
+                    except BaseException as exc:
+                        cleanup_error = cleanup_error or exc
+            # Interrupted teardown may leave component tasks registered. Cancel
+            # only explicitly owned workers, never unrelated event-loop tasks.
+            workers = set(dispatcher._in_flight) if dispatcher is not None else set()
+            if tts is not None:
+                workers.update(task for task in (tts._consumer_task, tts._synth_task)
+                               if task is not None)
+            for task in workers:
+                if not task.done():
+                    task.cancel()
+            if workers:
+                try:
+                    _, pending = await asyncio.wait(workers, timeout=2)
+                    if pending:
+                        raise TimeoutError("Offline scenario workers did not settle")
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+            if manager is not None:
+                for cancel in (manager._cancel_elapsed_ticker, manager._cancel_grace_task):
+                    try:
+                        cancel()
+                    except BaseException as exc:
+                        cleanup_error = cleanup_error or exc
+        finally:
+            reconnect_module._POST_HANDSHAKE_HEALTH_TIMEOUT_S = old_health_timeout
+            reconnect_module._reconnect_metrics = old_reconnect_metrics
+            ws_module._ws_metrics = old_ws_metrics
+            ws_module.manager = old_ws_manager
+            ws_module.settings = old_ws_settings
+            ws_module.catalogue = old_ws_catalogue
+            ws_module._active_connection = old_active_connection
+            ws_module._connection_counter = old_connection_counter
+        if cleanup_error is not None:
+            raise cleanup_error
 
     temporary_artifacts_removed = bool(temp_path) and not Path(temp_path).exists()
     remaining_tts_tasks = 0
