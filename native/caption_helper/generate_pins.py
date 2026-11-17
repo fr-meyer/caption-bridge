@@ -1,4 +1,8 @@
-import pathlib, re, subprocess, sys
+import pathlib
+import re
+import subprocess
+import sys
+
 root = pathlib.Path(sys.argv[1])
 names = ("GuardianA", "GuardianB", "SyntheticHelper")
 hashes = []

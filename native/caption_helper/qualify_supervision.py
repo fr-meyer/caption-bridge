@@ -3,10 +3,10 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 from owned_resources import OwnedResources
 

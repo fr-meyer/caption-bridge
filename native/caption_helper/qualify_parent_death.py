@@ -1,10 +1,10 @@
 """Controller-role death only; outer harness owns and reaps every child."""
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 from owned_resources import OwnedResources
 

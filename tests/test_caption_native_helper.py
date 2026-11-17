@@ -2,6 +2,7 @@
 import pathlib
 import plistlib
 import unittest
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class NativeSourceTests(unittest.TestCase):

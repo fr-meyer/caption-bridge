@@ -1,13 +1,13 @@
 """Content-free source fault injection; no native execution or device access."""
 import ast
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from native.caption_helper import owned_resources

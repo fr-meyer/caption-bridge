@@ -7,6 +7,7 @@ Receipts prove custody only, not helper identity, kernel safety or human readine
 Native verification/launch remains unavailable. Crash loses key and retains hold.
 """
 from __future__ import annotations
+
 import hashlib
 import hmac
 import os
@@ -15,8 +16,10 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
+
 from scripts.attended_acceptance import CAP_MS, hex_id
 from scripts.attended_journal import encoded
+
 
 @dataclass(frozen=True)
 class Receipt:
