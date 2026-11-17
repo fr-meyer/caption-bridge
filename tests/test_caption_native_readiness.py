@@ -31,3 +31,23 @@ class ReadinessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AttributionTests(unittest.TestCase):
+    def test_deadline_only_fixture_is_not_parent_mechanism_qualification(self):
+        # Parent-monitor-disabled role can exit at its deadline and be OS-reaped.
+        fixture = {
+            "parent_monitor_enabled": False,
+            "deadline_exit_seconds": 2,
+            "observed_esrch_seconds": 2.1,
+        }
+        aggregate_closure = fixture["observed_esrch_seconds"] <= 3
+        unique_parent_mechanism = fixture["parent_monitor_enabled"]
+        self.assertTrue(aggregate_closure)
+        self.assertFalse(unique_parent_mechanism)
+        harness = (ROOT / "qualify_assembly.py").read_text()
+        self.assertIn("ESRCH_AFTER_OS_REAPER_PARENT_OR_DEADLINE", harness)
+        self.assertNotIn("PARENT_DEATH_QUALIFIED", harness)
+        self.assertIn(
+            "cb_capture_admitted(void) { return false; }", (ROOT / "input_state.h").read_text()
+        )

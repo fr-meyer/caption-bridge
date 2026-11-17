@@ -1,4 +1,4 @@
-"""Hosted macOS CI only; noaudio evidence, never admission."""
+"""Noaudio only. Parent-death injection proves aggregate closure, not unique cause."""
 
 import hashlib
 import json
@@ -64,7 +64,7 @@ for mode in ("deadline", "guardian_a", "guardian_b", "helper", "suspend", "paren
             row = dict(
                 mode=mode,
                 pids=owned,
-                observation="ESRCH_AFTER_OS_REAPER",
+                observation="ESRCH_AFTER_OS_REAPER_PARENT_OR_DEADLINE",
                 controller_wait=child.returncode,
             )
         else:

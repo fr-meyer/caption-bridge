@@ -130,3 +130,15 @@ schema5 terminal receipt with partial PID list (-1 for never spawned), preservin
 Schema5 controller terminal fields: schema,noaudio_exit,terminal,pids,wait_status. Startup
 fields: event="started",pids. Harness aggregate fields: schema,qualification,images,rows.
 Readiness is not admission. Unknown closure and missing READY fail qualification.
+
+## Parent-death injection evidence classification (authoritative clarification)
+
+Mode parent_death names the injected controller kill only. Observation enum is
+ESRCH_AFTER_OS_REAPER_PARENT_OR_DEADLINE. This proves eventual bounded aggregate closure
+after controller death, not unique qualification of the parent-monitor mechanism: a role
+ignoring parent changes and exiting only at its two-second deadline can satisfy this test.
+Parent-monitor-specific native qualification remains unproven and admission remains unavailable.
+New fixed-role implementation checks getppid and continuous deadline. FD3 capability pipe is
+closed after initialization; it is NOT an ongoing EOF monitor. Historical README references
+to process exec monitoring or ongoing capability EOF do not describe this fixed-role revision.
+No unique parent-death attribution or physical capture acceptance is conferred by schema5.
