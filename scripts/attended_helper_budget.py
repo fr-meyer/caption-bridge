@@ -141,6 +141,35 @@ class Custody:
         self.launch_remaining_ns(capability, channel, reservation)
         return reservation
 
+    def prepare_noaudio_budget(self, capability, channel, receipt, challenge_event):
+        """Reply only after durable debit to an already-started noaudio handshake.
+
+        Caller must own the controller, inherited FD0 writer and bounded stdout
+        reader. This method does not spawn, send, authenticate native identity or
+        close a reservation. Native's anchor precedes its challenge, and therefore
+        precedes this debit: using the FULL reserved duration is conservative even
+        across scheduling, fsync and system sleep. Python clocks are not translated
+        to native ticks. Native independently rejects late/trailing/wrong replies.
+        A fake challenge can waste budget, never confer capture authority.
+        """
+        if (type(challenge_event) is not dict
+                or set(challenge_event) != {'event', 'challenge', 'ceiling_ms'}
+                or challenge_event['event'] != 'noaudio_budget_ready'
+                or type(challenge_event['ceiling_ms']) is not int
+                or challenge_event['ceiling_ms'] != 2000
+                or not hex_id(challenge_event['challenge'], 64)):
+            raise ValueError('noaudio_budget_challenge')
+        reservation = self.prepare_launch(capability, channel, receipt)
+        if reservation.reserved_ms > 2000 or reservation.sequence >= 2**64:
+            # An unsupported envelope was already debited, never refund it.
+            with self._lock:
+                self._launches.pop(capability, None)
+            raise RuntimeError('noaudio_budget_limit_hold')
+        wire = (b'CBNA0001' + bytes.fromhex(challenge_event['challenge'])
+                + (reservation.reserved_ms * 1_000_000).to_bytes(8, 'big')
+                + reservation.sequence.to_bytes(8, 'big'))
+        return reservation, wire
+
     def launch_remaining_ns(self, capability, channel, reservation):
         """Validate live parent custody and debit, never grant native admission."""
         with self._lock:
