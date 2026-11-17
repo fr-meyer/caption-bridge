@@ -142,3 +142,11 @@ New fixed-role implementation checks getppid and continuous deadline. FD3 capabi
 closed after initialization; it is NOT an ongoing EOF monitor. Historical README references
 to process exec monitoring or ongoing capability EOF do not describe this fixed-role revision.
 No unique parent-death attribution or physical capture acceptance is conferred by schema5.
+
+Qualifier diagnostics: success schema5 unchanged. Failure is exactly
+{schema:5,qualification:"NO_AUDIO_ONLY",failure:{mode,stage,error_class,controller_wait,
+startup,terminal},images,rows}. Mode is one of six existing modes or null; stage is signature,
+state_matrix,capture_reject,startup,communicate,wait_status,retirement. error_class is bounded
+to AssertionError,TimeoutExpired,JSONDecodeError,RuntimeError,CalledProcessError,OSError,Other.
+startup/terminal are strictly whitelisted existing receipts or null. No exception text, raw
+streams, paths, argv or environment is emitted. Failure exits1 and emits one JSON object.
