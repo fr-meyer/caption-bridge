@@ -19,6 +19,8 @@ def marker():
 
 def correlate(reference, captured, threshold=0.9):
     """Normalized DC-removed polarity-invariant match in bounded offline arrays."""
+    if type(reference) not in (list, tuple) or type(captured) not in (list, tuple):
+        raise ValueError("PCM sequences required")
     if not 32 <= len(reference) <= 512 or not len(reference) <= len(captured) <= 24000:
         raise ValueError("invalid correlation bounds")
     if not finite(threshold) or not 0.5 <= threshold <= 1:
@@ -42,9 +44,12 @@ def correlate(reference, captured, threshold=0.9):
             matches.append((offset, score))
     if not matches:
         return dict(valid=False, reason="marker_missing")
-    if matches[-1][0] - matches[0][0] >= n:
-        return dict(valid=False, reason="ambiguous_marker")
     offset, score = max(matches, key=lambda item: item[1])
+    # One adjacent sample may belong to the same correlation lobe. Equal
+    # competing peaks, even adjacent, and any remote match are ambiguous.
+    if any(pos != offset and (abs(pos-offset) > 1 or abs(value-score) < 1e-9)
+           for pos, value in matches):
+        return dict(valid=False, reason="ambiguous_marker")
     return dict(valid=True, offset_samples=offset, correlation=score)
 
 
@@ -80,13 +85,15 @@ def summarize(rows):
               "reason", "latency_ms", "gap_ms", "overlap_ms", "underruns"}
     reasons = {"ok", "marker_missing", "ambiguous_marker", "clock_invalid",
                "cancelled", "timeout", "capture_failed", "onset_before_request"}
-    if not rows:
+    if type(rows) is not list or not 1 <= len(rows) <= 10000:
         raise ValueError("empty observations")
     identities, seen, groups = set(), set(), {"buffered": [], "progressive": []}
     for row in rows:
-        if set(row) != fields or row["mode"] not in groups:
+        if type(row) is not dict or set(row) != fields:
             raise ValueError("invalid observation schema")
-        if row["scope"] not in {"scheduling", "digital_loopback", "acoustic"}:
+        if type(row["mode"]) is not str or row["mode"] not in groups:
+            raise ValueError("invalid observation schema")
+        if type(row["scope"]) is not str or row["scope"] not in {"scheduling", "digital_loopback", "acoustic"}:
             raise ValueError("invalid scope")
         if any(not isinstance(row[k], str) or not row[k] or len(row[k]) > 128
                for k in ("pair_id", "browser", "fixture_id")):
@@ -96,7 +103,8 @@ def summarize(rows):
             raise ValueError("duplicate attempt")
         seen.add(key)
         identities.add((row["browser"], row["scope"], row["fixture_id"]))
-        if type(row["valid"]) is not bool or row["reason"] not in reasons:
+        if (type(row["valid"]) is not bool or type(row["reason"]) is not str
+                or row["reason"] not in reasons):
             raise ValueError("invalid status")
         if row["valid"] != (row["reason"] == "ok"):
             raise ValueError("inconsistent status")
@@ -106,9 +114,11 @@ def summarize(rows):
         elif row["latency_ms"] is not None:
             raise ValueError("invalid samples must not carry latency")
         for field in ("gap_ms", "overlap_ms", "underruns"):
+            if row[field] is None and not row["valid"]:
+                continue
             if not finite(row[field]) or row[field] < 0:
                 raise ValueError("invalid continuity metric")
-        if type(row["underruns"]) is not int:
+        if row["underruns"] is not None and type(row["underruns"]) is not int:
             raise ValueError("invalid underrun count")
         groups[row["mode"]].append(row)
     if len(identities) != 1:
@@ -120,8 +130,15 @@ def summarize(rows):
                             invalid=len(samples)-len(valid),
                             reasons=dict(Counter(r["reason"] for r in samples)),
                             latency=distribution([r["latency_ms"] for r in valid]),
-                            **{k: sum(r[k] for r in samples)
-                               for k in ("gap_ms", "overlap_ms", "underruns")})
+                            **{k: (None if any(r[k] is None for r in samples)
+                                   else sum(r[k] for r in samples))
+                               for k in ("gap_ms", "overlap_ms", "underruns")},
+                            continuity_unknown_counts={
+                                k: sum(r[k] is None for r in samples)
+                                for k in ("gap_ms", "overlap_ms", "underruns")},
+                            continuity_known_sums={
+                                k: sum(r[k] for r in samples if r[k] is not None)
+                                for k in ("gap_ms", "overlap_ms", "underruns")})
     baseline = {r["pair_id"]: r for r in groups["buffered"]}
     candidate = {r["pair_id"]: r for r in groups["progressive"]}
     paired = [key for key in baseline.keys() & candidate.keys()

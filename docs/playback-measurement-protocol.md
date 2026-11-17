@@ -101,3 +101,43 @@ provenance, never a false faster-rate acknowledgment. Stop/mute/Catch up/relock/
 refresh invalidate epochs and await worker cleanup. Cover every lifecycle at
 all rates plus progressive incompatibility before production integration.
 No production control or default change is included in this first batch.
+
+## Offline capture adapter, second batch
+
+scripts/playback_capture_adapter.py now joins calibrated sample clocks, bounded
+onset correlation and capture-block continuity. calibrate() takes 3..32 ordered
+(sample_index, monotonic_ms, uncertainty_ms) anchors. Feasible offset intervals
+must intersect at the nominal sample rate; drift outside uncertainty fails.
+Anchors must bracket the analyzed window, no extrapolation. analyze_window()
+accepts an owned mutable PCM list and zeros it in finally, including errors.
+This does not erase aliases/backend buffers or attest actual stream shutdown.
+The C runner retains sole responsibility for capture and its guard/cleanup.
+
+continuity() requires actual block start/sample count/underrun integer metadata;
+nulls and missing fields fail, never become zeros. This is CAPTURE TRANSPORT
+continuity, not proof of an absence of speech dropouts on the output route.
+Any transport gap/overlap/underrun invalidates onset. Delivered speech continuity
+still requires reference-versus-output alignment and native qualification.
+Do not map transport zero to an audible no-gap verdict.
+
+Concrete programme allocation at 2s per onset window: 240 observations = 480s;
+20s calibration, 60s reserved to other lanes, 40s retries = 600s. The pure
+capture_budget() checks against the *current* shared remaining ledger and never
+authorizes capture. This arithmetic fits only at a full 600s balance and only
+if actual preflight proves each full open-to-close window <=2s. No native dry-run
+has proved that bound. At 2.1s the plan is 624s and fails. Longer speech-quality
+listening uses no physical capture; full-clip acoustic continuity remains open
+if it cannot fit. Do not trim promised evidence to manufacture feasibility.
+
+Public fixture asset preparation is in speed-evaluation/fixtures. Short greetings
+are real speech, but insufficient by themselves for the full multi-sentence
+pause/consonant/quality rubric. No local decoder/synthesizer is installed in this
+lane. Decode later in the isolated offline browser/approved toolchain, hash the
+exact mono 24kHz PCM and freeze packet schedule BEFORE paired collection.
+
+Review corrections: invalid attempts may carry explicit null continuity; retain
+them with per-metric unknown counts. Complete totals are null if any contributing
+metric is unknown; separately labeled known sums are partial, never a pass.
+Valid rows still require every finite metric. Correlation rejects competing
+above-threshold peaks beyond one neighboring sample and equal-score competing
+peaks even adjacent; short-period phase ambiguity cannot select a false onset.

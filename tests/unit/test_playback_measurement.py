@@ -64,3 +64,24 @@ class MeasurementTests(unittest.TestCase):
         result = summarize([row(valid=False, reason="cancelled", latency_ms=None)])
         self.assertIsNone(result["buffered"]["latency"]["p95_ms"])
         self.assertFalse(result["minimum_met"])
+
+    def test_failed_unknown_continuity_retained(self):
+        result = summarize([row(valid=False, reason="capture_failed", latency_ms=None,
+                                gap_ms=None, overlap_ms=None, underruns=None),
+                            row("1", gap_ms=2)])
+        mode = result["buffered"]
+        self.assertEqual(mode["attempts"], 2)
+        self.assertEqual(mode["invalid"], 1)
+        self.assertIsNone(mode["gap_ms"])
+        self.assertEqual(mode["continuity_unknown_counts"]["gap_ms"], 1)
+        self.assertEqual(mode["continuity_known_sums"]["gap_ms"], 2)
+        with self.assertRaises(ValueError):
+            summarize([row(gap_ms=None)])
+
+    def test_periodic_reference_competing_peaks(self):
+        result = correlate([.25, -.25]*16, [.25, -.25]*20)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["reason"], "ambiguous_marker")
+        # Unique deterministic marker remains accepted with neighboring noise.
+        ref = marker()
+        self.assertEqual(correlate(ref, [0]*3+ref+[0]*3)["offset_samples"], 3)
