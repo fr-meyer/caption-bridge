@@ -170,6 +170,277 @@ jobs:
       - name: Run provider-free pipeline scenario
         run: uv run --python 3.13 python -m scripts.full_pipeline_scenario --json
 
+      # Hosted runner only. No meeting Mac, capture API or provider invocation.
+      - name: Build and qualify sandboxed helper (no audio)
+        if: runner.os == 'macOS'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          uv run --no-sync --python 3.13 python - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import selectors
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          output = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-build"
+          receipt_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-receipt.json"
+          receipt = {"schema": 1, "qualification": "NO_AUDIO_ONLY", "capture_authorized": False,
+                     "provider_calls": 0, "terminal": "HOLD", "source_hashes": {}, "image_hashes": {},
+                     "signing_identities": {}, "probe_outcome": "NOT_RUN",
+                     "cleanup": "EPHEMERAL_RUNNER_ONLY"}
+          diagnostic_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-build-diagnostics.txt"
+          stage = "source"
+          started = time.monotonic()
+          limit = 65536
+
+          def bounded(args, timeout, *, build=False, check=True):
+              data = bytearray()
+              child = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT if build else subprocess.DEVNULL,
+                                       start_new_session=True)
+              error = None
+              deadline = time.monotonic() + timeout
+              try:
+                  with selectors.DefaultSelector() as selector:
+                      selector.register(child.stdout, selectors.EVENT_READ)
+                      while True:
+                          remaining = deadline - time.monotonic()
+                          if remaining <= 0:
+                              error = "TimeoutExpired"
+                              break
+                          if not selector.select(remaining):
+                              error = "TimeoutExpired"
+                              break
+                          chunk = os.read(child.stdout.fileno(), min(4096, limit + 1 - len(data)))
+                          if not chunk:
+                              child.wait(timeout=max(0.001, deadline - time.monotonic()))
+                              break
+                          overflow = len(data) + len(chunk) > limit
+                          data.extend(chunk[:limit - len(data)])
+                          if overflow:
+                              error = "OutputLimitExceeded"
+                              break
+              except subprocess.TimeoutExpired:
+                  error = "TimeoutExpired"
+              finally:
+                  if child.poll() is None or error is not None:
+                      try:
+                          os.killpg(child.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                  child.wait(timeout=2)
+                  child.stdout.close()
+                  if build:
+                      text = bytes(data[:limit]).decode("utf-8", errors="replace")
+                      for path in (str(output), os.getcwd(), os.environ["RUNNER_TEMP"], "/Users/runner"):
+                          text = text.replace(path, "<WORKSPACE>")
+                      diagnostic_path.write_bytes(text.encode()[:limit])
+              receipt["returncode"] = child.returncode
+              if error:
+                  receipt["error_class"] = error
+                  raise ValueError("bounded_subprocess_failed")
+              if check and child.returncode:
+                  receipt["error_class"] = "CalledProcessError"
+                  raise ValueError("subprocess_failed")
+              return bytes(data)
+
+          def checked_harness(raw):
+              def native_diagnostics(value, success):
+                  if (not isinstance(value, dict)
+                          or value.get("failure_stage") not in {"NONE", "SPAWN_SETUP", "IDENTITY_VERIFY",
+                                                               "CAPABILITY", "READY_ACK", "OWNED_REAP"}
+                          or type(value.get("failure_role")) is not int or not 0 <= value["failure_role"] <= 3
+                          or type(value.get("failure_code")) is not int or not -(2**31) <= value["failure_code"] < 2**31
+                          or not isinstance(value.get("cleanup_killed"), list) or len(value["cleanup_killed"]) != 3
+                          or any(type(flag) is not int or flag not in (0, 1) for flag in value["cleanup_killed"])):
+                      raise ValueError("native_diagnostic_shape")
+                  if success and (value["failure_stage"] != "NONE" or value["failure_role"] != 0
+                                  or value["failure_code"] != 0 or value["cleanup_killed"] != [0, 0, 0]):
+                      raise ValueError("native_cleanup_not_success")
+              def unique(pairs):
+                  result = {}
+                  for key, value in pairs:
+                      if key in result:
+                          raise ValueError("duplicate_key")
+                      result[key] = value
+                  return result
+              packet = json.loads(raw, object_pairs_hook=unique,
+                                  parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite")))
+              # Exact handoff: ef46b32 diagnostics, schema 5 success unchanged.
+              failed = isinstance(packet, dict) and "failure" in packet
+              fields = {"schema", "qualification", "images", "rows"}
+              if failed:
+                  if receipt["returncode"] == 0:
+                      raise ValueError("failure_packet_with_zero_exit")
+                  fields.add("failure")
+              # Parent-death row proves aggregate parent-or-deadline retirement only.
+              expected_modes = {"deadline", "guardian_a", "guardian_b", "helper", "suspend", "parent_death"}
+              if (not isinstance(packet, dict)
+                      or set(packet) != fields
+                      or type(packet["schema"]) is not int or packet["schema"] != 5
+                      or packet["qualification"] != "NO_AUDIO_ONLY"
+                      or not isinstance(packet["images"], dict)
+                      or any(key not in receipt["image_hashes"] or value != receipt["image_hashes"][key]
+                             for key, value in packet["images"].items())
+                      or (not failed and packet["images"] != receipt["image_hashes"])
+                      or not isinstance(packet["rows"], list)
+                      or (not failed and len(packet["rows"]) != 6)
+                      or (failed and len(packet["rows"]) > 6)):
+                  raise ValueError("harness_shape")
+              modes = set()
+              for row in packet["rows"]:
+                  if (not isinstance(row, dict) or not isinstance(row.get("mode"), str)
+                          or row["mode"] not in expected_modes or row["mode"] in modes):
+                      raise ValueError("harness_row")
+                  mode = row["mode"]
+                  modes.add(mode)
+                  if mode == "parent_death":
+                      if (set(row) != {"mode", "pids", "observation", "controller_wait"}
+                              or row["observation"] != "ESRCH_AFTER_OS_REAPER_PARENT_OR_DEADLINE"
+                              or type(row["controller_wait"]) is not int
+                              or row["controller_wait"] != -signal.SIGKILL):
+                          raise ValueError("harness_parent_retirement")
+                      pids = row["pids"]
+                  else:
+                      if set(row) != {"mode", "terminal"}:
+                          raise ValueError("harness_normal_row")
+                      inner = row["terminal"]
+                      if (not isinstance(inner, dict)
+                              or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status", "failure_stage", "failure_role", "failure_code", "cleanup_killed"}
+                              or type(inner["schema"]) is not int or inner["schema"] != 6
+                              or type(inner["noaudio_exit"]) is not int or inner["noaudio_exit"] != 0
+                              or inner["terminal"] != "HOLD"):
+                          raise ValueError("harness_authority")
+                      native_diagnostics(inner, True)
+                      pids = inner["pids"]
+                      statuses = inner["wait_status"]
+                      if (not isinstance(statuses, list) or len(statuses) != 3
+                              or any(type(v) is not int for v in statuses)):
+                          raise ValueError("harness_status_shape")
+                      for index, status in enumerate(statuses):
+                          injected = ((mode == "guardian_a" and index == 0)
+                                      or (mode == "guardian_b" and index == 1)
+                                      or (mode == "helper" and index == 2))
+                          if injected:
+                              allowed = {int(signal.SIGKILL)}
+                          elif index == 2:
+                              allowed = {71 << 8} if mode in {"guardian_a", "guardian_b"} else {71 << 8, 72 << 8}
+                          else:
+                              allowed = {72 << 8}
+                          if status not in allowed:
+                              raise ValueError("harness_role_exit")
+                  if (not isinstance(pids, list) or len(pids) != 3
+                          or any(type(v) is not int or not 1 < v <= 2147483647 for v in pids)
+                          or len(set(pids)) != 3):
+                      raise ValueError("harness_pid_identity")
+              if not failed and modes != expected_modes:
+                  raise ValueError("harness_incomplete")
+              if failed:
+                  failure = packet["failure"]
+                  if (not isinstance(failure, dict)
+                          or set(failure) != {"mode", "stage", "error_class", "controller_wait", "startup", "terminal"}
+                          or (failure["mode"] is not None and failure["mode"] not in expected_modes)
+                          or failure["stage"] not in {"signature", "state_matrix", "capture_reject", "startup",
+                                                      "communicate", "wait_status", "retirement"}
+                          or failure["error_class"] not in {"AssertionError", "TimeoutExpired", "JSONDecodeError",
+                                                            "RuntimeError", "CalledProcessError", "OSError", "Other"}
+                          or (failure["controller_wait"] is not None
+                              and (type(failure["controller_wait"]) is not int
+                                   or not -255 <= failure["controller_wait"] <= 255))):
+                      raise ValueError("failure_projection")
+                  startup = failure["startup"]
+                  if startup is not None:
+                      if (not isinstance(startup, dict) or set(startup) != {"event", "pids"}
+                              or startup["event"] != "started" or not isinstance(startup["pids"], list)
+                              or len(startup["pids"]) != 3
+                              or any(type(v) is not int or not 1 < v <= 2147483647 for v in startup["pids"])
+                              or len(set(startup["pids"])) != 3):
+                          raise ValueError("failure_startup")
+                  terminal = failure["terminal"]
+                  if terminal is not None:
+                      native_diagnostics(terminal, False)
+                      if (not isinstance(terminal, dict)
+                              or set(terminal) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status", "failure_stage", "failure_role", "failure_code", "cleanup_killed"}
+                              or type(terminal["schema"]) is not int or terminal["schema"] != 6
+                              or type(terminal["noaudio_exit"]) is not int or not 0 <= terminal["noaudio_exit"] <= 255
+                              or terminal["terminal"] != "HOLD"):
+                          raise ValueError("failure_terminal")
+                      for key in ("pids", "wait_status"):
+                          values = terminal[key]
+                          if (not isinstance(values, list) or len(values) != 3
+                                  or any(type(v) is not int for v in values)):
+                              raise ValueError("failure_terminal_values")
+                      if (any(not (v == -1 or 1 < v <= 2147483647) for v in terminal["pids"])
+                              or any(not -1 <= v <= 65535 for v in terminal["wait_status"])):
+                          raise ValueError("failure_terminal_bounds")
+              return packet
+          try:
+              for path in sorted(Path("native/caption_helper").glob("*")):
+                  if path.is_file() and path.suffix in {".c", ".h", ".py", ".plist"}:
+                      receipt["source_hashes"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+              build = Path("scripts/build_caption_helper.sh")
+              receipt["source_hashes"][build.name] = hashlib.sha256(build.read_bytes()).hexdigest()
+              # Script is mode 0644. Building does not launch anything.
+              stage = "build"
+              bounded(["sh", str(build), str(output)], 60, build=True)
+              images = output / "CaptionHelper.app/Contents/MacOS"
+              stage = "signature"
+              for name in ("GuardianA", "GuardianB", "SyntheticHelper", "NoAudioController"):
+                  image = images / name
+                  receipt["image_hashes"][name] = hashlib.sha256(image.read_bytes()).hexdigest()
+                  signature = subprocess.run(["/usr/bin/codesign", "-d", "--verbose=4", str(image)],
+                                             check=True, capture_output=True, text=True, timeout=2)
+                  fields = {}
+                  for line in signature.stderr.splitlines():
+                      key, separator, value = line.partition("=")
+                      if separator and key in {"Identifier", "CDHash", "TeamIdentifier"}:
+                          if key == "TeamIdentifier" and value == "not set":
+                              value = "AD_HOC_NO_TEAM"
+                          if not re.fullmatch(r"[A-Za-z0-9.()_-]{1,160}", value):
+                              raise RuntimeError("invalid_signing_identity")
+                          fields[key] = value
+                  if not {"Identifier", "CDHash"} <= fields.keys():
+                      raise RuntimeError("missing_signing_identity")
+                  receipt["signing_identities"][name] = fields
+              # The fixed qualifier exclusively invokes --noaudio; capture is compiled out.
+              # No raw tool/protocol stdout/stderr enters logs or artifacts, even on failure.
+              stage = "qualifier"
+              raw = bounded([sys.executable, "native/caption_helper/qualify_assembly.py", str(images)], 45, check=False)
+              stage = "qualifier_schema"
+              receipt["harness"] = checked_harness(raw)
+              if receipt["returncode"]:
+                  stage = "qualifier"
+                  receipt["error_class"] = "QualificationFailed"
+                  raise ValueError("qualification_failed")
+              receipt["probe_outcome"] = "PASS"
+          except Exception as error:
+              receipt["probe_outcome"] = "FAIL"
+              receipt["error_stage"] = stage
+              receipt.setdefault("error_class", type(error).__name__)
+              if isinstance(error, subprocess.CalledProcessError):
+                  receipt["returncode"] = error.returncode
+              raise SystemExit(1) from None
+          finally:
+              receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
+              receipt_path.write_text(json.dumps(receipt, sort_keys=True) + chr(10))
+          PYTHON
+      - name: Retain content-free noaudio helper qualification
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: helper-noaudio-qualification-macos
+          path: |
+            ${{ runner.temp }}/caption-helper-noaudio-receipt.json
+            ${{ runner.temp }}/caption-helper-build-diagnostics.txt
+          retention-days: 7
+          if-no-files-found: warn
+
   dependency-audit:
     name: Locked dependency audit (9 marker resolutions)
     runs-on: ubuntu-latest

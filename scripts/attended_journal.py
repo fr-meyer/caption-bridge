@@ -44,10 +44,11 @@ class Journal:
         import fcntl
         import stat
 
-        self.fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+        self.fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             st = os.fstat(self.fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_mode & 0o077:
+            if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1
+                    or st.st_mode & 0o077 or st.st_uid != os.geteuid()):
                 raise RuntimeError('journal_permissions')
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.path = Path(path)
@@ -106,6 +107,12 @@ class Journal:
         st = os.stat(self.path, follow_symlinks=False)
         if (st.st_dev, st.st_ino) != self.identity:
             raise RuntimeError('journal_replaced')
+        # Advisory locks cannot stop an accidental same-user writer. Detect
+        # edits/rollback against this live coordinator's in-memory tail anchor.
+        expected_tail = self.tail
+        self._read()
+        if self.tail != expected_tail:
+            raise RuntimeError('journal_anchor_changed')
         row['previous'] = self.tail
         data = encoded(row)
         os.lseek(self.fd, 0, os.SEEK_END)
@@ -130,4 +137,6 @@ class Journal:
         self._append({'event': 'close', 'sequence': self.active['sequence'], 'outcome': outcome})
 
     def close(self):
-        os.close(self.fd)
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None

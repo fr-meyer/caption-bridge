@@ -113,3 +113,7 @@ This supersedes the November 16 incomplete retrieval for those linked facts only
 historical observations remain intact. No v3 runtime adapter or paid evaluation
 was performed. Criterion 6 account-specific evidence remains unresolved; the
 other design work is not blocked by it. Defaults and dependency lock are unchanged.
+
+## Current criterion-6 public evidence supplement
+
+The [November 17 account-evidence addendum](provider-account-evidence-20261117.md) records current official alias/deprecation, price limitations, region/privacy distinctions, recovered policy tables, full retry/concurrency accounting and one precise owner-assisted read-only evidence request. It supersedes earlier public-discovery gaps, not account entitlement or human/native acceptance. No provider request or default change occurred.
