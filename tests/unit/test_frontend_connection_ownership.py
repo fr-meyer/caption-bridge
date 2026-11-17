@@ -47,6 +47,14 @@ def test_production_connection_policy_with_fake_socket_clock_and_dom():
     ("throw new Error('PRIVATE callback details')", "callback_error"),
     ("appState.ttsAudioUnlocked = false;", "assertion"),
     ("Promise.resolve().then(() => {while (true) {}});", "vm_timeout"),
+    ("throw {get stack(){while(true){}}, get message(){return 'PRIVATE stack';}};",
+     "stack_getter"),
+    ("throw {get message(){while(true){}}, get stack(){return 'PRIVATE message';}};",
+     "message_getter"),
+    ("Promise.resolve().then(() => {throw {get stack(){while(true){}}, "
+     "get message(){return 'PRIVATE microtask';}};});", "microtask_stack_getter"),
+    ("Promise.resolve().then(() => {throw new Error('PRIVATE rejection');});",
+     "microtask_error"),
 ])
 def test_bad_production_callback_fails_without_success_proof(tmp_path, payload, _reason):
     source = (ROOT / "app/static/app.js").read_text()
@@ -54,11 +62,14 @@ def test_bad_production_callback_fails_without_success_proof(tmp_path, payload, 
     assert source.count(marker) == 1
     modified = tmp_path / "synthetic-callback.js"
     modified.write_text(source.replace(marker, marker + payload, 1))
-    result = _run_fixture(modified)
+    # Six seconds is an independent safety ceiling, not the twenty-second
+    # startup allowance. A kill/reap assertion is a test failure, never a pass.
+    result = _run_fixture(modified, timeout=6)
     assert result.returncode != 0
     assert result.stdout == ""
+    cases = range(1, 8) if _reason.startswith("microtask_") else range(1, 2)
     assert result.stderr.splitlines() == ["fixture:started", "fixture:source_read",
-                                          "fixture:cases_started", "fixture:case_1", "fixture:failed"]
+        "fixture:cases_started", *[f"fixture:case_{case}" for case in cases], "fixture:failed"]
     assert "PRIVATE" not in result.stderr
 
 

@@ -4,6 +4,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 function stage(value) { process.stderr.write('fixture:' + value + '\n'); }
+let failed = false;
+function fail() {
+    // Never inspect VM-thrown objects, including deferred promise rejections.
+    if (!failed) stage('failed');
+    failed = true;
+    process.exitCode = 1; // Natural exit; never force away a live handle.
+}
+process.on('unhandledRejection', fail);
 function main() {
 stage('started');
 const deadline = process.hrtime.bigint() + 5_000_000_000n;
@@ -12,7 +20,10 @@ function evaluate(code, context) {
     if (remaining <= 0) {
         const error = new Error('fixture deadline'); error.code = 'FIXTURE_DEADLINE'; throw error;
     }
-    return vm.runInContext(code, context, {timeout: Math.min(250, remaining)});
+    // Default VM error decoration can invoke thrown getters outside its watchdog.
+    return vm.runInContext(code, context, {
+        timeout: Math.min(250, remaining), displayErrors: false,
+    });
 }
 const source = fs.readFileSync(process.argv[2], 'utf8');
 stage('source_read');
@@ -140,14 +151,17 @@ for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_a
     assert.equal(run(c,'appState.connectionState'),'connecting');
     assert.equal(run(c,'sockets[0].commands.length'),0);tests++;
 }
-stage('completed');
-process.stdout.write(JSON.stringify({tests,passed:true,real_browser:false,network:false,audio:false,storage:false})+'\n');
+// Node reports unhandled VM promise rejections before this next-turn check.
+// Do not emit a success proof before that deferred failure boundary settles.
+setImmediate(() => {
+    if (failed) return;
+    stage('completed');
+    process.stdout.write(JSON.stringify({tests,passed:true,real_browser:false,network:false,audio:false,storage:false})+'\n');
+});
 
 }
 try {
     main();
 } catch {
-    // Do not inspect VM-thrown objects/getters outside the timed VM either.
-    stage('failed');
-    process.exitCode = 1; // Natural exit; never hide a live handle using force-exit.
+    fail();
 }
