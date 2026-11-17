@@ -110,3 +110,13 @@ Known incomplete robustness: several spawn setup/destroy and close return values
 full checked cleanup; failure receipts do not yet prove expected child exit cause or list all
 reaped role PIDs; controller-death injection remains absent. Do not label this matrix qualified
 until those deficiencies are repaired and hosted native checks actually pass.
+
+Checked assembly revision: spawn allocation/setup/destroy, descriptor mappings, capability writes,
+close, CF allocation and wait failures now converge through owned cleanup and HOLD. Natural
+wait statuses are retained; cleanup SIGKILL cannot manufacture a successful case. Start receipt
+contains only three owned role PIDs. CI independently decodes per-role wait statuses. Direct
+controller death kills only Python-owned controller, then observes ESRCH after OS reaping of
+grandchildren, never claims Python waited them. Role parent monitoring now uses getppid plus
+capability EOF, not foreign-process kqueue filters. Deadline helper may exit71 on guardian EOF
+or72 on its own deadline because those events race; injected guardian failure requires71.
+All these are NEW SOURCE checks awaiting native CI, not native runtime acceptance.

@@ -15,7 +15,6 @@
 #include "input_state.h"
 #include "role_pins.h"
 #include <errno.h>
-extern char **environ;
 struct capability { uint64_t deadline; int32_t parent; uint32_t role; };
 static int reap_owned(pid_t pid) {
  if(kill(pid,SIGKILL)<0 && errno!=ESRCH)return 0;
@@ -26,15 +25,17 @@ static int verify(pid_t pid,const char *path,int role) {
  CFURLRef url=CFURLCreateFromFileSystemRepresentation(NULL,(const UInt8 *)path,strlen(path),false);
  SecStaticCodeRef disk=NULL;SecCodeRef live=NULL;CFDictionaryRef di=NULL,li=NULL;
  CFNumberRef number=CFNumberCreate(NULL,kCFNumberIntType,&pid);
+ if(!url || !number){if(url)CFRelease(url);if(number)CFRelease(number);return 0;}
  const void *k[]={kSecGuestAttributePid},*v[]={number};
  CFDictionaryRef attrs=CFDictionaryCreate(NULL,k,v,1,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
  int good=0;
+ if(!attrs){CFRelease(number);CFRelease(url);return 0;}
  if(SecStaticCodeCreateWithPath(url,0,&disk) || SecStaticCodeCheckValidity(disk,kSecCSStrictValidate,NULL))goto done;
  if(SecCodeCopyGuestWithAttributes(NULL,attrs,0,&live) || SecCodeCheckValidity(live,kSecCSStrictValidate,NULL))goto done;
  if(SecCodeCopySigningInformation(disk,kSecCSSigningInformation,&di) || SecCodeCopySigningInformation(live,kSecCSSigningInformation,&li))goto done;
  CFTypeRef a=CFDictionaryGetValue(di,kSecCodeInfoUnique),b=CFDictionaryGetValue(li,kSecCodeInfoUnique);
  CFTypeRef ai=CFDictionaryGetValue(di,kSecCodeInfoIdentifier),bi=CFDictionaryGetValue(li,kSecCodeInfoIdentifier);
- if(a && b && ai && bi && CFEqual(a,b) && CFEqual(ai,bi) && CFGetTypeID(b)==CFDataGetTypeID()) {
+ if(a && b && ai && bi && CFEqual(a,b) && CFEqual(ai,bi) && CFGetTypeID(b)==CFDataGetTypeID() && CFGetTypeID(bi)==CFStringGetTypeID()) {
   char identifier[128];char hash[129]={0};CFIndex count=CFDataGetLength((CFDataRef)b);
   if(count>0 && count<=64 && CFStringGetCString((CFStringRef)bi,identifier,sizeof(identifier),kCFStringEncodingUTF8)) {
    for(CFIndex i=0;i<count;i++)snprintf(hash+2*i,3,"%02x",CFDataGetBytePtr((CFDataRef)b)[i]);
@@ -45,41 +46,47 @@ done:
  if(di)CFRelease(di);if(li)CFRelease(li);if(disk)CFRelease(disk);if(live)CFRelease(live);
  CFRelease(attrs);CFRelease(number);CFRelease(url);return good;
 }
+static int closure_error=0;
+static void close_owned(int *fd){if(*fd>=0){if(close(*fd)<0)closure_error=1;*fd=-1;}}
 static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int role,uint64_t deadline) {
- int cap[2];if(pipe(cap))return -1;
- int originals[5]={cap[0],output,input,ga,gb};int mapped[5]={-1,-1,-1,-1,-1};
- for(int i=0;i<5;i++)if(originals[i]>=0){mapped[i]=fcntl(originals[i],F_DUPFD_CLOEXEC,20);if(mapped[i]<0){for(int j=0;j<i;j++)if(mapped[j]>=0)close(mapped[j]);close(cap[0]);close(cap[1]);return -1;}}
- for(int i=0;i<2;i++)fcntl(cap[i],F_SETFD,FD_CLOEXEC);
- posix_spawn_file_actions_t f;posix_spawnattr_t attr;
- posix_spawn_file_actions_init(&f);posix_spawnattr_init(&attr);
- posix_spawn_file_actions_adddup2(&f,mapped[0],3);
- posix_spawn_file_actions_adddup2(&f,mapped[1],4);
- if(input>=0)posix_spawn_file_actions_adddup2(&f,mapped[2],5);
- if(ga>=0)posix_spawn_file_actions_adddup2(&f,mapped[3],6);
- if(gb>=0)posix_spawn_file_actions_adddup2(&f,mapped[4],7);
- posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT);
- char *args[]={(char *)path,NULL};pid_t pid=-1;
- int error=posix_spawn(&pid,path,&f,&attr,args,environ);
- posix_spawn_file_actions_destroy(&f);posix_spawnattr_destroy(&attr);close(cap[0]);
- for(int i=0;i<5;i++)if(mapped[i]>=0)close(mapped[i]);
- if(error){close(cap[1]);return -1;}
- /* Owned suspended child cannot exec itself or recycle PID before wait. */
- if(!verify(pid,path,role)){reap_owned(pid);close(cap[1]);return -1;}
+ int cap[2]={-1,-1},mapped[5]={-1,-1,-1,-1,-1};pid_t pid=-1;
+ posix_spawn_file_actions_t f;posix_spawnattr_t attr;int fi=0,ai=0,ok=0;
+ if(pipe(cap))goto done;
+ int originals[5]={cap[0],output,input,ga,gb};
+ for(int i=0;i<2;i++)if(fcntl(cap[i],F_SETFD,FD_CLOEXEC)<0)goto done;
+ for(int i=0;i<5;i++)if(originals[i]>=0){mapped[i]=fcntl(originals[i],F_DUPFD_CLOEXEC,20);if(mapped[i]<0)goto done;}
+ if(posix_spawn_file_actions_init(&f))goto done;fi=1;
+ if(posix_spawnattr_init(&attr))goto done;ai=1;
+ for(int i=0;i<5;i++)if(mapped[i]>=0 && posix_spawn_file_actions_adddup2(&f,mapped[i],3+i))goto done;
+ if(posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT))goto done;
+ char *args[]={(char *)path,NULL};char *environment[]={NULL};
+ if(posix_spawn(&pid,path,&f,&attr,args,environment)) {pid=-1;goto done;}
+ if(!verify(pid,path,role))goto done;
  struct capability capability={deadline,getpid(),(uint32_t)role};
- ssize_t n=write(cap[1],&capability,sizeof(capability));close(cap[1]);
- if(n!=(ssize_t)sizeof(capability)){reap_owned(pid);return -1;}
- if(kill(pid,SIGCONT)<0){reap_owned(pid);return -1;}return pid;
+ size_t offset=0;
+ while(offset<sizeof(capability)){
+  ssize_t n=write(cap[1],(const char *)&capability+offset,sizeof(capability)-offset);
+  if(n<0 && errno==EINTR)continue;if(n<=0)goto done;offset+=(size_t)n;
+ }
+ if(kill(pid,SIGCONT)<0)goto done;ok=1;
+done:
+ if(fi && posix_spawn_file_actions_destroy(&f))closure_error=1;
+ if(ai && posix_spawnattr_destroy(&attr))closure_error=1;
+ for(int i=0;i<2;i++)close_owned(&cap[i]);
+ for(int i=0;i<5;i++)close_owned(&mapped[i]);
+ if(!ok && pid>0){if(!reap_owned(pid))closure_error=1;pid=-1;}
+ return pid;
 }
 int main(int argc,char **argv) {
  /* Explicit noaudio mode only. Capture admission is compile-time false. */
  if((argc!=3 && argc!=4) || strcmp(argv[1],"--noaudio"))return 64;
  const char *mode=argc==4?argv[3]:"deadline";
- if(strcmp(mode,"deadline") && strcmp(mode,"guardian_a") && strcmp(mode,"guardian_b") && strcmp(mode,"helper") && strcmp(mode,"suspend"))return 64;
+ if(strcmp(mode,"deadline") && strcmp(mode,"guardian_a") && strcmp(mode,"guardian_b") && strcmp(mode,"helper") && strcmp(mode,"suspend") && strcmp(mode,"parent_death"))return 64;
  char root[PATH_MAX];if(!realpath(argv[2],root))return 64;
  if(signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 70;
  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer)return 70;
  uint64_t end=mach_continuous_time()+1000000000ULL*tb.denom/tb.numer;
- int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};
+ int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};int statuses[3]={-1,-1,-1};pid_t identities[3]={-1,-1,-1};
  for(int i=0;i<3;i++){
   if(pipe(lifelines[i]))goto cleanup;
   for(int j=0;j<2;j++)if(fcntl(lifelines[i][j],F_SETFD,FD_CLOEXEC)<0)goto cleanup;
@@ -88,7 +95,7 @@ int main(int argc,char **argv) {
  for(int i=0;i<2;i++){
   char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/Guardian%c",root,'A'+i)>=(int)sizeof(path))goto cleanup;
   children[i]=spawn_role(path,-1,lifelines[i+1][1],-1,-1,i+1,end);
-  close(lifelines[i+1][1]);lifelines[i+1][1]=-1;
+  close_owned(&lifelines[i+1][1]);
   if(children[i]<0)goto cleanup;
  }
  /* Fixed synthetic helper consumes three read capabilities via a dedicated role image. */
@@ -96,21 +103,41 @@ int main(int argc,char **argv) {
  /* Helper receives role configuration; no actual input opening exists in any image. */
  children[2]=spawn_role(path,lifelines[0][0],lifelines[0][0],lifelines[1][0],lifelines[2][0],3,end);
  if(children[2]<0)goto cleanup;
+ for(int i=0;i<3;i++)identities[i]=children[i];
+ if(printf("{\"event\":\"started\",\"pids\":[%d,%d,%d]}\n",children[0],children[1],children[2])<0 || fflush(stdout))goto cleanup;
  result=0;
  if(!strcmp(mode,"guardian_a") && kill(children[0],SIGKILL)<0)result=70;
  if(!strcmp(mode,"guardian_b") && kill(children[1],SIGKILL)<0)result=70;
  if(!strcmp(mode,"helper") && kill(children[2],SIGKILL)<0)result=70;
- if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;usleep(1100000);if(kill(children[2],SIGCONT)<0)result=70;}
- while(mach_continuous_time()<end) {
-  int status;pid_t done=waitpid(children[2],&status,WNOHANG);
-  if(done==children[2]){children[2]=-1;break;}
-  usleep(1000);
+ if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;if(usleep(1100000)<0 && errno!=EINTR)result=70;if(kill(children[2],SIGCONT)<0)result=70;}
+ uint64_t reap_end=end+2000000000ULL*tb.denom/tb.numer;
+ while(mach_continuous_time()<reap_end) {
+  int remaining=0;
+  for(int i=0;i<3;i++)if(children[i]>0){
+   pid_t done=waitpid(children[i],&statuses[i],WNOHANG);
+   if(done==children[i])children[i]=-1;
+   else if(done<0 && errno!=EINTR){result=70;goto cleanup;}
+   else remaining++;
+  }
+  if(!remaining)break;
+  if(usleep(1000)<0 && errno!=EINTR){result=70;break;}
+ }
+ for(int i=0;i<3;i++)if(children[i]>0)result=70;
+ if(result==0){
+  for(int i=0;i<3;i++){
+   int injected=(!strcmp(mode,"guardian_a") && i==0)||(!strcmp(mode,"guardian_b") && i==1)||(!strcmp(mode,"helper") && i==2);
+   if(injected){if(!WIFSIGNALED(statuses[i]) || WTERMSIG(statuses[i])!=SIGKILL)result=70;}
+   else {int expected=(i==2 && (!strcmp(mode,"guardian_a")||!strcmp(mode,"guardian_b")))?71:72;
+    if(!WIFEXITED(statuses[i]) || (WEXITSTATUS(statuses[i])!=expected && !(i==2 && expected==72 && WEXITSTATUS(statuses[i])==71)))result=70;}
+  }
  }
 cleanup:
- for(int i=0;i<3;i++)for(int j=0;j<2;j++)if(lifelines[i][j]>=0)close(lifelines[i][j]);
+ for(int i=0;i<3;i++)for(int j=0;j<2;j++)close_owned(&lifelines[i][j]);
  for(int i=0;i<3;i++)if(children[i]>0){if(!reap_owned(children[i]))result=70;}
  /* Synthetic only; native stop/drain/dispose proof cannot be asserted by this controller. */
  cb_stop(&state,mach_continuous_time(),false,false,false);
- printf("{\"schema\":3,\"noaudio_exit\":%d,\"terminal\":\"HOLD\"}\n",result);
+ if(closure_error)result=70;
+ for(int i=0;i<3;i++)if(identities[i]>0){errno=0;if(kill(identities[i],0)==0 || errno!=ESRCH)result=70;}
+ if(printf("{\"schema\":5,\"noaudio_exit\":%d,\"terminal\":\"HOLD\",\"pids\":[%d,%d,%d],\"wait_status\":[%d,%d,%d]}\n",result,identities[0],identities[1],identities[2],statuses[0],statuses[1],statuses[2])<0)return 70;
  return result;
 }
