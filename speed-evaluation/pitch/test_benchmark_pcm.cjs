@@ -16,3 +16,13 @@ for (const bad of [[], new Float32Array(2), new Float32Array(4800).fill(NaN)]) {
 }
 assert.throws(() => benchmark(pcm, 31));
 console.log("benchmark PCM contracts passed");
+const balanced = benchmark(pcm, 6);
+assert.equal(balanced.order_balanced, true);
+assert.equal(result.order_balanced, false);
+assert.equal(new Set(balanced.trial_order.map(order => order.join(','))).size, 6);
+for (const rate of [1, 1.15, 1.3]) {
+    for (let position = 0; position < 3; position++) {
+        assert.equal(balanced.trial_order.filter(order => order[position] === rate).length, 2);
+    }
+}
+assert.equal(balanced.human_quality, 'pending');

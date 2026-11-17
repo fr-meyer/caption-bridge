@@ -21,3 +21,24 @@ class FixtureTests(unittest.TestCase):
                      struct.pack("<f", 2)):
             with self.assertRaises(ValueError):
                 MODULE.validate_pcm(data)
+
+
+class PublicFixtureTests(unittest.TestCase):
+    def test_provisioned_originals_match_manifest(self):
+        import hashlib
+        import json
+
+        root = PATH.parent
+        manifest = json.loads((root / 'manifest.json').read_text())
+        self.assertEqual({f['language'] for f in manifest['fixtures']}, {'ko', 'en-US'})
+        for fixture in manifest['fixtures']:
+            with self.subTest(fixture=fixture['id']):
+                self.assertEqual(Path(fixture['path']).name, fixture['path'])
+                data = (root / fixture['path']).read_bytes()
+                self.assertTrue(data.startswith(b'OggS'))
+                self.assertLessEqual(len(data), 65536)
+                self.assertEqual(len(data), fixture['bytes'])
+                self.assertEqual(hashlib.sha256(data).hexdigest(), fixture['sha256'])
+                self.assertTrue(fixture['source'].startswith('https://commons.wikimedia.org/wiki/File:'))
+                self.assertTrue(fixture['license'])
+                self.assertIsNone(fixture['pcm_sha256'])

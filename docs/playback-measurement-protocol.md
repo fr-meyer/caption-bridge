@@ -141,3 +141,40 @@ metric is unknown; separately labeled known sums are partial, never a pass.
 Valid rows still require every finite metric. Correlation rejects competing
 above-threshold peaks beyond one neighboring sample and equal-score competing
 peaks even adjacent; short-period phase ambiguity cannot select a false onset.
+
+## 2026-11-17 v1.1 source-only readiness delta
+
+English original provisioning is now complete: `speed-evaluation/fixtures/en-hello.ogg`,
+9036 bytes, SHA256 `ade8485f1cfd454e27ec1bb93cc0234d3187b2507230f72e96f46ac686e82972`.
+Commons author Dvortygirl explicitly dedicates it to the public domain with an
+unconditional-use fallback. Source/license and unmodified-byte identity are in
+the fixture manifest. Korean attribution and local synthesis recipe are unchanged.
+Earlier missing-asset notes above describe the earlier batch; no failed receipt
+was rewritten. Neither original was decoded or played in this source-only batch.
+These greetings do NOT complete the multi-sentence public real-speech corpus.
+
+The offline Node benchmark now interleaves rates using all six permutations,
+five cycles at default 30 repetitions, instead of processing one rate block at
+a time. Its numeric `trial_order` makes order reproducible, and `order_balanced`
+is false for reduced runs not divisible by six. This avoids conflating systematic
+rate order with warm-up drift, but does not eliminate resource contention or
+make Node timing into native browser startup/performance evidence.
+
+Prepared offline verification (standard library Python and existing Node only):
+
+```sh
+python3 -m unittest discover -s tests/unit -p 'test_playback*.py'
+python3 -m unittest discover -s tests/unit -p 'test_local_speech_fixture.py'
+node --test --test-concurrency=1 speed-evaluation/pitch/test_*.cjs
+# Once separately provisioned/hashed mono 24kHz float32 speech is available:
+node speed-evaluation/pitch/benchmark_pcm.cjs /private/local/speech.f32le
+```
+
+Native-window handoff: freeze decoded PCM hashes, packet arrival schedule,
+browser versions, mode/rate ordering and actual remaining capture ledger first.
+Use `playback_capture_adapter.calibrate`, `analyze_window`, `capture_budget` and
+`playback_measurement.summarize` through the guarded device owner, not ordinary
+provider Start. The APIs are prepared analysis entrypoints, NOT an operational
+capture admission or cleanup implementation. Native Chromium/Safari measurements,
+measured budget preflight, output continuity, human listening and actual speed-go
+remain required. No production speed control is shipped and no no-go inferred.

@@ -116,4 +116,6 @@ other design work is not blocked by it. Defaults and dependency lock are unchang
 
 ## Current criterion-6 public evidence supplement
 
+The [November 17 public revalidation](provider-public-revalidation-20261117.md), checked 19:44–19:45 KST, adds documented audio-second quota dimensions, flags conflicting organization/workspace and Free API-access documentation, and supplies the precise remaining account-only checklist. It does not reopen completed #13 research or couple #90 to independent #96 catalogue source work.
+
 The [November 17 account-evidence addendum](provider-account-evidence-20261117.md) records current official alias/deprecation, price limitations, region/privacy distinctions, recovered policy tables, full retry/concurrency accounting and one precise owner-assisted read-only evidence request. It supersedes earlier public-discovery gaps, not account entitlement or human/native acceptance. No provider request or default change occurred.

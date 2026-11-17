@@ -26,6 +26,20 @@ class Receipt:
     payload: bytes
     mac: str
 
+@dataclass(frozen=True)
+class LaunchReservation:
+    """Parent-local ceiling, never identity, readiness or capture authority.
+
+    Starts before durable debit. A qualified native launcher must convert remaining
+    duration to mach_continuous_time, Python monotonic is not suspend-safe proof.
+    """
+    sequence: int
+    candidate: str
+    reserved_ms: int
+    deadline_ns: int
+    native_admission: bool = False
+
+
 class Custody:
     """Parent-only authority. Keep its Journal exclusively locked for its lifetime.
 
@@ -40,6 +54,7 @@ class Custody:
         self._key = secrets.token_bytes(32)
         self._lock = threading.Lock()
         self._sessions = {}
+        self._launches = {}
         self._issued = {}
         self._pid = os.getpid()
 
@@ -110,11 +125,50 @@ class Custody:
                                   hashlib.sha256(receipt.payload).hexdigest())
             return self._journal.active['sequence']
 
+    def prepare_launch(self, capability, channel, receipt):
+        """Debit before launch preparation. No launch, input, refund or admission.
+
+        Journal serializes all devices. Expiry after debit retains the hold.
+        The native identity/readiness/closure verifier remains unavailable.
+        """
+        started = time.monotonic_ns()
+        sequence = self.reserve(capability, channel, receipt)
+        with self._lock:
+            active = self._journal.active
+            reservation = LaunchReservation(sequence, active['candidate'], active['ms'],
+                                            started + active['ms'] * 1_000_000)
+            self._launches[capability] = reservation
+        self.launch_remaining_ns(capability, channel, reservation)
+        return reservation
+
+    def launch_remaining_ns(self, capability, channel, reservation):
+        """Validate live parent custody and debit, never grant native admission."""
+        with self._lock:
+            candidate = self._binding(capability, channel)
+            active = self._journal.active
+            if (type(reservation) is not LaunchReservation
+                    or self._launches.get(capability) is not reservation
+                    or active is None or self._journal.poisoned
+                    or self._journal.fd is None
+                    or active['sequence'] != reservation.sequence
+                    or active['candidate'] != candidate):
+                raise RuntimeError('launch_binding')
+            now = time.monotonic_ns()
+            if now < reservation.deadline_ns - reservation.reserved_ms * 1_000_000:
+                self._launches.pop(capability, None)
+                raise RuntimeError('launch_clock_regressed_hold')
+            remaining = reservation.deadline_ns - now
+            if remaining <= 0:
+                self._launches.pop(capability, None)
+                raise RuntimeError('launch_allowance_expired_hold')
+            return remaining
+
     def revoke(self, capability):
         """Close owned parent endpoint only; never clear an outstanding hold."""
         self._parent()
         with self._lock:
             entry = self._sessions.pop(capability, None)
+            self._launches.pop(capability, None)
             self._issued = {k: v for k, v in self._issued.items() if v[0] is not capability}
             if entry is not None:
                 entry[1].close()
