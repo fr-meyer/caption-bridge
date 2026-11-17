@@ -161,3 +161,16 @@ setup/I/O without errno, -10006 retirement, -10007 READY EOF. Other I/O failures
 wait_status now preserves actual failed-start child reap status; cleanup_killed distinguishes
 cleanup-sent SIGKILL from a status already available before cleanup. These are diagnostics,
 not qualification or capture authority. Native compile/runtime remains hosted-CI-only.
+
+Role identity packaging correction (source-only, not a proven SIGTRAP root cause):
+each fixed role now embeds its own __TEXT,__info_plist with CFBundleIdentifier
+matching its existing codesign identifier and CFBundleExecutable matching its image.
+Apple Code Signing Guide, “Adding an Info.plist to Single-File Tools”, explicitly
+documents embedded tool Info.plist identity and required CFBundleIdentifier/CFBundleName:
+https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html
+Previously only the containing CaptionHelper.app supplied a plist (different executable
+and identifier). This corrects missing per-tool metadata by the documented single-file
+route; it does NOT establish why hosted GuardianA trapped. Hosted rerun must determine
+whether SIGTRAP persists. No sandbox inheritance, entitlement relaxation, signature
+bypass, START_SUSPENDED removal, or capture admission change. Pins regenerate from
+newly signed role images as before. Receipt schemas remain unchanged.

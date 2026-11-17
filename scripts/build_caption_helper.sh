@@ -25,7 +25,18 @@ PLIST
 OUT="$1"
 for pair in '1 GuardianA' '2 GuardianB' '3 SyntheticHelper'; do
  set -- $pair
- /usr/bin/clang -Wall -Wextra -Werror -Os -DCAPTION_ROLE="$1" "$ROOT/native/caption_helper/role.c" -o "$APP/Contents/MacOS/$2"
+ # Apple Code Signing Guide: single-file tools carry their own Info.plist.
+ cat > "$OUT/$2-Info.plist" <<ROLE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>local.captionbridge.$2</string>
+<key>CFBundleName</key><string>$2</string>
+<key>CFBundleExecutable</key><string>$2</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+ROLE_PLIST
+ /usr/bin/plutil -lint "$OUT/$2-Info.plist"
+ /usr/bin/clang -Wall -Wextra -Werror -Os -DCAPTION_ROLE="$1" "$ROOT/native/caption_helper/role.c" -Wl,-sectcreate,__TEXT,__info_plist,"$OUT/$2-Info.plist" -o "$APP/Contents/MacOS/$2"
  /usr/bin/codesign --sign - --identifier "local.captionbridge.$2" --options runtime --timestamp=none --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$APP/Contents/MacOS/$2"
 done
 python3 "$ROOT/native/caption_helper/generate_pins.py" "$APP/Contents/MacOS" "$OUT/role_pins.h"
