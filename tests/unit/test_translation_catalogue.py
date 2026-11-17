@@ -34,7 +34,7 @@ class CatalogueTests(unittest.TestCase):
         evidence = {"dated": active(release=2),
                     "official": active(alias="official"), "old": active()}
         policies = {key: {} for key in evidence}
-        result = reconcile([row(key) for key in evidence], evidence, policies)
+        result = reconcile([dict(row("dated"), aliases=["official"]), row("official"), row("old")], evidence, policies)
         self.assertEqual([item["id"] for item in result], ["official"])
         result = reconcile([row("dated"), row("old")], evidence, policies)
         self.assertEqual([item["id"] for item in result], ["dated"])
@@ -107,6 +107,11 @@ class CatalogueTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await cache.refresh(loader, {}, {})
             self.assertIsNone(cache.verified_at)
+            self.assertIsNone(cache.attempted_at)
+            async def retry():
+                return [row("x")]
+            await cache.refresh(retry, {"x": active()}, {"x": {}})
+            self.assertTrue(cache.fresh)
         asyncio.run(scenario())
 
     def test_timeout_is_bounded(self):
@@ -121,3 +126,23 @@ class CatalogueTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_renewal_before_ttl_and_failed_expiry():
+    async def scenario():
+        now = [0]
+        cache = ModelCatalogue(ttl=300, clock=lambda: now[0])
+        async def load():
+            return [row("x")]
+        await cache.refresh(load, {"x": active()}, {"x": {}})
+        now[0] = 225
+        await cache.refresh(load, {"x": active()}, {"x": {}}, renew=True)
+        now[0] = 301
+        assert cache.snapshot()["models"][0]["enabled"]
+        now[0] = 450
+        async def fail():
+            raise ValueError("synthetic")
+        await cache.refresh(fail, {}, {}, renew=True)
+        assert not cache.snapshot()["fresh"]
+        assert not cache.snapshot()["models"][0]["enabled"]
+    asyncio.run(scenario())

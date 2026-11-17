@@ -45,8 +45,8 @@ for _family, _page, _version, _alias in [
 
 for _model, _evidence in LIFECYCLE.items():
     _evidence["source"] = "https://docs.mistral.ai/models/" + _SOURCE_PAGES[_evidence["family"]]
-    _evidence["refresh_public"] = _model not in {"zai-glm-5-2", "mistral-large-2512"}
-    if not _evidence["refresh_public"]:
+    _evidence["refresh_public"] = _evidence["status"] == "active"
+    if _model in {"zai-glm-5-2", "mistral-large-2512", "mistral-medium-3"}:
         _evidence["source"] = "https://docs.mistral.ai/models"
 
 # All use the existing Mistral text-chat adapter. Third-party models are enabled

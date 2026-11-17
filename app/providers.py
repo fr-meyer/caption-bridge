@@ -56,11 +56,29 @@ class MistralTranslationProvider:
 
     def __init__(self, api_key: str) -> None:
         self._client = Mistral(api_key=api_key)
+        self._metadata_key = api_key
 
     async def list_models(self) -> list[dict]:
         """Metadata only. Invoked explicitly, never an inference probe."""
-        response = await self._client.models.list_async()
-        return [row.model_dump(mode="json") for row in response.data]
+        import httpx
+        import orjson
+
+        if not self._metadata_key:
+            raise ValueError("Account metadata credential unavailable")
+        async with httpx.AsyncClient(timeout=4, follow_redirects=False, trust_env=False) as client:
+            async with client.stream("GET", "https://api.mistral.ai/v1/models",
+                                     headers={"Authorization": "Bearer " + self._metadata_key}) as response:
+                response.raise_for_status()
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 2_000_000:
+                        raise ValueError("Account metadata exceeds byte ceiling")
+        payload = orjson.loads(content)
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or len(rows) > 2000:
+            raise ValueError("Invalid account metadata")
+        return rows
 
     async def translate(
         self,

@@ -23,7 +23,7 @@ def test_public_refresh_is_deduplicated_and_historical_status_not_replaced():
     calls = []
     async def fetch(url):
         calls.append(url)
-        return '<span data-slot="badge">GA</span>'
+        return '<span data-slot="badge">GA</span><script>{"names":["alias","version"]}</script>'
     evidence = {
         "alias": dict(source="https://docs.mistral.ai/models/current", refresh_public=True, status="unknown"),
         "version": dict(source="https://docs.mistral.ai/models/current", refresh_public=True, status="unknown"),
@@ -54,3 +54,11 @@ def test_public_failure_cancels_sibling_requests():
             await refresh_public_lifecycle(evidence, fetch)
         assert cancelled.is_set()
     asyncio.run(scenario())
+
+
+def test_changed_identity_cannot_renew_active_badge():
+    async def fetch(url):
+        return '<span data-slot="badge">GA</span><script>{"names":["replacement"]}</script>'
+    with pytest.raises(ExceptionGroup):
+        asyncio.run(refresh_public_lifecycle({"original": dict(
+            source="https://docs.mistral.ai/models/current", refresh_public=True)}, fetch))

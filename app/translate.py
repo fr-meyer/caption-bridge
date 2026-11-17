@@ -15,7 +15,11 @@ from app.glossary import Glossary, add_to_messages, effective_source
 from app.languages import get_language_label
 from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
-from app.translation_models import translation_output_limit, validate_translation_model
+from app.translation_models import (
+    translation_output_limit,
+    validate_reasoning_effort,
+    validate_translation_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,12 @@ class TranslationDispatcher:
             self._session_manager.mark_translation_failed(
                 segment.seq, session_id, reason="model_catalogue_unavailable"
             )
+            return
+        try:
+            validate_reasoning_effort(getattr(segment, "translation_reasoning_effort", None) or "default", model)
+        except ValueError:
+            self._session_manager.mark_translation_failed(
+                segment.seq, session_id, reason="model_effort_unavailable")
             return
         if glossary is not None and glossary.target_language != target_language:
             segment.terminology_status = "paused"

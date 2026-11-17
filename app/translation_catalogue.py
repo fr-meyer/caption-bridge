@@ -20,10 +20,11 @@ class ModelCatalogue:
     def fresh(self):
         return self.verified_at is not None and self.clock() - self.verified_at < self.ttl
 
-    async def refresh(self, loader, lifecycle, policies):
+    async def refresh(self, loader, lifecycle, policies, *, renew=False):
         async with self._lock:
-            if self.attempted_at is not None and self.clock() - self.attempted_at < self.ttl:
+            if self.attempted_at is not None and self.clock() - self.attempted_at < (min(30, self.ttl / 2) if renew else self.ttl):
                 return
+            previous_attempt = self.attempted_at
             self.attempted_at = self.clock()
             try:
                 rows = await asyncio.wait_for(loader(), self.timeout)
@@ -31,6 +32,7 @@ class ModelCatalogue:
                     raise ValueError("invalid catalogue")
                 entries = reconcile(rows, lifecycle, policies)
             except asyncio.CancelledError:
+                self.attempted_at = previous_attempt
                 raise
             except Exception:
                 self.error = "catalogue_refresh_failed"
@@ -104,6 +106,15 @@ def reconcile(rows, lifecycle, policies):
             reason = "lifecycle_" + evidence.get("status", "unknown")
         elif row.get("catalogue_target") and lifecycle.get(row["catalogue_target"], {}).get("status") != "active":
             reason = "alias_target_unverified"
+        elif evidence.get("alias") == model and not row.get("catalogue_target"):
+            reason = "alias_target_unverified"
+        elif row.get("catalogue_target") and (
+            evidence.get("family") != lifecycle.get(row["catalogue_target"], {}).get("family") or
+            evidence.get("variant") != lifecycle.get(row["catalogue_target"], {}).get("variant") or
+            model not in policies or row["catalogue_target"] not in policies or
+            policies[model] != policies[row["catalogue_target"]]
+        ):
+            reason = "alias_execution_contract_unverified"
         elif model not in policies:
             reason = "execution_policy_unverified"
         item = {"id": model, "label": row.get("name") or model,

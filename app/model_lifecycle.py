@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from html.parser import HTMLParser
 
 import httpx
@@ -51,10 +53,23 @@ async def refresh_public_lifecycle(evidence, fetch=None):
     pages = {row["source"] for row in evidence.values() if row.get("refresh_public")}
     semaphore = asyncio.Semaphore(3)
 
+    def verify(url, html):
+        # Model-card names are serialized inside Next flight script strings.
+        normalized = html.replace(chr(92), "")
+        groups = re.findall(r'"names":(\[[^\]]+\])', normalized)
+        names = set()
+        for group in groups:
+            names.update(json.loads(group))
+        expected = {model for model, row in evidence.items()
+                    if row.get("refresh_public") and row["source"] == url}
+        if not expected <= names:
+            raise ValueError("Public model identities or aliases changed")
+        return url, parse_lifecycle(html)
+
     async def read_page(url):
         async with semaphore:
             if fetch is not None:
-                return url, parse_lifecycle(await fetch(url))
+                return verify(url, await fetch(url))
             if not url.startswith("https://docs.mistral.ai/models/"):
                 raise ValueError("Unexpected lifecycle source")
             async with httpx.AsyncClient(timeout=4, follow_redirects=False, trust_env=False) as client:
@@ -65,7 +80,7 @@ async def refresh_public_lifecycle(evidence, fetch=None):
                         content.extend(chunk)
                         if len(content) > 3_000_000:
                             raise ValueError("Public lifecycle response exceeds limit")
-            return url, parse_lifecycle(content.decode("utf-8"))
+            return verify(url, content.decode("utf-8"))
 
     async with asyncio.timeout(8):
         async with asyncio.TaskGroup() as group:
