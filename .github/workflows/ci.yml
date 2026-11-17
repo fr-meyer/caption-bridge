@@ -251,6 +251,18 @@ jobs:
               return bytes(data)
 
           def checked_harness(raw):
+              def native_diagnostics(value, success):
+                  if (not isinstance(value, dict)
+                          or value.get("failure_stage") not in {"NONE", "SPAWN_SETUP", "IDENTITY_VERIFY",
+                                                               "CAPABILITY", "READY_ACK", "OWNED_REAP"}
+                          or type(value.get("failure_role")) is not int or not 0 <= value["failure_role"] <= 3
+                          or type(value.get("failure_code")) is not int or not -(2**31) <= value["failure_code"] < 2**31
+                          or not isinstance(value.get("cleanup_killed"), list) or len(value["cleanup_killed"]) != 3
+                          or any(type(flag) is not int or flag not in (0, 1) for flag in value["cleanup_killed"])):
+                      raise ValueError("native_diagnostic_shape")
+                  if success and (value["failure_stage"] != "NONE" or value["failure_role"] != 0
+                                  or value["failure_code"] != 0 or value["cleanup_killed"] != [0, 0, 0]):
+                      raise ValueError("native_cleanup_not_success")
               def unique(pairs):
                   result = {}
                   for key, value in pairs:
@@ -300,11 +312,12 @@ jobs:
                           raise ValueError("harness_normal_row")
                       inner = row["terminal"]
                       if (not isinstance(inner, dict)
-                              or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
-                              or type(inner["schema"]) is not int or inner["schema"] != 5
+                              or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status", "failure_stage", "failure_role", "failure_code", "cleanup_killed"}
+                              or type(inner["schema"]) is not int or inner["schema"] != 6
                               or type(inner["noaudio_exit"]) is not int or inner["noaudio_exit"] != 0
                               or inner["terminal"] != "HOLD"):
                           raise ValueError("harness_authority")
+                      native_diagnostics(inner, True)
                       pids = inner["pids"]
                       statuses = inner["wait_status"]
                       if (not isinstance(statuses, list) or len(statuses) != 3
@@ -351,9 +364,10 @@ jobs:
                           raise ValueError("failure_startup")
                   terminal = failure["terminal"]
                   if terminal is not None:
+                      native_diagnostics(terminal, False)
                       if (not isinstance(terminal, dict)
-                              or set(terminal) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
-                              or type(terminal["schema"]) is not int or terminal["schema"] != 5
+                              or set(terminal) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status", "failure_stage", "failure_role", "failure_code", "cleanup_killed"}
+                              or type(terminal["schema"]) is not int or terminal["schema"] != 6
                               or type(terminal["noaudio_exit"]) is not int or not 0 <= terminal["noaudio_exit"] <= 255
                               or terminal["terminal"] != "HOLD"):
                           raise ValueError("failure_terminal")
