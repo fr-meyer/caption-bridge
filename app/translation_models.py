@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
-from app.config import AppConfig
+import time
 
-_CHOICES = (
-    ("mistral-medium-latest", "Mistral Medium (latest)"),
-    ("mistral-small-latest", "Mistral Small (latest)"),
-    ("mistral-large-4", "Mistral Large 4 (preview)"),
-    ("zai-glm-5-3", "Z.ai GLM 5.3 (experimental preview)"),
-)
+from app.config import AppConfig
+from app.translation_catalogue import ModelCatalogue
+
+catalogue = ModelCatalogue()
+# Public evidence checked 2026-11-17, not account or live qualification.
+# Overview conflicts with the Medium alias guide: fail closed, preserve selection.
+LIFECYCLE = {
+    "mistral-large-latest": {"status": "active", "family": "large", "alias": "mistral-large-latest"},
+    "mistral-large-4": {"status": "active", "family": "large", "release": 4},
+    "mistral-small-latest": {"status": "active", "family": "small", "alias": "mistral-small-latest"},
+    "mistral-medium-latest": {"status": "conflicting", "family": "medium"},
+    "zai-glm-5-3": {"status": "active", "family": "glm", "release": 53},
+}
+EXECUTION_POLICIES = {
+    "mistral-medium-latest": {"efforts": ["default", "high"]},
+    "mistral-small-latest": {"efforts": ["default", "high"]},
+    "mistral-large-latest": {"efforts": ["default"]},
+    "mistral-large-4": {"efforts": ["default"]},
+    "zai-glm-5-3": {"efforts": ["default", "high"]},
+}
+
 _HIGH_REASONING_MODELS = frozenset({
     "mistral-medium-latest", "mistral-small-latest", "zai-glm-5-3",
 })
@@ -22,7 +37,7 @@ TRANSLATION_PROMPT_VERSION = "academic-caption-v1"
 
 def translation_output_limit(model: str, effort: str) -> int:
     # A live draft check also exhausted 1024 tokens on thinking without an answer.
-    if model == "zai-glm-5-3":
+    if model in {"zai-glm-5-3", "mistral-large-4", "mistral-large-latest"}:
         # GLM may spend the entire completion allowance on thinking.
         return 4096
     if effort == HIGH_REASONING_EFFORT:
@@ -30,13 +45,15 @@ def translation_output_limit(model: str, effort: str) -> int:
     return 200
 
 
-def available_translation_models(config: AppConfig) -> list[dict[str, str]]:
-    choices = [{"id": key, "label": label} for key, label in _CHOICES]
-    if config.translate_model not in {choice["id"] for choice in choices}:
-        choices.insert(0, {
-            "id": config.translate_model,
-            "label": "Configured default",
-        })
+def available_translation_models(config: AppConfig) -> list[dict]:
+    choices = catalogue.snapshot()["models"]
+    # The source evidence packet expires on 2026-11-24 UTC. No retired fallback.
+    if time.time() >= 1795478400:
+        choices = [dict(row, enabled=False, reason="public_lifecycle_evidence_expired") for row in choices]
+    if config.translate_model not in {row["id"] for row in choices}:
+        choices = [dict(id=config.translate_model, label=config.translate_model,
+                        enabled=False, reason="account_catalogue_unverified",
+                        efforts=["default"])] + choices
     return choices
 
 
@@ -52,7 +69,7 @@ def validate_reasoning_effort(raw: object, model: str) -> str:
 
 def validate_translation_model(raw: object, config: AppConfig) -> str:
     if not isinstance(raw, str) or raw not in {
-        choice["id"] for choice in available_translation_models(config)
+        choice["id"] for choice in available_translation_models(config) if choice.get("enabled")
     }:
         raise ValueError(ERROR_MESSAGE)
     return raw

@@ -45,6 +45,7 @@ poller = ReadinessPoller(manager=manager, config=settings)
 reconnect_manager = ReconnectionManager(session_manager=manager, config=settings)
 
 # Wire module-level references in ws.py
+ws.catalogue_loader = dispatcher._provider.list_models
 ws.manager = manager
 ws.poller = poller
 

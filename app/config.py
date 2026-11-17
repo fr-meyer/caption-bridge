@@ -52,6 +52,7 @@ class AppConfig(BaseSettings):
     )
     translation_context_segments: int = 5
     translation_timeout_ms: int = Field(default=10000, ge=100, le=120000)
+    translation_large_timeout_ms: int = Field(default=20000, ge=100, le=120000)
     translation_glm_timeout_ms: int = Field(
         default=20000, ge=100, le=120000,
         validation_alias="TRANSLATION_GLM_TIMEOUT_MS",

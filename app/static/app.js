@@ -321,6 +321,13 @@
 
     function handleMessage(msg) {
         switch (msg.type) {
+            case "translation_catalogue":
+                appState.translationCatalogue = msg.translation_catalogue || {};
+        appState.availableTranslationModels = msg.available_translation_models || [];
+                appState.translationCatalogue = msg.translation_catalogue || {};
+                populateModelDropdowns();
+                populateThinkingDropdowns();
+                break;
             case "input_devices":
                 if (audioDevices) audioDevices.inventory(msg);
                 break;
@@ -476,6 +483,7 @@
                 translatedText: seg.translated_text,
                 segmentKind: seg.segment_kind,
                 translationStatus: seg.translation_status,
+                failureReason: seg.failure_reason,
                 createdAt: seg.created_at,
                 targetLanguage: seg.target_language,
                 translationModel: seg.translation_model,
@@ -507,6 +515,16 @@
 
         populateLanguageDropdowns();
         populateModelDropdowns();
+        [els.idleModelSelect, els.drawerModelSelect].forEach(function (select, index) {
+            var id = index === 0 ? "refresh-translation-models" : "refresh-drawer-models";
+            if (!select || document.getElementById(id)) return;
+            var refresh = document.createElement("button");
+            refresh.id = id;
+            refresh.type = "button";
+            refresh.textContent = "Refresh model metadata (no inference)";
+            refresh.onclick = function () { send({ type: "refresh_translation_models" }); };
+            select.parentNode.appendChild(refresh);
+        });
         populateThinkingDropdowns();
         renderGlossary();
         fullRender();
@@ -570,6 +588,7 @@
             translatedText: msg.translated_text,
             segmentKind: msg.segment_kind,
             translationStatus: msg.translation_status,
+            failureReason: msg.failure_reason,
             createdAt: msg.created_at,
             targetLanguage: msg.target_language,
             translationModel: msg.translation_model,
@@ -1238,7 +1257,7 @@
             entry.translationStatus === "timed_out" ||
             entry.translationStatus === "failed"
         ) {
-            trans.textContent = "translation unavailable";
+            trans.textContent = "translation unavailable" + (entry.failureReason ? ": " + entry.failureReason : "");
             trans.classList.add("translation-unavailable");
         } else {
             trans.textContent = entry.translatedText;
@@ -1439,17 +1458,25 @@
             appState.availableTranslationModels.forEach(function (model) {
                 var option = document.createElement("option");
                 option.value = model.id;
-                option.textContent = model.label;
+                option.textContent = model.label + (model.reason ? " (" + model.reason + ")" : "");
+                option.disabled = model.enabled === false;
                 sel.appendChild(option);
             });
+            if (!appState.availableTranslationModels.some(function (item) { return item.id === appState.translationModel; })) {
+                var retired = document.createElement("option");
+                retired.value = appState.translationModel;
+                retired.textContent = appState.translationModel + " (unavailable)";
+                retired.disabled = true;
+                sel.appendChild(retired);
+            }
             sel.value = appState.translationModel;
         });
         renderModelSelectors();
     }
 
     function supportsHighReasoning(model) {
-        return ["mistral-small-latest", "mistral-medium-latest",
-            "zai-glm-5-3"].includes(model);
+        var entry = appState.availableTranslationModels.find(function (item) { return item.id === model; });
+        return !!entry && (entry.efforts || []).includes("high");
     }
 
     function populateThinkingDropdowns() {
@@ -1468,8 +1495,11 @@
     }
 
     function renderModelSelectors() {
-        var experimental = appState.translationModel === "zai-glm-5-3";
-        var note = "GLM is experimental and may miss or delay captions. Medium is recommended for now.";
+        var experimental = true;
+        var note = "Model metadata must be current. Source tests do not qualify live latency or quality.";
+        var meta = appState.translationCatalogue || {};
+        note += meta.error ? " Refresh failed; stale choices are disabled." :
+            (meta.fresh ? " Account metadata verified (cached for five minutes)." : " Account metadata not current; refresh required.");
         els.idleModelHelp.textContent = note;
         els.idleModelHelp.classList.toggle("hidden", !experimental);
         els.drawerModelHelp.textContent = "Changes apply to future captions. Requests already underway keep their model." +

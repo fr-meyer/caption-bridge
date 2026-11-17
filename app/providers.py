@@ -57,6 +57,11 @@ class MistralTranslationProvider:
     def __init__(self, api_key: str) -> None:
         self._client = Mistral(api_key=api_key)
 
+    async def list_models(self) -> list[dict]:
+        """Metadata only. Invoked explicitly, never an inference probe."""
+        response = await self._client.models.list_async()
+        return [row.model_dump(mode="json") for row in response.data]
+
     async def translate(
         self,
         *,
@@ -74,10 +79,18 @@ class MistralTranslationProvider:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.complete_async(**request)
         usage = getattr(response, "usage", None)
+        if not response.choices:
+            return TranslationResponse(text="", resolved_model=None)
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
+        text = extract_translation_text(choice.message.content)
+        content = choice.message.content
+        if not text and finish_reason != "length" and isinstance(content, list):
+            if any((chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None))
+                   == "thinking" for chunk in content):
+                finish_reason = "reasoning_only"
         return TranslationResponse(
-            text=extract_translation_text(choice.message.content),
+            text=text,
             resolved_model=getattr(response, "model", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),

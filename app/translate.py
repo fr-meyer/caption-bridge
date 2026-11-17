@@ -15,7 +15,7 @@ from app.glossary import Glossary, add_to_messages, effective_source
 from app.languages import get_language_label
 from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
-from app.translation_models import translation_output_limit
+from app.translation_models import translation_output_limit, validate_translation_model
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,13 @@ class TranslationDispatcher:
         if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
             glossary = None
         model = getattr(segment, "translation_model", None) or self._config.translate_model
+        try:
+            validate_translation_model(model, self._config)
+        except ValueError:
+            self._session_manager.mark_translation_failed(
+                segment.seq, session_id, reason="model_catalogue_unavailable"
+            )
+            return
         if glossary is not None and glossary.target_language != target_language:
             segment.terminology_status = "paused"
             glossary = None
@@ -135,6 +142,8 @@ class TranslationDispatcher:
 
     def _translation_timeout_ms(self) -> int:
         model = self._request_model.get() or self._config.translate_model
+        if model in {"mistral-large-4", "mistral-large-latest"}:
+            return self._config.translation_large_timeout_ms
         if model == "zai-glm-5-3":
             return self._config.translation_glm_timeout_ms
         return self._config.translation_timeout_ms
@@ -275,6 +284,10 @@ class TranslationDispatcher:
                 return
             except Exception as first_exc:
                 info = extract_provider_error_info(first_exc)
+                if info is not None and info.status_code in {400, 401, 403, 404, 422}:
+                    reason = "provider_unsupported" if info.status_code in {400, 404, 422} else "provider_unavailable"
+                    self._session_manager.mark_translation_failed(seq, session_id, reason=reason)
+                    return
                 if is_capacity_exceeded(info):
                     translated = await self._retry_translation_on_capacity(
                         messages, timeout_s, seq, session_id, target_language
@@ -304,17 +317,25 @@ class TranslationDispatcher:
                     if translated is None:
                         return
 
-            if not translated or not translated.strip():
-                logger.warning("Translation provider returned no answer text for segment #%d", seq)
-                self._session_manager.mark_translation_failed(
-                    seq, session_id, reason="provider_no_text"
-                )
-                return
-
             if getattr(segment, "translation_finish_reason", None) == "length":
                 logger.warning("Translation output limit reached for segment #%d", seq)
                 self._session_manager.mark_translation_failed(
                     seq, session_id, reason="provider_output_limit"
+                )
+                return
+
+            if getattr(segment, "translation_finish_reason", None) in {"content_filter", "refusal"}:
+                self._session_manager.mark_translation_failed(seq, session_id, reason="provider_refusal")
+                return
+
+            if getattr(segment, "translation_finish_reason", None) == "reasoning_only":
+                self._session_manager.mark_translation_failed(seq, session_id, reason="provider_reasoning_only")
+                return
+
+            if not translated or not translated.strip():
+                logger.warning("Translation provider returned no answer text for segment #%d", seq)
+                self._session_manager.mark_translation_failed(
+                    seq, session_id, reason="provider_no_text"
                 )
                 return
 
@@ -352,7 +373,7 @@ class TranslationDispatcher:
             return response
         segment = self._request_segment.get()
         if segment is not None:
-            if response.resolved_model:
+            if response.resolved_model and response.resolved_model != self._request_model.get():
                 segment.translation_model_resolved = response.resolved_model
             if response.prompt_tokens is not None:
                 segment.translation_prompt_tokens = (
