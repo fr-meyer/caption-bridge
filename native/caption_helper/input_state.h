@@ -19,7 +19,7 @@ static inline bool cb_route_change(cb_input *s) {
  return s->phase==CB_MUTED;
 }
 static inline bool cb_stop(cb_input *s,uint64_t now,bool stopped,bool drained,bool disposed) {
- if(s->phase==CB_HOLD || s->phase==CB_DISPOSED)return false;
+ if(s->phase==CB_HOLD || s->phase==CB_DISPOSED || s->phase!=CB_MUTED)return false;
  s->muted=true;s->phase=CB_STOPPING;
  /* Unknown stop/drain/dispose is permanent HOLD, never terminal/refundable. */
  if(now>s->deadline || !stopped || !drained || !disposed) {s->phase=CB_HOLD;return false;}

@@ -99,3 +99,14 @@ drain or disposal produces irreversible HOLD, never a terminal refund. Budget ad
 reserve before input and retain reservation until independently verified terminal closure;
 child exit alone, JSON HOLD, or source state is not terminal proof. Capture admission returns
 false unconditionally and no runtime option overrides it.
+
+Latest source hardening: build-generated exact CodeDirectory pins and fixed expected identifiers
+are compiled into controller; disk/live equality alone is no longer accepted. Build seals bundle
+after every image, including StateMatrix. StateMatrix exhausts 16 stop/drain/dispose/deadline
+combinations, rejects second input and terminal retry, and verifies mute before route. Five-case
+CI harness adds deadline, guardian A/B kill, helper kill and suspended-helper scenarios.
+These NEW cases remain unexecuted until hosted macOS CI. Their current receipt is HOLD-only.
+Known incomplete robustness: several spawn setup/destroy and close return values still need
+full checked cleanup; failure receipts do not yet prove expected child exit cause or list all
+reaped role PIDs; controller-death injection remains absent. Do not label this matrix qualified
+until those deficiencies are repaired and hosted native checks actually pass.
