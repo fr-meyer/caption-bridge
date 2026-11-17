@@ -173,7 +173,7 @@ jobs:
       # Hosted runner only. No meeting Mac, capture API or provider invocation.
       - name: Build and qualify sandboxed helper (no audio)
         if: runner.os == 'macOS'
-        timeout-minutes: 2
+        timeout-minutes: 4
         shell: bash
         run: |
           uv run --no-sync --python 3.13 python - <<'PYTHON'
@@ -380,12 +380,24 @@ jobs:
                               or any(not -1 <= v <= 65535 for v in terminal["wait_status"])):
                           raise ValueError("failure_terminal_bounds")
               return packet
+          def checked_budget_harness(raw):
+              from native.caption_helper.newqualifysuite import parse_receipt
+              packet = parse_receipt(raw)
+              if packet is None:
+                  raise ValueError("budget_receipt_schema")
+              if (packet["result"] == "PASS") != (receipt["returncode"] == 0):
+                  raise ValueError("budget_receipt_exit_mismatch")
+              return packet
+
           try:
               for path in sorted(Path("native/caption_helper").glob("*")):
                   if path.is_file() and path.suffix in {".c", ".h", ".py", ".plist"}:
                       receipt["source_hashes"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
               build = Path("scripts/build_caption_helper.sh")
               receipt["source_hashes"][build.name] = hashlib.sha256(build.read_bytes()).hexdigest()
+              for source in ("scripts/attended_helper_budget.py", "scripts/attended_journal.py",
+                             "scripts/attended_acceptance.py"):
+                  receipt["source_hashes"][source] = hashlib.sha256(Path(source).read_bytes()).hexdigest()
               # Script is mode 0644. Building does not launch anything.
               stage = "build"
               bounded(["sh", str(build), str(output)], 60, build=True)
@@ -418,6 +430,25 @@ jobs:
                   stage = "qualifier"
                   receipt["error_class"] = "QualificationFailed"
                   raise ValueError("qualification_failed")
+              # Keep the old six-mode regression matrix AND qualify the new fixed
+              # budget handshake. Never reuse receipts for changed native images.
+              stage = "budget_identity"
+              for name, digest in receipt["image_hashes"].items():
+                  if hashlib.sha256((images / name).read_bytes()).hexdigest() != digest:
+                      raise ValueError("budget_image_drift")
+              stage = "budget_qualifier"
+              raw = bounded([sys.executable, "-m", "native.caption_helper.newqualifysuite", str(images)],
+                            95, check=False)
+              stage = "budget_schema"
+              receipt["budget_harness"] = checked_budget_harness(raw)
+              if receipt["returncode"]:
+                  stage = "budget_qualifier"
+                  receipt["error_class"] = "QualificationFailed"
+                  raise ValueError("budget_qualification_failed")
+              stage = "budget_identity_after"
+              for name, digest in receipt["image_hashes"].items():
+                  if hashlib.sha256((images / name).read_bytes()).hexdigest() != digest:
+                      raise ValueError("budget_image_drift")
               receipt["probe_outcome"] = "PASS"
           except Exception as error:
               receipt["probe_outcome"] = "FAIL"

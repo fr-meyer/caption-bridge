@@ -116,7 +116,6 @@ def attempt(root, name, previous=None):
     result = row(name)
     challenge = None
     child = custody = journal = peer = capability = channel = None
-    stopped = False
     temporary = None
     try:
         temporary = tempfile.TemporaryDirectory(prefix='cb-noaudio-qualification-')
@@ -158,7 +157,6 @@ def attempt(root, name, previous=None):
             wire = b''
         if name == 'suspend_expiry':
             os.kill(child.pid, signal.SIGSTOP)  # direct owned controller only
-            stopped = True
             stop_deadline = time.monotonic()+.5
             while True:
                 observed, status = os.waitpid(child.pid, os.WUNTRACED | os.WNOHANG)
@@ -183,7 +181,6 @@ def attempt(root, name, previous=None):
         if name == 'suspend_expiry':
             time.sleep(2.2)
             os.kill(child.pid, signal.SIGCONT)
-            stopped = False
         result['stage'] = 'WAIT'
         if name == 'valid':
             started, terminal = reader.line(), reader.line()
