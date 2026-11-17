@@ -170,6 +170,78 @@ jobs:
       - name: Run provider-free pipeline scenario
         run: uv run --python 3.13 python -m scripts.full_pipeline_scenario --json
 
+      # Hosted runner only. No meeting Mac, capture API or provider invocation.
+      - name: Build and qualify sandboxed helper (no audio)
+        if: runner.os == 'macOS'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          uv run --no-sync --python 3.13 python - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import time
+
+          output = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-build"
+          receipt_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-receipt.json"
+          receipt = {"schema": 1, "qualification": "NO_AUDIO_ONLY", "capture_authorized": False,
+                     "provider_calls": 0, "source_hashes": {}, "image_hashes": {},
+                     "signing_identities": {}, "probe_outcome": "NOT_RUN",
+                     "cleanup": "EPHEMERAL_RUNNER_ONLY"}
+          started = time.monotonic()
+          try:
+              for path in sorted(Path("native/caption_helper").glob("*")):
+                  if path.is_file() and path.suffix in {".c", ".h", ".py", ".plist"}:
+                      receipt["source_hashes"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+              build = Path("scripts/build_caption_helper.sh")
+              receipt["source_hashes"][build.name] = hashlib.sha256(build.read_bytes()).hexdigest()
+              # Script is mode 0644. Building does not launch anything.
+              subprocess.run(["sh", str(build), str(output)], check=True, timeout=60,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              images = output / "CaptionHelper.app/Contents/MacOS"
+              for name in ("GuardianA", "GuardianB", "SyntheticHelper", "NoAudioController"):
+                  image = images / name
+                  receipt["image_hashes"][name] = hashlib.sha256(image.read_bytes()).hexdigest()
+                  signature = subprocess.run(["/usr/bin/codesign", "-d", "--verbose=4", str(image)],
+                                             check=True, capture_output=True, text=True, timeout=2)
+                  fields = {}
+                  for line in signature.stderr.splitlines():
+                      key, separator, value = line.partition("=")
+                      if separator and key in {"Identifier", "CDHash", "TeamIdentifier"}:
+                          if key == "TeamIdentifier" and value == "not set":
+                              value = "AD_HOC_NO_TEAM"
+                          if not re.fullmatch(r"[A-Za-z0-9.()_-]{1,160}", value):
+                              raise RuntimeError("invalid_signing_identity")
+                          fields[key] = value
+                  if not {"Identifier", "CDHash"} <= fields.keys():
+                      raise RuntimeError("missing_signing_identity")
+                  receipt["signing_identities"][name] = fields
+              # The fixed qualifier exclusively invokes --noaudio; capture is compiled out.
+              # No raw tool/protocol stdout/stderr enters logs or artifacts, even on failure.
+              subprocess.run([sys.executable, "native/caption_helper/qualify_assembly.py", str(images)],
+                             check=True, timeout=45, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+              receipt["probe_outcome"] = "PASS"
+          except BaseException:
+              receipt["probe_outcome"] = "FAIL"
+              raise
+          finally:
+              receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
+              receipt_path.write_text(json.dumps(receipt, sort_keys=True) + chr(10))
+          PYTHON
+      - name: Retain content-free noaudio helper qualification
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: helper-noaudio-qualification-macos
+          path: ${{ runner.temp }}/caption-helper-noaudio-receipt.json
+          retention-days: 7
+          if-no-files-found: warn
+
   dependency-audit:
     name: Locked dependency audit (9 marker resolutions)
     runs-on: ubuntu-latest
