@@ -71,20 +71,50 @@ class _FlightScripts(HTMLParser):
                     self.chunks.append(payload[1])
 
 
-def _nodes(value, records=None, ancestors=()):
+class _WorkBudget:
+    """Shared synchronous work ceiling, independent of asyncio deadlines."""
+    LIMIT = 4096
+
+    def __init__(self):
+        self.remaining = self.LIMIT
+
+    def spend(self, units=1):
+        if units > self.remaining:
+            raise ValueError("Current-card verification work budget exceeded")
+        self.remaining -= units
+
+    def class_tokens(self, text):
+        if not isinstance(text, str):
+            raise ValueError("Invalid current-card class metadata")
+        # Charge before tokenizing: shared refs must not repeatedly amplify a
+        # large class string while consuming only one node unit each time.
+        self.spend(1 + len(text) // 128)
+        return set(text.split())
+
+
+def _nodes(value, records=None, ancestors=(), *, budget=None, depth=0):
+    if budget is None:
+        budget = _WorkBudget()
+    budget.spend()  # Count every occurrence, including repeated DAG edges.
+    if depth >= 128:
+        raise ValueError("Current-card render nesting limit exceeded")
     if isinstance(value, str) and value.startswith("$L") and records is not None:
+        budget.spend(1 + len(value) // 128)
         key = value[2:]
         if key in ancestors or len(ancestors) >= 32:
             raise ValueError("Cyclic current-card render reference")
         if key in records:
-            yield from _nodes(records[key], records, (*ancestors, key))
+            yield from _nodes(records[key], records, (*ancestors, key),
+                              budget=budget, depth=depth + 1)
     elif isinstance(value, list):
         if len(value) == 4 and value[0] == "$" and isinstance(value[3], dict):
             yield value
-            yield from _nodes(value[3].get("children"), records, ancestors)
+            yield from _nodes(value[3].get("children"), records, ancestors,
+                              budget=budget, depth=depth + 1)
         else:
             for child in value:
-                yield from _nodes(child, records, ancestors)
+                budget.spend()
+                yield from _nodes(child, records, ancestors, budget=budget, depth=depth + 1)
 
 
 def verify_current_card(url, html, expected):
@@ -94,10 +124,14 @@ def verify_current_card(url, html, expected):
     Never search navigation/history records or union declarations across cards.
     Unknown transport/schema variants fail closed, rather than guessing.
     """
+    if len(html) > 3_000_000:
+        raise ValueError("Current-card input exceeds limit")
+    budget = _WorkBudget()
     parser = _FlightScripts()
     parser.feed(html)
     records = {}
     for line in "".join(parser.chunks).splitlines():
+        budget.spend()
         key, separator, body = line.partition(":")
         if separator and key and all(char in "0123456789abcdef" for char in key):
             if body.startswith(("[", "{")):
@@ -111,6 +145,7 @@ def verify_current_card(url, html, expected):
     route = root["t"]["t"]
     seen = set()
     while route.get("s") != "__PAGE__":
+        budget.spend()
         segment = route.get("s")
         if isinstance(segment, dict) and segment.get("n") == "slug" and segment.get("k") != slug:
             raise ValueError("Canonical current-card route segment mismatch")
@@ -119,6 +154,7 @@ def verify_current_card(url, html, expected):
             raise ValueError("Unbound current-card route")
         seen.add(reference)
         outlets = records.get(reference[2:], [])
+        budget.spend(len(outlets))
         children = [entry[1] for entry in outlets
                     if isinstance(entry, list) and len(entry) == 2 and entry[0] == "children"]
         if len(children) != 1:
@@ -128,9 +164,9 @@ def verify_current_card(url, html, expected):
     if not isinstance(page, str) or not page.startswith("$L"):
         raise ValueError("Unbound current-card page")
     tree = records.get(page[2:])
-    headers = [node for node in _nodes(tree, records)
+    headers = [node for node in _nodes(tree, records, budget=budget)
                if {"rounded-md", "border", "relative", "flex-col", "gap-6", "p-5"}
-               <= set(node[3].get("className", "").split())]
+               <= budget.class_tokens(node[3].get("className", ""))]
     if len(headers) != 1:
         raise ValueError("Missing or ambiguous current-card header")
     # In this supported provider schema the final direct header row contains
@@ -139,7 +175,7 @@ def verify_current_card(url, html, expected):
     identity_row = headers[0][3]["children"][-1]
     if not (isinstance(identity_row, list) and len(identity_row) == 4 and
             identity_row[1] == "div" and
-            "md:flex-row" in identity_row[3].get("className", "").split()):
+            "md:flex-row" in budget.class_tokens(identity_row[3].get("className", ""))):
         raise ValueError("Unknown current-card identity row")
     slots = identity_row[3].get("children")
     if not isinstance(slots, list) or len(slots) != 2:
@@ -147,14 +183,17 @@ def verify_current_card(url, html, expected):
     declaration = slots[1]
     seen_names = set()
     while isinstance(declaration, str) and declaration.startswith("$L"):
+        budget.spend()
         if declaration in seen_names:
             raise ValueError("Cyclic current-card identity slot")
+        budget.spend(len(declaration) // 128)
         seen_names.add(declaration)
         declaration = records.get(declaration[2:])
     if not (isinstance(declaration, list) and len(declaration) == 4 and
             isinstance(declaration[3], dict) and "names" in declaration[3]):
         raise ValueError("Missing current-card identity declaration")
-    nodes = list(_nodes(headers[0], records))
+    nodes = list(_nodes(headers[0], records, budget=budget))
+    budget.spend(len(nodes) * 3)
     titles = [node for node in nodes if node[1] == "h1" or node[3].get("as") == "h1"]
     declarations = [node[3]["names"] for node in nodes if "names" in node[3]]
     statuses = [node[3].get("children") for node in nodes
@@ -164,6 +203,8 @@ def verify_current_card(url, html, expected):
     if len(titles) != 1 or len(declarations) != 1 or len(statuses) != 1:
         raise ValueError("Ambiguous current-card identity or lifecycle")
     names = declarations[0]
+    if isinstance(names, list):
+        budget.spend(len(names))
     if (not isinstance(names, list) or not names or
             not all(isinstance(name, str) and name for name in names) or
             len(names) != len(set(names)) or not expected <= set(names)):

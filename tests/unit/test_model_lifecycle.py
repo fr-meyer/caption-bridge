@@ -201,3 +201,81 @@ def test_new_card_pair_must_be_declared_together_not_historical():
     assert verify_current_card(URL, encode(records), {"new-snapshot", "new-latest"}) == "active"
     with pytest.raises(ValueError):
         verify_current_card(URL, encode(records), EXPECTED)
+
+
+def test_compact_dag_actual_verification_has_finite_shared_work(monkeypatch):
+    from app import model_lifecycle as lifecycle
+    records = flight_records()
+    records["ab0"] = ["$", "div", None, {}]
+    for level in range(1, 16):
+        records["ab" + format(level, "x")] = ["$", "div", None,
+            {"children": ["$Lab" + format(level - 1, "x")] * 2}]
+    records["e"][3]["children"].append("$Labf")
+    html = encode(records)
+    assert len(html.encode()) < 20_000
+    instances = []
+    original = lifecycle._WorkBudget
+    class Meter(original):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+            instances.append(self)
+        def spend(self, units=1):
+            self.calls += 1
+            super().spend(units)
+    monkeypatch.setattr(lifecycle, "_WorkBudget", Meter)
+    with pytest.raises(ValueError, match="work budget exceeded"):
+        verify_current_card(URL, html, EXPECTED)
+    assert len(instances) == 1
+    assert instances[0].calls <= original.LIMIT + 1
+    assert instances[0].remaining >= 0
+
+
+@pytest.mark.parametrize("shape", ["cycle", "depth"])
+def test_actual_verification_rejects_reference_cycle_and_depth(shape):
+    records = flight_records()
+    if shape == "cycle":
+        records["ab0"] = ["$", "div", None, {"children": "$Lab0"}]
+    else:
+        for level in range(34):
+            records["ab" + format(level, "x")] = ["$", "div", None,
+                {"children": "$Lab" + format(level + 1, "x")}]
+    records["e"][3]["children"].append("$Lab0")
+    with pytest.raises(ValueError, match="render reference"):
+        verify_current_card(URL, encode(records), EXPECTED)
+
+
+def test_repeated_harmless_reference_is_accepted_but_duplicate_header_is_ambiguous():
+    records = flight_records()
+    records["ab0"] = ["$", "div", None, {}]
+    records["e"][3]["children"].extend(["$Lab0", "$Lab0"])
+    assert verify_current_card(URL, encode(records), EXPECTED) == "active"
+    records["ab0"] = copy.deepcopy(current_header(records))
+    with pytest.raises(ValueError, match="ambiguous current-card header"):
+        verify_current_card(URL, encode(records), EXPECTED)
+
+
+def test_page_header_route_and_identity_share_one_budget(monkeypatch):
+    from app import model_lifecycle as lifecycle
+    budgets = []
+    traversals = []
+    original_budget = lifecycle._WorkBudget
+    original_nodes = lifecycle._nodes
+    class Meter(original_budget):
+        def __init__(self):
+            super().__init__()
+            budgets.append(self)
+    def nodes(*args, **kwargs):
+        if kwargs.get("depth", 0) == 0:
+            traversals.append(kwargs["budget"])
+        yield from original_nodes(*args, **kwargs)
+    monkeypatch.setattr(lifecycle, "_WorkBudget", Meter)
+    monkeypatch.setattr(lifecycle, "_nodes", nodes)
+    html = FIXTURE.read_text()
+    assert verify_current_card(URL, html, EXPECTED) == "active"
+    assert len(budgets) == 1
+    assert traversals == [budgets[0], budgets[0]]
+    used = original_budget.LIMIT - budgets[0].remaining
+    monkeypatch.setattr(Meter, "LIMIT", used - 1)
+    with pytest.raises(ValueError, match="work budget exceeded"):
+        verify_current_card(URL, html, EXPECTED)
