@@ -21,6 +21,7 @@ from app.reliability import ReliabilityTracker, write_session_record
 from app.translation_models import (
     TRANSLATION_PROMPT_VERSION,
     available_translation_models,
+    catalogue,
     translation_output_limit,
     validate_reasoning_effort,
     validate_translation_model,
@@ -549,6 +550,7 @@ class SessionManager:
                     "translation_max_tokens": seg.translation_max_tokens,
                     "created_at": seg.created_at.isoformat(),
                     "translation_status": seg.translation_status,
+                    "failure_reason": seg.failure_reason,
                     "segment_kind": seg.segment_kind,
                     "terminology_version": seg.terminology_version,
                     "terminology_status": seg.terminology_status,
@@ -712,6 +714,7 @@ class SessionManager:
                 change.model_dump(mode="json") for change in s.translation_model_changes
             ],
             "available_translation_models": available_translation_models(self.config),
+            "translation_catalogue": catalogue.snapshot(),
             "glossary": s.glossary.model_dump(mode="json") if s.glossary else None,
             "caption_profile": s.caption_profile.model_dump(mode="json") if s.caption_profile else None,
             "available_caption_profiles": available_profiles(self.config),

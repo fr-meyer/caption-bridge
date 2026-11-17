@@ -14,6 +14,7 @@
 #include <limits.h>
 #include "input_state.h"
 #include "role_pins.h"
+#include "budget.h"
 #include <errno.h>
 #include <poll.h>
 struct capability { uint64_t deadline; int32_t parent; uint32_t role; };
@@ -111,13 +112,17 @@ done:
 }
 int main(int argc,char **argv) {
  /* Explicit noaudio mode only. Capture admission is compile-time false. */
- if((argc!=3 && argc!=4) || strcmp(argv[1],"--noaudio"))return 64;
+ if((argc!=3 && argc!=4) || (strcmp(argv[1],"--noaudio") && strcmp(argv[1],"--noaudio-budget")))return 64;
+ int budget_mode=!strcmp(argv[1],"--noaudio-budget");
+ if(budget_mode && argc!=3)return 64;
  const char *mode=argc==4?argv[3]:"deadline";
  if(strcmp(mode,"deadline") && strcmp(mode,"guardian_a") && strcmp(mode,"guardian_b") && strcmp(mode,"helper") && strcmp(mode,"suspend") && strcmp(mode,"parent_death"))return 64;
  char root[PATH_MAX];if(!realpath(argv[2],root))return 64;
  if(signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 70;
  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer)return 70;
- uint64_t end=mach_continuous_time()+2000000000ULL*tb.denom/tb.numer;
+ uint64_t end;
+ if(budget_mode){if(!cb_budget_deadline(&end,tb))return 70;}
+ else end=mach_continuous_time()+2000000000ULL*tb.denom/tb.numer;
  int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};int statuses[3]={-1,-1,-1};pid_t identities[3]={-1,-1,-1};
  for(int i=0;i<3;i++){
   if(pipe(lifelines[i]))goto cleanup;

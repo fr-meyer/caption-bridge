@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.config import AppConfig
 from app.profiles import available_profiles, resolve_profile
-from app.translation_models import available_translation_models
+from app.translation_models import EXECUTION_POLICIES
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
 _STARTED_AT = "2026-01-01T00:00:00+00:00"
@@ -78,7 +78,13 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "available_caption_profiles": available_profiles(AppConfig(_env_file=None)),
         "translation_model": config.translate_model,
         "translation_reasoning_effort": "default",
-        "available_translation_models": available_translation_models(config),
+        # Synthetic eligible account baseline, never production lifecycle evidence.
+        "translation_catalogue": {"fresh": True, "last_verified": "synthetic-offline-fixture",
+                                  "error": None, "qualification": "synthetic_fixture_only"},
+        "available_translation_models": [dict(id=model, label={"mistral-medium-latest": "Mistral Medium (latest)",
+            "mistral-small-latest": "Mistral Small (latest)", "mistral-large-4": "Mistral Large 4",
+            "zai-glm-5-3": "Z.ai GLM 5.3"}.get(model, model), enabled=True,
+            efforts=policy["efforts"]) for model, policy in EXECUTION_POLICIES.items()],
         "available_target_languages": [{"code": "en", "label": "English"}],
         "started_at": None,
         "ended_at": None,

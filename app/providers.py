@@ -56,6 +56,29 @@ class MistralTranslationProvider:
 
     def __init__(self, api_key: str) -> None:
         self._client = Mistral(api_key=api_key)
+        self._metadata_key = api_key
+
+    async def list_models(self) -> list[dict]:
+        """Metadata only. Invoked explicitly, never an inference probe."""
+        import httpx
+        import orjson
+
+        if not self._metadata_key:
+            raise ValueError("Account metadata credential unavailable")
+        async with httpx.AsyncClient(timeout=4, follow_redirects=False, trust_env=False) as client:
+            async with client.stream("GET", "https://api.mistral.ai/v1/models",
+                                     headers={"Authorization": "Bearer " + self._metadata_key}) as response:
+                response.raise_for_status()
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 2_000_000:
+                        raise ValueError("Account metadata exceeds byte ceiling")
+        payload = orjson.loads(content)
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or len(rows) > 2000:
+            raise ValueError("Invalid account metadata")
+        return rows
 
     async def translate(
         self,
@@ -74,10 +97,21 @@ class MistralTranslationProvider:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.complete_async(**request)
         usage = getattr(response, "usage", None)
+        if not response.choices:
+            return TranslationResponse(text="", resolved_model=None)
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
+        text = extract_translation_text(choice.message.content)
+        content = choice.message.content
+        if not text and finish_reason != "length" and isinstance(content, list):
+            types = {(chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None))
+                     for chunk in content}
+            if "refusal" in types:
+                finish_reason = "refusal"
+            elif "thinking" in types:
+                finish_reason = "reasoning_only"
         return TranslationResponse(
-            text=extract_translation_text(choice.message.content),
+            text=text,
             resolved_model=getattr(response, "model", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),

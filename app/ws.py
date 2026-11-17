@@ -17,9 +17,14 @@ from app.config import settings
 from app.glossary import parse_glossary
 from app.journal import SessionJournal, discard_recovery, retry_recovery
 from app.languages import is_valid_target_language
+from app.model_lifecycle import refresh_public_lifecycle
 from app.profiles import resolve_profile
 from app.state import RecoveryNotice, SessionManager
 from app.translation_models import (
+    EXECUTION_POLICIES,
+    LIFECYCLE,
+    available_translation_models,
+    catalogue,
     validate_reasoning_effort,
     validate_translation_model,
 )
@@ -244,6 +249,7 @@ start_pipeline: Callable[[], Any] | None = None
 stop_pipeline: Callable[[], Any] | None = None
 finish_input: Callable[[], Any] | None = None
 poller: ReadinessPoller | None = None
+catalogue_loader = None
 
 @dataclass(eq=False)
 class _ClientConnection:
@@ -315,6 +321,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     writer_failed = asyncio.Event()
     reader_task: asyncio.Task | None = None
     failure_task: asyncio.Task | None = None
+    catalogue_task: asyncio.Task | None = None
+    renewal_task: asyncio.Task | None = None
 
     async def _writer() -> None:
         try:
@@ -391,7 +399,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             outbound_queue, {"type": "session_snapshot", **snapshot, "connection_lifecycle": lifecycle}, obs
         )
 
+        async def _refresh_models(*, renew=False) -> None:
+            if catalogue_loader is not None:
+                lifecycle = dict(LIFECYCLE)
+                async def load_metadata():
+                    async with asyncio.TaskGroup() as group:
+                        account = group.create_task(catalogue_loader())
+                        public = group.create_task(refresh_public_lifecycle(LIFECYCLE))
+                    lifecycle.clear()
+                    lifecycle.update(public.result())
+                    return account.result()
+                previous = catalogue.verified_at
+                await catalogue.refresh(load_metadata, lifecycle, EXECUTION_POLICIES, renew=renew)
+                if catalogue.verified_at != previous and catalogue.error is None:
+                    catalogue.public_verified_at = time.time()
+            if _owns_connection(connection):
+                _enqueue_outbound(outbound_queue, {
+                    "type": "translation_catalogue",
+                    "available_translation_models": available_translation_models(manager.config),
+                    "translation_catalogue": catalogue.snapshot(),
+                }, obs)
+
+        async def _renew_models() -> None:
+            # Renew only a previously explicit successful metadata authorization.
+            while _owns_connection(connection):
+                await asyncio.sleep(min(5, catalogue.ttl / 10))
+                if not _owns_connection(connection):
+                    return
+                if (catalogue.verified_at is not None and
+                        catalogue.clock() - catalogue.verified_at >= catalogue.ttl * .75):
+                    await _refresh_models(renew=True)
+
+        renewal_task = asyncio.create_task(_renew_models())
+
         async def _read_commands() -> None:
+            nonlocal catalogue_task
             async for raw in websocket.iter_text():
                 if not _owns_connection(connection):
                     connection.close_reason = "ownership_lost" if not connection.closed else connection.close_reason
@@ -413,6 +455,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 if msg_type == "start":
                     await _handle_start(msg, outbound_queue, obs)
+                elif msg_type == "refresh_translation_models":
+                    if catalogue_task is None or catalogue_task.done():
+                        catalogue_task = asyncio.create_task(_refresh_models())
                 elif msg_type == "refresh_input_devices":
                     if manager.input_devices is not None:
                         devices = await asyncio.to_thread(manager.input_devices.refresh)
@@ -491,7 +536,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         _lifecycle(connection, "closed", connection.close_reason)
         # All owner effects happen before this await. Old writer cleanup cannot
         # relock TTS or disconnect a new owner admitted during cancellation.
-        tasks = [task for task in (reader_task, failure_task, writer_task) if task is not None]
+        tasks = [task for task in (reader_task, failure_task, writer_task, catalogue_task, renewal_task) if task is not None]
         for task in tasks:
             if not task.done():
                 task.cancel()

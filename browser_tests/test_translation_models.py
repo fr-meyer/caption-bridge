@@ -65,21 +65,29 @@ def test_startup_override_live_choice_refresh_and_new_session(
     page.goto(browser_harness.url, wait_until="domcontentloaded")
     browser_harness.wait_for_connections(1)
     expect(page.locator("#idle-model-select")).to_have_value(expected)
-    expect(page.locator("#idle-model-help")).to_be_hidden()
+    expect(page.locator("#idle-model-help")).to_be_visible()
+    expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
+    expect(page.locator("#idle-model-help")).not_to_contain_text("Experimental caption qualification")
     page.get_by_role("button", name="Start", exact=True).click()
     assert browser_harness.wait_for_message("start")["translation_model"] == expected
     expect(page.locator("#translation-model-status")).to_be_visible()
 
     page.get_by_role("button", name="Settings").click()
     page.locator("#drawer-model-select").select_option("zai-glm-5-3")
-    browser_harness.wait_for_message("set_translation_model")
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3 (experimental")
+    change = browser_harness.wait_for_message("set_translation_model")
+    assert change["model"] == "zai-glm-5-3"
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
     expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
     page.reload(wait_until="domcontentloaded")
     browser_harness.wait_for_connections(2)
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3 (experimental")
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
     page.get_by_role("button", name="Settings").click()
     expect(page.locator("#drawer-model-select")).to_have_value("zai-glm-5-3")
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
+    expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
     page.get_by_role("button", name="Close settings").click()
     page.get_by_role("button", name="Stop", exact=True).click()
     browser_harness.wait_for_message("stop")
@@ -88,7 +96,9 @@ def test_startup_override_live_choice_refresh_and_new_session(
     browser_harness.wait_for_message("new_session")
     expect(page.locator("#idle-model-select")).to_have_value(expected)
     expect(page.locator("#translation-model-status")).to_be_hidden()
-    expect(page.locator("#idle-model-help")).to_be_hidden()
+    expect(page.locator("#idle-model-help")).to_be_visible()
+    expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
+    expect(page.locator("#idle-model-help")).not_to_contain_text("Experimental caption qualification")
 
 
 def test_explicit_glm_before_start_shows_reliability_note(
@@ -99,10 +109,14 @@ def test_explicit_glm_before_start_shows_reliability_note(
     browser_harness.wait_for_connections(1)
     page.locator("#idle-model-select").select_option("zai-glm-5-3")
     expect(page.locator("#idle-model-help")).to_be_visible()
-    expect(page.locator("#idle-model-help")).to_contain_text("experimental")
+    expect(page.locator("#idle-model-help")).to_contain_text("Experimental")
     page.get_by_role("button", name="Start", exact=True).click()
     assert browser_harness.wait_for_message("start")["translation_model"] == "zai-glm-5-3"
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3")
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
+    page.get_by_role("button", name="Settings").click()
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
+    expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
 
 
 
@@ -114,7 +128,7 @@ def test_large4_preview_selection_live_ack_refresh_and_medium_new_session(
     browser_harness.wait_for_connections(1)
     idle = page.locator("#idle-model-select")
     expect(idle).to_have_value("mistral-medium-latest")
-    expect(idle.locator("option[value='mistral-large-4']")).to_have_text("Mistral Large 4 (preview)")
+    expect(idle.locator("option[value='mistral-large-4']")).to_have_text("Mistral Large 4")
     page.locator("#idle-thinking-select").select_option("high")
     idle.select_option("mistral-large-4")
     expect(page.locator("#idle-thinking-select")).to_have_value("default")
@@ -123,7 +137,7 @@ def test_large4_preview_selection_live_ack_refresh_and_medium_new_session(
     start = browser_harness.wait_for_message("start")
     assert start["translation_model"] == "mistral-large-4"
     assert start["translation_reasoning_effort"] == "default"
-    expect(page.locator("#translation-model-status")).to_contain_text("Large 4 (preview)")
+    expect(page.locator("#translation-model-status")).to_contain_text("Large 4")
     page.get_by_role("button", name="Settings").click()
     drawer = page.locator("#drawer-model-select")
     drawer.select_option("mistral-medium-latest")
@@ -131,7 +145,7 @@ def test_large4_preview_selection_live_ack_refresh_and_medium_new_session(
     page.locator("#drawer-thinking-select").select_option("high")
     expect(page.locator("#drawer-thinking-select")).to_have_value("high")
     drawer.select_option("mistral-large-4")
-    expect(page.locator("#translation-model-status")).to_contain_text("Large 4 (preview)")
+    expect(page.locator("#translation-model-status")).to_contain_text("Large 4")
     expect(page.locator("#drawer-thinking-select")).to_have_value("default")
     changes = [m for m in browser_harness.messages if m.get("type") == "set_translation_model"]
     assert [(m["model"], m["reasoning_effort"]) for m in changes] == [
@@ -141,7 +155,7 @@ def test_large4_preview_selection_live_ack_refresh_and_medium_new_session(
     ]
     page.reload(wait_until="domcontentloaded")
     browser_harness.wait_for_connections(2)
-    expect(page.locator("#translation-model-status")).to_contain_text("Large 4 (preview)")
+    expect(page.locator("#translation-model-status")).to_contain_text("Large 4")
     page.get_by_role("button", name="Stop", exact=True).click()
     browser_harness.wait_for_message("stop")
     page.get_by_role("button", name="New Session", exact=True).click()

@@ -3,7 +3,30 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+function stage(value) { process.stderr.write('fixture:' + value + '\n'); }
+let failed = false;
+function fail() {
+    // Never inspect VM-thrown objects, including deferred promise rejections.
+    if (!failed) stage('failed');
+    failed = true;
+    process.exitCode = 1; // Natural exit; never force away a live handle.
+}
+process.on('unhandledRejection', fail);
+function main() {
+stage('started');
+const deadline = process.hrtime.bigint() + 5_000_000_000n;
+function evaluate(code, context) {
+    const remaining = Number((deadline - process.hrtime.bigint()) / 1_000_000n);
+    if (remaining <= 0) {
+        const error = new Error('fixture deadline'); error.code = 'FIXTURE_DEADLINE'; throw error;
+    }
+    // Default VM error decoration can invoke thrown getters outside its watchdog.
+    return vm.runInContext(code, context, {
+        timeout: Math.min(250, remaining), displayErrors: false,
+    });
+}
 const source = fs.readFileSync(process.argv[2], 'utf8');
+stage('source_read');
 function slice(start, end) {
     const a = source.indexOf(start), b = source.indexOf(end, a);
     assert(a >= 0 && b > a, 'production function boundaries');
@@ -13,8 +36,8 @@ const functions = slice('    function connectWebSocket()', '    // ===== 3.3 Mes
     slice('    function handleSnapshot(msg)', '    function handleReadiness(msg)') +
     slice('    function renderHeader()', '    function renderAsrNotice()');
 function model() {
-    const context = vm.createContext({ Date, TextDecoder, ArrayBuffer, Blob });
-    vm.runInContext(`
+    const context = vm.createContext({ Date, TextDecoder, ArrayBuffer, Blob }, {microtaskMode: 'afterEvaluate'});
+    evaluate(`
         var sockets = [], timers = new Map(), timerCounter = 0, received = [], playbackCancels = 0;
         var location = {protocol:'http:', host:'synthetic.invalid'};
         var ws = null, reconnectTimer = null, reconnectAttempt = 0, isFirstConnect = true;
@@ -58,13 +81,15 @@ function model() {
     ` + functions, context);
     return context;
 }
-function run(context, code) { return vm.runInContext(code, context); }
+function run(context, code) { return evaluate(code, context); }
 function admitted(context, id='conn-000001') {
     run(context, `sockets.at(-1).message({type:'connection_lifecycle',connection_id:'${id}',state:'admitted',reason:'owner_admitted'});`);
     run(context, `sockets.at(-1).message({type:'session_snapshot',status:'idle_ready',segments:[],connection_lifecycle:{connection_id:'${id}',state:'admitted',reason:'owner_admitted'}});`);
 }
+stage('cases_started');
 let tests = 0;
 for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_active'}, {code:4409, reason:'PRIVATE untrusted close body'}]) {
+    stage('case_' + (tests + 1));
     const c = model(); run(c, 'connectWebSocket();sockets[0].open();');
     assert.equal(run(c, 'sockets[0].commands.length'), 0, 'open alone cannot send commands');
     admitted(c);
@@ -83,6 +108,7 @@ for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_a
     tests++;
 }
 {
+    stage('case_' + (tests + 1));
     const c = model();run(c,'connectWebSocket();sockets[0].open();');
     run(c,"sockets[0].message({type:'connection_lifecycle',connection_id:'conn-000002',state:'rejected',reason:'owner_active'});");
     run(c,"sockets[0].message({type:'session_snapshot',status:'idle_ready',segments:[]});sockets[0].close(4409,'owner_active');tick();");
@@ -92,6 +118,7 @@ for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_a
     assert.equal(run(c, 'sockets.length'), 1); tests++;
 }
 {
+    stage('case_' + (tests + 1));
     const c = model();run(c,'connectWebSocket();sockets[0].open();');admitted(c);
     run(c,"sockets[0].close(1006,'PRIVATE network body');");
     assert.equal(run(c,'appState.connectionState'),'reconnecting');
@@ -107,14 +134,16 @@ for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_a
     assert.equal(run(c,'appState.ttsAudioUnlocked'),true, 'ordinary reconnect retains document gesture');tests++;
 }
 {
+    stage('case_' + (tests + 1));
     const c = model();run(c,'connectWebSocket();sockets[0].open();');admitted(c);
     run(c,"sockets[0].close(1011,'writer_failed');");
-    const pending = run(c,'[...timers.values()][0].callback');
+    run(c,'var pendingCallback = [...timers.values()][0].callback;');
     run(c,"handleConnectionLifecycle({connection_id:'conn-000002',state:'rejected',reason:'owner_active'});");
-    assert.equal(run(c,'timers.size'),0);pending();
+    assert.equal(run(c,'timers.size'),0);run(c,'pendingCallback();');
     assert.equal(run(c,'sockets.length'),1, 'already captured reconnect callback remains terminal');tests++;
 }
 {
+    stage('case_' + (tests + 1));
     const c = model();run(c,'connectWebSocket();sockets[0].open();');
     assert.equal(run(c,"handleConnectionLifecycle({connection_id:'PRIVATE device',state:'admitted',reason:'owner_admitted'})"),false);
     assert.equal(run(c,"handleConnectionLifecycle({connection_id:'conn-000001',state:'admitted',reason:'PRIVATE body'})"),false);
@@ -122,4 +151,17 @@ for (const close of [{code:1000, reason:'replaced'}, {code:4409, reason:'owner_a
     assert.equal(run(c,'appState.connectionState'),'connecting');
     assert.equal(run(c,'sockets[0].commands.length'),0);tests++;
 }
-process.stdout.write(JSON.stringify({tests,passed:true,real_browser:false,network:false,audio:false,storage:false})+'\n');
+// Node reports unhandled VM promise rejections before this next-turn check.
+// Do not emit a success proof before that deferred failure boundary settles.
+setImmediate(() => {
+    if (failed) return;
+    stage('completed');
+    process.stdout.write(JSON.stringify({tests,passed:true,real_browser:false,network:false,audio:false,storage:false})+'\n');
+});
+
+}
+try {
+    main();
+} catch {
+    fail();
+}

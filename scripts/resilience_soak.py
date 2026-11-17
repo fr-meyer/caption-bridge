@@ -17,6 +17,7 @@ from app.config import AppConfig
 from app.reliability import write_soak_record
 from app.state import SessionManager
 from app.translate import TranslationDispatcher
+from scripts.synthetic_translation_catalogue import SYNTHETIC_MODEL, synthetic_translation_catalogue
 
 Outcome = Literal["success", "timeout", "capacity_recover", "capacity_exhaust"]
 _SEGMENT_ID = re.compile(
@@ -117,12 +118,14 @@ class SoakReport:
         return asdict(self)
 
 
+@synthetic_translation_catalogue()
 async def run_soak(segments: int = 1000) -> SoakReport:
     if segments < 1:
         raise ValueError("segments must be positive")
 
     config = AppConfig(
         _env_file=None,
+        MISTRAL_TRANSLATE_MODEL=SYNTHETIC_MODEL,
         MISTRAL_TTS_ENABLED=False,
         TRANSLATION_TIMEOUT_MS=100,
         TRANSLATION_GLM_TIMEOUT_MS=100,

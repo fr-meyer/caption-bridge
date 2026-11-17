@@ -41,8 +41,8 @@ def test_model_list_accepts_only_explicit_ids(tmp_path: Path) -> None:
     assert config.translate_model == "mistral-medium-latest"
     assert available_translation_models(config)[0]["id"] == "mistral-medium-latest"
     ids = {item["id"] for item in available_translation_models(config)}
-    assert ids == {"mistral-small-latest", "mistral-medium-latest", "mistral-large-4", "zai-glm-5-3"}
-    assert "mistral-large-latest" not in ids
+    assert ids == {"mistral-small-latest", "mistral-medium-latest", "mistral-large-4", "mistral-large-latest", "zai-glm-5-3"}
+    assert validate_translation_model("mistral-large-latest", config) == "mistral-large-latest"
     assert validate_translation_model("mistral-large-4", config) == "mistral-large-4"
     assert validate_translation_model("zai-glm-5-3", config) == "zai-glm-5-3"
     for value in (None, "", {}, "voxtral-mini-transcribe-realtime-2602", "arbitrary"):
@@ -132,7 +132,7 @@ def test_switch_keeps_in_flight_segments_on_their_original_model(
                     ("mistral-medium-latest", 0), (second_model, 1)
                 ]
         assert manager.session.translation_model_changes[0].applies_from_seq == 2
-        assert [seg.translation_model_resolved for seg in manager.session.segments] == provider.calls
+        assert [seg.translation_model_resolved for seg in manager.session.segments] == [None, None]
         assert [seg.translation_prompt_tokens for seg in manager.session.segments] == [21, 21]
         assert [seg.translation_completion_tokens for seg in manager.session.segments] == [9, 9]
 
@@ -167,7 +167,7 @@ def test_empty_provider_answer_fails_without_another_request(tmp_path: Path) -> 
         assert provider.calls == 1
         assert segment.translation_status == "failed"
         assert segment.failure_reason == "provider_no_text"
-        assert segment.translation_model_resolved == "mistral-medium-latest"
+        assert segment.translation_model_resolved is None
         assert segment.translation_completion_tokens == 200
 
     asyncio.run(scenario())
@@ -228,7 +228,7 @@ def test_recovery_preserves_each_model_and_old_unknown_metadata(
 def test_large4_preview_label_and_configured_choice_keep_default_reasoning(tmp_path: Path) -> None:
     config = config_at(tmp_path)
     choices = {item["id"]: item["label"] for item in available_translation_models(config)}
-    assert choices["mistral-large-4"] == "Mistral Large 4 (preview)"
+    assert choices["mistral-large-4"] == "Mistral Large 4"
     assert config.translate_model == "mistral-medium-latest"
     configured = config.model_copy(update={"translate_model": "mistral-large-4"})
     assert validate_translation_model(configured.translate_model, configured) == "mistral-large-4"

@@ -95,3 +95,68 @@ def test_scenario_restores_connection_state(monkeypatch, fail_after_ownership) -
     assert ws_module.manager is original_manager
     assert ws_module.settings is original_settings
     assert ws_module._ws_metrics is original_metrics
+
+
+@pytest.mark.parametrize("failure", ["cancel", "exception"])
+@pytest.mark.parametrize("stage", ["drain", "stop"])
+def test_cleanup_failure_restores_every_binding_and_settles_owned_tasks(monkeypatch, failure, stage):
+    from app import reconnect as reconnect_module
+    from app import translation_models, ws
+    from app.translate import TranslationDispatcher
+    from scripts import full_pipeline_scenario as scenario
+
+    bindings = [(translation_models, "catalogue"), (ws, "catalogue"),
+                (ws, "manager"), (ws, "settings"), (ws, "_ws_metrics"),
+                (ws, "_active_connection"), (ws, "_connection_counter"),
+                (reconnect_module, "_POST_HANDSHAKE_HEALTH_TIMEOUT_S"),
+                (reconnect_module, "_reconnect_metrics")]
+    originals = {(module, name): getattr(module, name) for module, name in bindings}
+    component = TranslationDispatcher if stage == "drain" else scenario.TTSDispatcher
+    original_method = getattr(component, stage)
+    workers = []
+    entered = None
+    calls = 0
+    injected = RuntimeError("synthetic teardown failure")
+
+    async def drain(self):
+        nonlocal calls
+        calls += 1
+        if calls == (2 if stage == "drain" else 1):
+            worker = asyncio.create_task(asyncio.sleep(60))
+            workers.append(worker)
+            if stage == "drain":
+                self._in_flight.add(worker)
+            else:
+                self._synth_task = worker
+            entered.set()
+            if failure == "exception":
+                raise injected
+            await asyncio.sleep(60)
+        return await original_method(self)
+
+    def forbidden_provider(*args, **kwargs):
+        raise AssertionError("real provider constructed")
+    monkeypatch.setattr(component, stage, drain)
+    monkeypatch.setattr("app.translate.MistralTranslationProvider", forbidden_provider)
+
+    async def exercise():
+        nonlocal entered
+        entered = asyncio.Event()
+        before = asyncio.all_tasks()
+        task = asyncio.create_task(scenario.run_full_pipeline_scenario())
+        await asyncio.wait_for(entered.wait(), 5)
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(RuntimeError) as result:
+                await task
+            assert result.value is injected
+        for (module, name), value in originals.items():
+            assert getattr(module, name) is value, name
+        await asyncio.sleep(0)
+        assert workers and all(worker.done() and worker.cancelled() for worker in workers)
+        assert not [pending for pending in asyncio.all_tasks() - before
+                    if not pending.done()]
+    asyncio.run(exercise())
