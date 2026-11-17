@@ -120,3 +120,13 @@ grandchildren, never claims Python waited them. Role parent monitoring now uses 
 capability EOF, not foreign-process kqueue filters. Deadline helper may exit71 on guardian EOF
 or72 on its own deadline because those events race; injected guardian failure requires71.
 All these are NEW SOURCE checks awaiting native CI, not native runtime acceptance.
+
+READY protocol: role writes fixed {int32 pid,uint32 role} to inherited FD8 after capability
+validation. Parent polls against continuous deadline and requires exact owned PID and role.
+Startup event is emitted only after all three acknowledgments with >=500ms remaining in the
+2-second deadline. Ownership table records PID immediately after successful spawn, before
+identity inspection; failed bounded reap never clears retained ownership. Early failure emits
+schema5 terminal receipt with partial PID list (-1 for never spawned), preserving HOLD.
+Schema5 controller terminal fields: schema,noaudio_exit,terminal,pids,wait_status. Startup
+fields: event="started",pids. Harness aggregate fields: schema,qualification,images,rows.
+Readiness is not admission. Unknown closure and missing READY fail qualification.

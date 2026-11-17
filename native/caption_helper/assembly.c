@@ -15,6 +15,7 @@
 #include "input_state.h"
 #include "role_pins.h"
 #include <errno.h>
+#include <poll.h>
 struct capability { uint64_t deadline; int32_t parent; uint32_t role; };
 static int reap_owned(pid_t pid) {
  if(kill(pid,SIGKILL)<0 && errno!=ESRCH)return 0;
@@ -47,20 +48,27 @@ done:
  CFRelease(attrs);CFRelease(number);CFRelease(url);return good;
 }
 static int closure_error=0;
+static pid_t owned_identity[3]={-1,-1,-1};
+static pid_t retained[3]={-1,-1,-1};
 static void close_owned(int *fd){if(*fd>=0){if(close(*fd)<0)closure_error=1;*fd=-1;}}
 static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int role,uint64_t deadline) {
+ int ready_pipe[2]={-1,-1};int ready_writer=-1;
  int cap[2]={-1,-1},mapped[5]={-1,-1,-1,-1,-1};pid_t pid=-1;
  posix_spawn_file_actions_t f;posix_spawnattr_t attr;int fi=0,ai=0,ok=0;
- if(pipe(cap))goto done;
+ if(pipe(cap) || pipe(ready_pipe))goto done;
+ for(int i=0;i<2;i++)if(fcntl(ready_pipe[i],F_SETFD,FD_CLOEXEC)<0)goto done;
+ ready_writer=fcntl(ready_pipe[1],F_DUPFD_CLOEXEC,30);if(ready_writer<0)goto done;
  int originals[5]={cap[0],output,input,ga,gb};
  for(int i=0;i<2;i++)if(fcntl(cap[i],F_SETFD,FD_CLOEXEC)<0)goto done;
  for(int i=0;i<5;i++)if(originals[i]>=0){mapped[i]=fcntl(originals[i],F_DUPFD_CLOEXEC,20);if(mapped[i]<0)goto done;}
  if(posix_spawn_file_actions_init(&f))goto done;fi=1;
  if(posix_spawnattr_init(&attr))goto done;ai=1;
  for(int i=0;i<5;i++)if(mapped[i]>=0 && posix_spawn_file_actions_adddup2(&f,mapped[i],3+i))goto done;
+ if(posix_spawn_file_actions_adddup2(&f,ready_writer,8))goto done;
  if(posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT))goto done;
  char *args[]={(char *)path,NULL};char *environment[]={NULL};
  if(posix_spawn(&pid,path,&f,&attr,args,environment)) {pid=-1;goto done;}
+ owned_identity[role-1]=pid;retained[role-1]=pid;
  if(!verify(pid,path,role))goto done;
  struct capability capability={deadline,getpid(),(uint32_t)role};
  size_t offset=0;
@@ -68,13 +76,22 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
   ssize_t n=write(cap[1],(const char *)&capability+offset,sizeof(capability)-offset);
   if(n<0 && errno==EINTR)continue;if(n<=0)goto done;offset+=(size_t)n;
  }
- if(kill(pid,SIGCONT)<0)goto done;ok=1;
+ if(kill(pid,SIGCONT)<0)goto done;
+ close_owned(&ready_pipe[1]);
+ struct {int32_t pid;uint32_t role;} ready={0};size_t received=0;
+ while(received<sizeof(ready) && mach_continuous_time()<deadline){
+  struct pollfd fready={.fd=ready_pipe[0],.events=POLLIN|POLLHUP};
+  int n=poll(&fready,1,10);if(n<0 && errno==EINTR)continue;if(n<0)goto done;
+  if(n>0){ssize_t count=read(ready_pipe[0],(char *)&ready+received,sizeof(ready)-received);if(count<0 && errno==EINTR)continue;if(count<=0)goto done;received+=(size_t)count;}
+ }
+ if(received!=sizeof(ready) || ready.pid!=pid || ready.role!=(uint32_t)role)goto done;
+ ok=1;
 done:
  if(fi && posix_spawn_file_actions_destroy(&f))closure_error=1;
  if(ai && posix_spawnattr_destroy(&attr))closure_error=1;
- for(int i=0;i<2;i++)close_owned(&cap[i]);
- for(int i=0;i<5;i++)close_owned(&mapped[i]);
- if(!ok && pid>0){if(!reap_owned(pid))closure_error=1;pid=-1;}
+ for(int i=0;i<2;i++){close_owned(&cap[i]);close_owned(&ready_pipe[i]);}
+ for(int i=0;i<5;i++)close_owned(&mapped[i]);close_owned(&ready_writer);
+ if(!ok && pid>0){if(!reap_owned(pid))closure_error=1;else retained[role-1]=-1;pid=-1;}
  return pid;
 }
 int main(int argc,char **argv) {
@@ -85,7 +102,7 @@ int main(int argc,char **argv) {
  char root[PATH_MAX];if(!realpath(argv[2],root))return 64;
  if(signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 70;
  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer)return 70;
- uint64_t end=mach_continuous_time()+1000000000ULL*tb.denom/tb.numer;
+ uint64_t end=mach_continuous_time()+2000000000ULL*tb.denom/tb.numer;
  int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};int statuses[3]={-1,-1,-1};pid_t identities[3]={-1,-1,-1};
  for(int i=0;i<3;i++){
   if(pipe(lifelines[i]))goto cleanup;
@@ -104,18 +121,19 @@ int main(int argc,char **argv) {
  children[2]=spawn_role(path,lifelines[0][0],lifelines[0][0],lifelines[1][0],lifelines[2][0],3,end);
  if(children[2]<0)goto cleanup;
  for(int i=0;i<3;i++)identities[i]=children[i];
+ if(mach_continuous_time()+500000000ULL*tb.denom/tb.numer>=end)goto cleanup;
  if(printf("{\"event\":\"started\",\"pids\":[%d,%d,%d]}\n",children[0],children[1],children[2])<0 || fflush(stdout))goto cleanup;
  result=0;
  if(!strcmp(mode,"guardian_a") && kill(children[0],SIGKILL)<0)result=70;
  if(!strcmp(mode,"guardian_b") && kill(children[1],SIGKILL)<0)result=70;
  if(!strcmp(mode,"helper") && kill(children[2],SIGKILL)<0)result=70;
- if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;if(usleep(1100000)<0 && errno!=EINTR)result=70;if(kill(children[2],SIGCONT)<0)result=70;}
+ if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;if(usleep(2100000)<0 && errno!=EINTR)result=70;if(kill(children[2],SIGCONT)<0)result=70;}
  uint64_t reap_end=end+2000000000ULL*tb.denom/tb.numer;
  while(mach_continuous_time()<reap_end) {
   int remaining=0;
   for(int i=0;i<3;i++)if(children[i]>0){
    pid_t done=waitpid(children[i],&statuses[i],WNOHANG);
-   if(done==children[i])children[i]=-1;
+   if(done==children[i]){children[i]=-1;retained[i]=-1;}
    else if(done<0 && errno!=EINTR){result=70;goto cleanup;}
    else remaining++;
   }
@@ -132,8 +150,9 @@ int main(int argc,char **argv) {
   }
  }
 cleanup:
+ for(int i=0;i<3;i++)identities[i]=owned_identity[i];
  for(int i=0;i<3;i++)for(int j=0;j<2;j++)close_owned(&lifelines[i][j]);
- for(int i=0;i<3;i++)if(children[i]>0){if(!reap_owned(children[i]))result=70;}
+ for(int i=0;i<3;i++)if(retained[i]>0){if(!reap_owned(retained[i]))result=70;else retained[i]=-1;}
  /* Synthetic only; native stop/drain/dispose proof cannot be asserted by this controller. */
  cb_stop(&state,mach_continuous_time(),false,false,false);
  if(closure_error)result=70;

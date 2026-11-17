@@ -35,6 +35,9 @@ for mode in ("deadline", "guardian_a", "guardian_b", "helper", "suspend", "paren
         finally:
             selector.close()
         started = json.loads(first)
+        if started.get("schema") == 5:
+            owned = [p for p in started["pids"] if p > 1]
+            raise RuntimeError("early startup HOLD")
         assert set(started) == {"event", "pids"} and started["event"] == "started"
         owned = started["pids"]
         assert (

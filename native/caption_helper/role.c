@@ -14,6 +14,9 @@ int main(int argc,char **argv){
  while(offset<sizeof(cap)){ssize_t n=read(3,(char *)&cap+offset,sizeof(cap)-offset);if(n<0 && errno==EINTR)continue;if(n<=0)return 65;offset+=(size_t)n;}
  if(close(3)<0)return 65;
  if(cap.role!=CAPTION_ROLE || !cap.deadline || cap.parent!=getppid())return 66;
+ struct {int32_t pid;uint32_t role;} ready={getpid(),CAPTION_ROLE};
+ size_t sent=0;while(sent<sizeof(ready)){ssize_t n=write(8,(char *)&ready+sent,sizeof(ready)-sent);if(n<0 && errno==EINTR)continue;if(n<=0)return 65;sent+=(size_t)n;}
+ if(close(8)<0)return 65;
  for(;;){
   if(getppid()!=cap.parent)return 71;
   if(mach_continuous_time()>=cap.deadline)return 72;
