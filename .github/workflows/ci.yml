@@ -191,7 +191,7 @@ jobs:
           output = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-build"
           receipt_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-noaudio-receipt.json"
           receipt = {"schema": 1, "qualification": "NO_AUDIO_ONLY", "capture_authorized": False,
-                     "provider_calls": 0, "source_hashes": {}, "image_hashes": {},
+                     "provider_calls": 0, "terminal": "HOLD", "source_hashes": {}, "image_hashes": {},
                      "signing_identities": {}, "probe_outcome": "NOT_RUN",
                      "cleanup": "EPHEMERAL_RUNNER_ONLY"}
           diagnostic_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-build-diagnostics.txt"
@@ -260,35 +260,62 @@ jobs:
                   return result
               packet = json.loads(raw, object_pairs_hook=unique,
                                   parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite")))
+              # Exact handoff: native commit 9fccb8d, harness/controller schema 5.
+              # Parent-death row proves aggregate parent-or-deadline retirement only.
+              expected_modes = {"deadline", "guardian_a", "guardian_b", "helper", "suspend", "parent_death"}
               if (not isinstance(packet, dict)
                       or set(packet) != {"schema", "qualification", "images", "rows"}
-                      or type(packet["schema"]) is not int or packet["schema"] != 4
+                      or type(packet["schema"]) is not int or packet["schema"] != 5
                       or packet["qualification"] != "NO_AUDIO_ONLY"
                       or packet["images"] != receipt["image_hashes"]
-                      or not isinstance(packet["rows"], list) or not 1 <= len(packet["rows"]) <= 16):
+                      or not isinstance(packet["rows"], list) or len(packet["rows"]) != 6):
                   raise ValueError("harness_shape")
               modes = set()
               for row in packet["rows"]:
-                  if (not isinstance(row, dict)
-                          or set(row) != {"mode", "exit", "elapsed_seconds", "receipt"}
-                          or row["mode"] not in {"deadline", "guardian_a", "guardian_b", "helper", "suspend"}
-                          or row["mode"] in modes or type(row["exit"]) is not int or not -255 <= row["exit"] <= 255
-                          or type(row["elapsed_seconds"]) not in {int, float}
-                          or not 0 <= row["elapsed_seconds"] <= 45):
+                  if (not isinstance(row, dict) or not isinstance(row.get("mode"), str)
+                          or row["mode"] not in expected_modes or row["mode"] in modes):
                       raise ValueError("harness_row")
-                  modes.add(row["mode"])
-                  inner = row["receipt"]
-                  if (not isinstance(inner, dict)
-                          or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
-                          or type(inner["schema"]) is not int or inner["schema"] != 5
-                          or type(inner["noaudio_exit"]) is not int or not 0 <= inner["noaudio_exit"] <= 255
-                          or inner["terminal"] != "HOLD"):
-                      raise ValueError("harness_authority")
-                  for key in ("pids", "wait_status"):
-                      if (not isinstance(inner[key], list) or len(inner[key]) != 3
-                              or any(type(v) is not int or not 0 <= v <= 2147483647 for v in inner[key])):
-                          raise ValueError("harness_cleanup")
-              if modes != {"deadline", "guardian_a", "guardian_b", "helper", "suspend"}:
+                  mode = row["mode"]
+                  modes.add(mode)
+                  if mode == "parent_death":
+                      if (set(row) != {"mode", "pids", "observation", "controller_wait"}
+                              or row["observation"] != "ESRCH_AFTER_OS_REAPER_PARENT_OR_DEADLINE"
+                              or type(row["controller_wait"]) is not int
+                              or row["controller_wait"] != -signal.SIGKILL):
+                          raise ValueError("harness_parent_retirement")
+                      pids = row["pids"]
+                  else:
+                      if set(row) != {"mode", "terminal"}:
+                          raise ValueError("harness_normal_row")
+                      inner = row["terminal"]
+                      if (not isinstance(inner, dict)
+                              or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
+                              or type(inner["schema"]) is not int or inner["schema"] != 5
+                              or type(inner["noaudio_exit"]) is not int or inner["noaudio_exit"] != 0
+                              or inner["terminal"] != "HOLD"):
+                          raise ValueError("harness_authority")
+                      pids = inner["pids"]
+                      statuses = inner["wait_status"]
+                      if (not isinstance(statuses, list) or len(statuses) != 3
+                              or any(type(v) is not int for v in statuses)):
+                          raise ValueError("harness_status_shape")
+                      for index, status in enumerate(statuses):
+                          injected = ((mode == "guardian_a" and index == 0)
+                                      or (mode == "guardian_b" and index == 1)
+                                      or (mode == "helper" and index == 2))
+                          if injected:
+                              allowed = {int(signal.SIGKILL)}
+                          elif index == 2:
+                              allowed = {71 << 8} if mode in {"guardian_a", "guardian_b"} else {71 << 8, 72 << 8}
+                          else:
+                              allowed = {72 << 8}
+                          if status not in allowed:
+                              raise ValueError("harness_role_exit")
+                  if (not isinstance(pids, list) or len(pids) != 3
+                          or any(type(v) is not int or not 1 < v <= 2147483647 for v in pids)
+                          or len(set(pids)) != 3):
+                      raise ValueError("harness_pid_identity")
+              if modes != expected_modes:
                   raise ValueError("harness_incomplete")
               return packet
           try:
@@ -325,8 +352,7 @@ jobs:
               raw = bounded([sys.executable, "native/caption_helper/qualify_assembly.py", str(images)], 45, check=False)
               stage = "qualifier_schema"
               receipt["harness"] = checked_harness(raw)
-              if receipt["returncode"] or any(row["exit"] or row["receipt"]["noaudio_exit"]
-                                               for row in receipt["harness"]["rows"]):
+              if receipt["returncode"]:
                   stage = "qualifier"
                   receipt["error_class"] = "QualificationFailed"
                   raise ValueError("qualification_failed")
