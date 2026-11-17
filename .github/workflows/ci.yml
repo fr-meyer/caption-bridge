@@ -182,6 +182,8 @@ jobs:
           import os
           from pathlib import Path
           import re
+          import selectors
+          import signal
           import subprocess
           import sys
           import time
@@ -192,7 +194,103 @@ jobs:
                      "provider_calls": 0, "source_hashes": {}, "image_hashes": {},
                      "signing_identities": {}, "probe_outcome": "NOT_RUN",
                      "cleanup": "EPHEMERAL_RUNNER_ONLY"}
+          diagnostic_path = Path(os.environ["RUNNER_TEMP"]) / "caption-helper-build-diagnostics.txt"
+          stage = "source"
           started = time.monotonic()
+          limit = 65536
+
+          def bounded(args, timeout, *, build=False, check=True):
+              data = bytearray()
+              child = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT if build else subprocess.DEVNULL,
+                                       start_new_session=True)
+              error = None
+              deadline = time.monotonic() + timeout
+              try:
+                  with selectors.DefaultSelector() as selector:
+                      selector.register(child.stdout, selectors.EVENT_READ)
+                      while True:
+                          remaining = deadline - time.monotonic()
+                          if remaining <= 0:
+                              error = "TimeoutExpired"
+                              break
+                          if not selector.select(remaining):
+                              error = "TimeoutExpired"
+                              break
+                          chunk = os.read(child.stdout.fileno(), min(4096, limit + 1 - len(data)))
+                          if not chunk:
+                              child.wait(timeout=max(0.001, deadline - time.monotonic()))
+                              break
+                          overflow = len(data) + len(chunk) > limit
+                          data.extend(chunk[:limit - len(data)])
+                          if overflow:
+                              error = "OutputLimitExceeded"
+                              break
+              except subprocess.TimeoutExpired:
+                  error = "TimeoutExpired"
+              finally:
+                  if child.poll() is None or error is not None:
+                      try:
+                          os.killpg(child.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                  child.wait(timeout=2)
+                  child.stdout.close()
+                  if build:
+                      text = bytes(data[:limit]).decode("utf-8", errors="replace")
+                      for path in (str(output), os.getcwd(), os.environ["RUNNER_TEMP"], "/Users/runner"):
+                          text = text.replace(path, "<WORKSPACE>")
+                      diagnostic_path.write_bytes(text.encode()[:limit])
+              receipt["returncode"] = child.returncode
+              if error:
+                  receipt["error_class"] = error
+                  raise ValueError("bounded_subprocess_failed")
+              if check and child.returncode:
+                  receipt["error_class"] = "CalledProcessError"
+                  raise ValueError("subprocess_failed")
+              return bytes(data)
+
+          def checked_harness(raw):
+              def unique(pairs):
+                  result = {}
+                  for key, value in pairs:
+                      if key in result:
+                          raise ValueError("duplicate_key")
+                      result[key] = value
+                  return result
+              packet = json.loads(raw, object_pairs_hook=unique,
+                                  parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite")))
+              if (not isinstance(packet, dict)
+                      or set(packet) != {"schema", "qualification", "images", "rows"}
+                      or type(packet["schema"]) is not int or packet["schema"] != 4
+                      or packet["qualification"] != "NO_AUDIO_ONLY"
+                      or packet["images"] != receipt["image_hashes"]
+                      or not isinstance(packet["rows"], list) or not 1 <= len(packet["rows"]) <= 16):
+                  raise ValueError("harness_shape")
+              modes = set()
+              for row in packet["rows"]:
+                  if (not isinstance(row, dict)
+                          or set(row) != {"mode", "exit", "elapsed_seconds", "receipt"}
+                          or row["mode"] not in {"deadline", "guardian_a", "guardian_b", "helper", "suspend"}
+                          or row["mode"] in modes or type(row["exit"]) is not int or not -255 <= row["exit"] <= 255
+                          or type(row["elapsed_seconds"]) not in {int, float}
+                          or not 0 <= row["elapsed_seconds"] <= 45):
+                      raise ValueError("harness_row")
+                  modes.add(row["mode"])
+                  inner = row["receipt"]
+                  if (not isinstance(inner, dict)
+                          or set(inner) != {"schema", "noaudio_exit", "terminal", "pids", "wait_status"}
+                          or type(inner["schema"]) is not int or inner["schema"] != 5
+                          or type(inner["noaudio_exit"]) is not int or not 0 <= inner["noaudio_exit"] <= 255
+                          or inner["terminal"] != "HOLD"):
+                      raise ValueError("harness_authority")
+                  for key in ("pids", "wait_status"):
+                      if (not isinstance(inner[key], list) or len(inner[key]) != 3
+                              or any(type(v) is not int or not 0 <= v <= 2147483647 for v in inner[key])):
+                          raise ValueError("harness_cleanup")
+              if modes != {"deadline", "guardian_a", "guardian_b", "helper", "suspend"}:
+                  raise ValueError("harness_incomplete")
+              return packet
           try:
               for path in sorted(Path("native/caption_helper").glob("*")):
                   if path.is_file() and path.suffix in {".c", ".h", ".py", ".plist"}:
@@ -200,9 +298,10 @@ jobs:
               build = Path("scripts/build_caption_helper.sh")
               receipt["source_hashes"][build.name] = hashlib.sha256(build.read_bytes()).hexdigest()
               # Script is mode 0644. Building does not launch anything.
-              subprocess.run(["sh", str(build), str(output)], check=True, timeout=60,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              stage = "build"
+              bounded(["sh", str(build), str(output)], 60, build=True)
               images = output / "CaptionHelper.app/Contents/MacOS"
+              stage = "signature"
               for name in ("GuardianA", "GuardianB", "SyntheticHelper", "NoAudioController"):
                   image = images / name
                   receipt["image_hashes"][name] = hashlib.sha256(image.read_bytes()).hexdigest()
@@ -222,13 +321,23 @@ jobs:
                   receipt["signing_identities"][name] = fields
               # The fixed qualifier exclusively invokes --noaudio; capture is compiled out.
               # No raw tool/protocol stdout/stderr enters logs or artifacts, even on failure.
-              subprocess.run([sys.executable, "native/caption_helper/qualify_assembly.py", str(images)],
-                             check=True, timeout=45, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+              stage = "qualifier"
+              raw = bounded([sys.executable, "native/caption_helper/qualify_assembly.py", str(images)], 45, check=False)
+              stage = "qualifier_schema"
+              receipt["harness"] = checked_harness(raw)
+              if receipt["returncode"] or any(row["exit"] or row["receipt"]["noaudio_exit"]
+                                               for row in receipt["harness"]["rows"]):
+                  stage = "qualifier"
+                  receipt["error_class"] = "QualificationFailed"
+                  raise ValueError("qualification_failed")
               receipt["probe_outcome"] = "PASS"
-          except BaseException:
+          except Exception as error:
               receipt["probe_outcome"] = "FAIL"
-              raise
+              receipt["error_stage"] = stage
+              receipt.setdefault("error_class", type(error).__name__)
+              if isinstance(error, subprocess.CalledProcessError):
+                  receipt["returncode"] = error.returncode
+              raise SystemExit(1) from None
           finally:
               receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
               receipt_path.write_text(json.dumps(receipt, sort_keys=True) + chr(10))
@@ -238,7 +347,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: helper-noaudio-qualification-macos
-          path: ${{ runner.temp }}/caption-helper-noaudio-receipt.json
+          path: |
+            ${{ runner.temp }}/caption-helper-noaudio-receipt.json
+            ${{ runner.temp }}/caption-helper-build-diagnostics.txt
           retention-days: 7
           if-no-files-found: warn
 
