@@ -61,3 +61,38 @@ test('metadata refresh never resets player, speed, captions or requested identit
   assert.equal(state.ttsEpoch, 7);
   assert.equal(state.playbackRate, 1.25);
 });
+test('status uses metadata label; independent experimental warning persists until model reset', () => {
+  function element() {
+    return {textContent: '', toggles: {}, classList: {toggle(name, value) {
+      this.owner.toggles[name] = value;
+    }}};
+  }
+  const els = {idleModelHelp: element(), drawerModelHelp: element(), translationModelStatus: element()};
+  for (const el of Object.values(els)) el.classList.owner = el;
+  const context = {els, appState: {status: 'listening', translationModel: 'zai-glm-5-3',
+    translationCatalogue: {fresh: true}, availableTranslationModels: [
+      {id: 'zai-glm-5-3', label: 'Z.ai GLM 5.3', enabled: true},
+      {id: 'mistral-small-latest', label: 'Mistral Small (latest)', enabled: true}]}};
+  vm.createContext(context);
+  vm.runInContext(code('renderModelSelectors'), context);
+  for (const restored of [false, true]) {
+    if (restored) context.appState = JSON.parse(JSON.stringify(context.appState));
+    context.renderModelSelectors();
+    assert.equal(els.translationModelStatus.textContent, 'Translation: Z.ai GLM 5.3');
+    assert.equal(els.translationModelStatus.toggles.hidden, false);
+    for (const help of [els.idleModelHelp, els.drawerModelHelp]) {
+      assert.match(help.textContent, /Experimental caption qualification/);
+      assert.match(help.textContent, /may miss or delay captions/);
+      assert.match(help.textContent, /no automatic fallback/);
+    }
+  }
+  context.appState.translationModel = 'mistral-small-latest';
+  context.appState.status = 'idle_ready';
+  context.renderModelSelectors();
+  assert.equal(els.translationModelStatus.toggles.hidden, true);
+  assert.match(els.idleModelHelp.textContent, /Account metadata verified/);
+  assert.doesNotMatch(els.idleModelHelp.textContent, /Experimental caption qualification/);
+  context.appState.translationCatalogue = {fresh: false};
+  context.renderModelSelectors();
+  assert.match(els.idleModelHelp.textContent, /Account metadata not current; refresh required/);
+});

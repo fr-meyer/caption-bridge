@@ -67,20 +67,27 @@ def test_startup_override_live_choice_refresh_and_new_session(
     expect(page.locator("#idle-model-select")).to_have_value(expected)
     expect(page.locator("#idle-model-help")).to_be_visible()
     expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
+    expect(page.locator("#idle-model-help")).not_to_contain_text("Experimental caption qualification")
     page.get_by_role("button", name="Start", exact=True).click()
     assert browser_harness.wait_for_message("start")["translation_model"] == expected
     expect(page.locator("#translation-model-status")).to_be_visible()
 
     page.get_by_role("button", name="Settings").click()
     page.locator("#drawer-model-select").select_option("zai-glm-5-3")
-    browser_harness.wait_for_message("set_translation_model")
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3 (experimental")
+    change = browser_harness.wait_for_message("set_translation_model")
+    assert change["model"] == "zai-glm-5-3"
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
     expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
     page.reload(wait_until="domcontentloaded")
     browser_harness.wait_for_connections(2)
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3 (experimental")
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
     page.get_by_role("button", name="Settings").click()
     expect(page.locator("#drawer-model-select")).to_have_value("zai-glm-5-3")
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
+    expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
     page.get_by_role("button", name="Close settings").click()
     page.get_by_role("button", name="Stop", exact=True).click()
     browser_harness.wait_for_message("stop")
@@ -91,6 +98,7 @@ def test_startup_override_live_choice_refresh_and_new_session(
     expect(page.locator("#translation-model-status")).to_be_hidden()
     expect(page.locator("#idle-model-help")).to_be_visible()
     expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
+    expect(page.locator("#idle-model-help")).not_to_contain_text("Experimental caption qualification")
 
 
 def test_explicit_glm_before_start_shows_reliability_note(
@@ -104,7 +112,11 @@ def test_explicit_glm_before_start_shows_reliability_note(
     expect(page.locator("#idle-model-help")).to_contain_text("Experimental")
     page.get_by_role("button", name="Start", exact=True).click()
     assert browser_harness.wait_for_message("start")["translation_model"] == "zai-glm-5-3"
-    expect(page.locator("#translation-model-status")).to_contain_text("GLM 5.3")
+    expect(page.locator("#translation-model-status")).to_have_text("Translation: Z.ai GLM 5.3")
+    page.get_by_role("button", name="Settings").click()
+    expect(page.locator("#drawer-model-help")).to_contain_text("Experimental caption qualification")
+    expect(page.locator("#drawer-model-help")).to_contain_text("may miss or delay captions")
+    expect(page.locator("#drawer-model-help")).to_contain_text("no automatic fallback")
 
 
 
