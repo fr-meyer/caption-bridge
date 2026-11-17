@@ -19,6 +19,7 @@ import orjson
 
 import app.reconnect as reconnect_module
 import app.ws as ws_module
+from app import translation_models
 from app.boundary import BoundaryDetector
 from app.config import AppConfig
 from app.journal import SessionJournal
@@ -28,6 +29,7 @@ from app.state import ReadinessCheck, SessionManager
 from app.translate import TranslationDispatcher
 from app.tts import TTSDispatcher
 from app.ws import _enqueue_outbound, _OutboundObsState
+from scripts.synthetic_translation_catalogue import SYNTHETIC_MODEL, synthetic_translation_catalogue
 
 _SEGMENT_ID = re.compile(r"(?:segment|caption|fragment) (\d+)", re.IGNORECASE)
 
@@ -319,6 +321,7 @@ async def _test_websocket_ownership(
         await asyncio.sleep(0)
 
 
+@synthetic_translation_catalogue()
 async def run_full_pipeline_scenario() -> FullPipelineReport:
     started = time.perf_counter()
     old_health_timeout = reconnect_module._POST_HANDSHAKE_HEALTH_TIMEOUT_S
@@ -326,6 +329,8 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
     old_ws_metrics = ws_module._ws_metrics
     old_ws_manager = ws_module.manager
     old_ws_settings = ws_module.settings
+    old_ws_catalogue = ws_module.catalogue
+    ws_module.catalogue = translation_models.catalogue
     old_active_connection = ws_module._active_connection
     old_connection_counter = ws_module._connection_counter
     temp_path = ""
@@ -347,6 +352,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
             root = Path(temp_dir)
             config = AppConfig(
                 _env_file=None,
+                MISTRAL_TRANSLATE_MODEL=SYNTHETIC_MODEL,
                 MISTRAL_TTS_ENABLED=True,
                 MISTRAL_TTS_QUEUE_MAX=8,
                 MISTRAL_TTS_TRANSIENT_MAX_RETRIES=2,
@@ -596,6 +602,7 @@ async def run_full_pipeline_scenario() -> FullPipelineReport:
         ws_module._ws_metrics = old_ws_metrics
         ws_module.manager = old_ws_manager
         ws_module.settings = old_ws_settings
+        ws_module.catalogue = old_ws_catalogue
         ws_module._active_connection = old_active_connection
         ws_module._connection_counter = old_connection_counter
 

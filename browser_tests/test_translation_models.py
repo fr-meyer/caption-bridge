@@ -65,7 +65,8 @@ def test_startup_override_live_choice_refresh_and_new_session(
     page.goto(browser_harness.url, wait_until="domcontentloaded")
     browser_harness.wait_for_connections(1)
     expect(page.locator("#idle-model-select")).to_have_value(expected)
-    expect(page.locator("#idle-model-help")).to_be_hidden()
+    expect(page.locator("#idle-model-help")).to_be_visible()
+    expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
     page.get_by_role("button", name="Start", exact=True).click()
     assert browser_harness.wait_for_message("start")["translation_model"] == expected
     expect(page.locator("#translation-model-status")).to_be_visible()
@@ -88,7 +89,8 @@ def test_startup_override_live_choice_refresh_and_new_session(
     browser_harness.wait_for_message("new_session")
     expect(page.locator("#idle-model-select")).to_have_value(expected)
     expect(page.locator("#translation-model-status")).to_be_hidden()
-    expect(page.locator("#idle-model-help")).to_be_hidden()
+    expect(page.locator("#idle-model-help")).to_be_visible()
+    expect(page.locator("#idle-model-help")).to_contain_text("Account metadata verified")
 
 
 def test_explicit_glm_before_start_shows_reliability_note(

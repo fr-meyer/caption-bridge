@@ -79,6 +79,8 @@ def _snapshot(scenario: str) -> dict[str, Any]:
         "translation_model": config.translate_model,
         "translation_reasoning_effort": "default",
         # Synthetic eligible account baseline, never production lifecycle evidence.
+        "translation_catalogue": {"fresh": True, "last_verified": "synthetic-offline-fixture",
+                                  "error": None, "qualification": "synthetic_fixture_only"},
         "available_translation_models": [dict(id=model, label={"mistral-medium-latest": "Mistral Medium (latest)",
             "mistral-small-latest": "Mistral Small (latest)", "mistral-large-4": "Mistral Large 4",
             "zai-glm-5-3": "Z.ai GLM 5.3"}.get(model, model), enabled=True,

@@ -48,3 +48,27 @@ def test_restored_retired_identity_is_visible_without_switch(page, browser_harne
     expect(page.locator("#idle-model-select")).to_have_value("retired-session-model")
     expect(page.locator("#idle-model-select option[value='retired-session-model']")).to_be_disabled()
     assert not any(message.get("type") == "set_translation_model" for message in browser_harness.messages)
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("fresh,error,expected", [
+    (False, None, "Account metadata not current; refresh required"),
+    (False, "catalogue_refresh_failed", "Refresh failed; stale choices are disabled"),
+])
+def test_unverified_metadata_guidance_remains_visible_without_inference(
+        page, browser_harness, monkeypatch, fresh, error, expected):
+    original = harness_module._snapshot
+    def snapshot(scenario):
+        data = original(scenario)
+        data["translation_catalogue"] = {"fresh": fresh, "error": error}
+        data["available_translation_models"] = [dict(row, enabled=False,
+            reason="account_catalogue_stale") for row in data["available_translation_models"]]
+        return data
+    monkeypatch.setattr(harness_module, "_snapshot", snapshot)
+    browser_harness.configure("idle_ready")
+    page.goto(browser_harness.url, wait_until="domcontentloaded")
+    browser_harness.wait_for_connections(1)
+    expect(page.locator("#idle-model-help")).to_be_visible()
+    expect(page.locator("#idle-model-help")).to_contain_text(expected)
+    expect(page.locator("#idle-model-select option:checked")).to_be_disabled()
+    assert not any(message.get("type") == "start" for message in browser_harness.messages)
