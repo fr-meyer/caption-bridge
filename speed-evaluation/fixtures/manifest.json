@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "qualification": "preparation_only_not_quality_evidence",
+  "fixtures": [
+    {
+      "id": "ko-greeting",
+      "path": "ko-greeting.ogg",
+      "language": "ko",
+      "author": "HappyMidnight",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": "https://commons.wikimedia.org/wiki/File:안녕하세요.ogg",
+      "sha256": "66b3e40384be71ad030b53da94e6bf5df3590b846c731ddf07b990378fa69ab8",
+      "bytes": 10376,
+      "modifications": "none",
+      "pcm_sha256": null
+    },
+    {
+      "id": "en-hello",
+      "language": "en-US",
+      "author": "Dvortygirl",
+      "license": "public-domain-author-dedication",
+      "source": "https://commons.wikimedia.org/wiki/File:En-us-hello.ogg",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/5/52/En-us-hello.ogg",
+      "status": "download_blocked_timeout_then_HTTP_error",
+      "sha256": null,
+      "pcm_sha256": null
+    }
+  ]
+}

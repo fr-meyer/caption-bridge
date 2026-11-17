@@ -100,6 +100,8 @@ jobs:
           node --max-old-space-size=128 --test --test-concurrency=1
           speed-evaluation/pitch/test_wsola.cjs
           speed-evaluation/pitch/test_transform_client.cjs
+          speed-evaluation/pitch/test_transform_memory.cjs
+          speed-evaluation/pitch/test_benchmark_pcm.cjs
 
       - name: Test offline v0.5 reliability and Windows software contracts
         if: matrix.python-version == '3.11'
