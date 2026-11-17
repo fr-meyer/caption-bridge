@@ -74,3 +74,28 @@ postspawn exec/event binding, exact role birth/image pins and trustworthy receip
 Current identity inspector emits observed code hash/path comparison; it does NOT authorize any
 operation and the Python harness must compare expected CodeDirectory hash. Existing native
 admission remains false. No audio code, microphone entitlement or capture path has been added.
+
+## Fixed native assembly, source-only revision
+
+Build now emits distinct signed GuardianA, GuardianB, SyntheticHelper and NoAudioController
+images inside APPL packaging. Controller accepts only --noaudio and an image directory.
+Each child starts POSIX_SPAWN_START_SUSPENDED with CLOEXEC_DEFAULT; Security.framework compares
+strictly validated disk/live CDHash and identifier before SIGCONT. Capability struct travels
+through a private inherited pipe, not argv or files. FD sources are duplicated above destination
+range before spawn to avoid dup2 aliasing; all intermediate descriptors close in parent.
+
+Native roles monitor actual spawning parent with EVFILT_PROC NOTE_EXIT|NOTE_EXEC and getppid,
+plus continuous deadline. Guardian sole writer death is visible on synthetic helper read ends.
+Helper has no lifeline writer. Controller owns and reaps all direct children. NoAudioController
+is an unsandboxed qualification orchestrator; role images carry App Sandbox entitlements.
+Platform compile and behavior of this NEW assembly have NOT been run. Earlier native results
+apply only to their pinned earlier images, not this revision. CI must verify suspended SecCode
+inspection and process-filter permission under App Sandbox and treat any refusal as failed
+qualification, never fall back to an unsandboxed role.
+
+input_state.h implements reserved-before-one-synthetic-input, mute-before-route and bounded
+stop/drain/dispose transition rules. A real input opener is deliberately absent. Unknown stop,
+drain or disposal produces irreversible HOLD, never a terminal refund. Budget adapter must
+reserve before input and retain reservation until independently verified terminal closure;
+child exit alone, JSON HOLD, or source state is not terminal proof. Capture admission returns
+false unconditionally and no runtime option overrides it.

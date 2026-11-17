@@ -21,3 +21,13 @@ PLIST
 /usr/bin/codesign --sign - --options runtime --timestamp=none --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$APP"
 /usr/bin/codesign --verify --strict --verbose=2 "$APP"
 /usr/bin/codesign -d --entitlements :- "$APP"
+# Fixed-role noaudio assembly, no microphone entitlement or input opener.
+for pair in '1 GuardianA' '2 GuardianB' '3 SyntheticHelper'; do
+ set -- $pair
+ /usr/bin/clang -Wall -Wextra -Werror -Os -DCAPTION_ROLE="$1" "$ROOT/native/caption_helper/role.c" -o "$APP/Contents/MacOS/$2"
+ /usr/bin/codesign --sign - --identifier "local.captionbridge.$2" --options runtime --timestamp=none --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$APP/Contents/MacOS/$2"
+done
+/usr/bin/clang -Wall -Wextra -Werror -Os "$ROOT/native/caption_helper/assembly.c" -framework Security -framework CoreFoundation -o "$APP/Contents/MacOS/NoAudioController"
+/usr/bin/codesign --sign - --identifier local.captionbridge.controller --options runtime --timestamp=none "$APP/Contents/MacOS/NoAudioController"
+/usr/bin/codesign --force --sign - --options runtime --timestamp=none --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$APP"
+/usr/bin/codesign --verify --deep --strict "$APP"
