@@ -45,7 +45,19 @@ The four completed Live Translate streams therefore have a combined audio-only e
 
 For the current Caption Bridge path, the GCP deterministic quality gate passed 26/26 synthetic classification cases and the segmentation gate passed 10/10 cases. These validate local checks and boundary behavior only. A live Mistral comparison on the same audio was not available in the isolated GCP harness, so no provider-to-provider quality, latency, or cost claim is made.
 
-## Remaining evaluation
+## Original acceptance disposition (2026-11-17)
+
+The original #13 criterion permits a short written viability decision without
+production changes. This report supplies that decision: **no-go for integration
+in the current cycle**, retain the existing Mistral path. Original research
+acceptance is satisfied; this is not a general Gemini quality rejection or
+permission to enable it. Same-input comparisons, pause/two-speaker testing,
+current-account terms and human listening remain optional future reconsideration
+requirements, not retroactive blockers to accepting this negative research result.
+Historical trial results and limitations above are retained unchanged. The parent
+maintainer handles issue closeout; no new provider calls or account access occurred.
+
+## Optional future evaluation (not original closure requirements)
 
 1. Compare the current segmented text-translation/TTS path and an isolated Live Translate harness on the same small, consent-safe Korean fixtures. Measure first useful caption, audio start, final transcript stability, and meaning preservation, including dates and numbers.
 2. Test pauses, two speakers, and accent variation with a bounded fixture generator; repeat background-noise conditions at more than one level. Record aggregate outcomes only and inspect any raw speech/transcript only in a private, temporary evaluation session.

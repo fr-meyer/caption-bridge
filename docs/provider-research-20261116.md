@@ -90,7 +90,11 @@ account-tier data-use/retention terms, explicit audio-upload/spend approval,
 same-input baseline, human meaning/numbers/listening evidence, quota/exhaustion/
 reconnect/cancel cleanup, and a tested return to the existing Mistral path.
 No new key, probe or provider calls were made. Historical estimates are not an
-invoice or current-price guarantee. #13 comparative/live acceptance remains open.
+invoice or current-price guarantee. Historical correction (2026-11-17): the
+original #13 research acceptance is satisfied by the documented current-cycle
+no-go and unchanged production path. The comparison/live work above is optional
+future reconsideration, not a missing original acceptance criterion. Parent
+maintainer owns the actual issue closeout; this document does not claim it closed.
 
 ## Deferred, not hidden scope
 
@@ -98,3 +102,14 @@ GLM/Large quality comparisons, speaker/language expansion, extra voices, offline
 ASR, packaging/signing/notarization and automatic startup are separate later
 decisions. Provider marketing latency/language counts do not qualify the app's
 supported platform, output audibility, privacy or meeting readiness.
+
+## November 17 original-criteria completion
+
+See [Voxtral 3 evaluation design](voxtral3-evaluation-plan.md) for the seven
+original #90 criteria: exact locked SDK compatibility, paired protocol, corpus
+and metric definitions, mocked-test matrix, turn-boundary assessment, current
+public pricing/privacy and explicit account leaves, distinct local/hosted verdicts.
+This supersedes the November 16 incomplete retrieval for those linked facts only;
+historical observations remain intact. No v3 runtime adapter or paid evaluation
+was performed. Criterion 6 account-specific evidence remains unresolved; the
+other design work is not blocked by it. Defaults and dependency lock are unchanged.
