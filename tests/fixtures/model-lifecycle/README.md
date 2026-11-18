@@ -1,5 +1,19 @@
-Extracted without network from saved official https://docs.mistral.ai/models/mistral-large-4-0 HTML, retrieved 2026-11-17. Source SHA256: dcbd24b25997d8797234d7857bc959ff737e346c6b859e11d75fdcf0bd145123. Retains actual root canonical route, children-outlet chain and full current page record; omits unrelated import/text/navigation records. JSON encoding/framing remains genuine Next Flight, not an invented card schema. Negative fixtures mutate this extracted tree.
+# Synthetic lifecycle parser fixtures
 
-deprecated-current-flight: same extraction from https://docs.mistral.ai/models/magistral-small-1-2-25-09, SHA256 c1c011fa09786c46562eb6870aaf3b5d9138b566c8bd24b72b27129aa0b41487. Includes referenced JSON header children only; unrelated records omitted.
+These are original, minimal synthetic inputs authored for this repository under
+its root MIT license, not captured or extracted provider pages. They replace the
+former extracted HTML at these paths. No provider prose, artwork, scripts, styles,
+or page assets are included. Model identifiers and structural protocol tokens
+are retained only as parser test data, not current availability evidence.
 
-lazy-current-flight: same extraction from https://docs.mistral.ai/models/deepseek-v4-flash-1017, SHA256 d6e77dbd4d919d71955f927ed89e88aae9fb6cd7b6e9d9a8ae30805beacdbebb. Includes referenced JSON header children only; unrelated records omitted.
+All three encode JSON Next Flight framing, a canonical route, children outlets,
+a page reference, and one scoped header with title, badge, and identity slots.
+`large-current-flight.html` declares two aliases inline;
+`deprecated-current-flight.html` exercises the deprecated badge;
+`lazy-current-flight.html` resolves the identity through a separate lazy record.
+
+The focused tests mutate these structures to reject wrong routes, incidental or
+disjoint aliases, ambiguous headers/status, missing lazy records, malformed JSON,
+cycles, excessive depth, and amplified DAG work. These fixtures test supported
+structural contracts, not fidelity to the provider’s current live page. Replacing
+them does not resolve redistribution rights for historical extracted fixtures.

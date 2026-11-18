@@ -2,7 +2,24 @@
 
 Mac-local live transcription, translation, captions, and optional spoken readback for seminars.
 
-Published baseline: **v0.5.0**. The next candidate is not published or activated by this documentation. See [candidate validation and pending acceptance](docs/candidate-validation-20261116.md).
+Latest published release: **[v0.6.0](https://github.com/fr-meyer/caption-bridge/releases/tag/v0.6.0)**. Publication does not establish the version installed locally or complete pending runtime/device acceptance. See [candidate validation and pending acceptance](docs/candidate-validation-20261116.md).
+
+## Project status, privacy, and support
+
+This is an early-stage project, not a production-qualified service. Source tests
+do not establish attended hardware acceptance or completed 100-cycle qualification.
+See the candidate validation above for remaining limits.
+
+Mac-local capture does not mean offline processing: configured external providers
+receive audio and/or text for transcription and translation. Obtain participants’
+consent, review provider retention terms, and use sensitive material only with
+authorization. Provider accounts and API usage may incur charges; no free tier
+or included quota is promised. Keep keys and transcript-bearing exports private.
+
+Use [GitHub issues](https://github.com/fr-meyer/caption-bridge/issues) for
+non-sensitive bugs and feature requests. Support is best-effort, without a
+response-time guarantee. See [Contributing](CONTRIBUTING.md) and
+[Security](SECURITY.md) before sharing diagnostics.
 
 ## Architecture and operating model
 
