@@ -10,8 +10,8 @@ exposed; record names plus OS build, do not invent versions. Recipe uses say -o,
 170 words/minute, fixed public synthetic sentences; no voice installation.
 ffmpeg file,pipe protocol whitelist, -nostdin, single threads, mono 24kHz f32le.
 
-Private local files: /private/tmp/caption-offline-fixtures-freyq00t . Directory
-0700. Synthetic binaries are NOT distributed or committed: reuse/redistribution
+Private local files: temporary directory (exact local locator omitted for public
+distribution). Directory 0700. Synthetic binaries are NOT distributed or committed: reuse/redistribution
 rights were not demonstrated. Keep use local pending license determination.
 Only recipe, fixed text, aggregate measurements and hashes are in source.
 

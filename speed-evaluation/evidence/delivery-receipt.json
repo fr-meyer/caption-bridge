@@ -10,7 +10,7 @@
     "browser_tests/speed_harness.js",
     "evidence/final-measurements.json"
   ],
-  "gcp_harness": "/tmp/caption-bridge-speed-evaluation-20260930-review",
+  "gcp_harness": "temporary GCP harness directory (exact local locator omitted for public distribution)",
   "tests_passed": 11,
   "tests_skipped": 3,
   "provider_requests": 0,
