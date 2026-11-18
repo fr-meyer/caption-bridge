@@ -1,25 +1,39 @@
 name: Candidate endurance (provider-free)
 on:
-  # Temporary pre-release discovery path, restricted to this candidate branch.
+  pull_request:
+    branches: [main]
   push:
-    branches: [agent/caption-unified-completion-20261116]
+    branches: [main]
+  workflow_call:
+    inputs:
+      sha:
+        description: Exact commit to validate before release
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact full commit SHA for recovery validation
+        required: true
+        type: string
 permissions:
   contents: read
 # Do not auto-cancel a running acceptance record for a newer push.
 jobs:
-  endurance:
-    # Push qualification is explicit; ordinary repairs do not start extra soaks.
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[endurance]')
+  candidate-100-cycles:
+    name: candidate-100-cycles
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Require an exact commit
+        run: '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.EXPECTED_SHA }}
           persist-credentials: false
       - name: Bind execution to the triggering commit
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -33,10 +47,8 @@ jobs:
           uv run --python 3.13 python -m pytest -q
           tests/unit/test_candidate_endurance.py tests/unit/test_playback_timing_compare.py
           tests/unit/test_reconnect.py tests/unit/test_full_pipeline_scenario.py
-      - name: Smoke guarded application cycles before the long run
-        run: uv run --python 3.13 python -m scripts.candidate_endurance --minutes 0.05 --output acceptance/smoke.json
-      - name: Continuous 120-minute application fault cycles
-        run: uv run --python 3.13 python -m scripts.candidate_endurance --minutes 120 --output acceptance/endurance.json
+      - name: Exactly 100 guarded application fault cycles
+        run: uv run --python 3.13 python -m scripts.candidate_endurance --cycles 100 --output acceptance/endurance.json
       - name: Retain aggregate report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

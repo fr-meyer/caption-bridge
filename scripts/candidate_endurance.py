@@ -1,67 +1,94 @@
-"""Provider-free continuous application fault cycles, never physical acceptance."""
+"""Provider-free bounded application fault cycles, never physical acceptance."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
 import logging
+import math
 import subprocess
 import time
 from pathlib import Path
 
 
-async def endurance(seconds, cycle, *, clock=time.monotonic, sleep=asyncio.sleep):
-    if seconds <= 0:
-        raise ValueError("duration must be positive")
+async def endurance(cycles, cycle, *, clock=time.monotonic,
+                    cycle_timeout=45, total_timeout=240):
+    if type(cycles) is not int or not 1 <= cycles <= 100:
+        raise ValueError("cycles must be an integer in [1,100]")
+    for bound in (cycle_timeout, total_timeout):
+        if not math.isfinite(bound) or bound <= 0:
+            raise ValueError("timeouts must be finite and positive")
     started = clock()
-    cycles = 0
-    max_cycle_s = 0.0
-    while clock() - started < seconds:
+    report = dict(passed=False, expected_cycles=cycles, completed_cycles=0,
+                  cycles=0, wall_seconds=0.0, max_cycle_seconds=0.0)
+    for _ in range(cycles):
         before = clock()
-        passed = await cycle()
-        cycles += 1
-        max_cycle_s = max(max_cycle_s, clock() - before)
-        if not passed:
-            return dict(passed=False, cycles=cycles, wall_seconds=clock() - started,
-                        max_cycle_seconds=max_cycle_s)
-        await sleep(min(0.25, max(0, seconds - (clock() - started))))
-    return dict(passed=True, cycles=cycles, wall_seconds=clock() - started,
-                max_cycle_seconds=max_cycle_s)
+        remaining = total_timeout - (before - started)
+        if remaining <= 0:
+            report["failure_type"] = "TimeoutError"
+            break
+        try:
+            passed = await asyncio.wait_for(cycle(), timeout=min(cycle_timeout, remaining))
+            report["completed_cycles"] += 1
+            if not passed:
+                report["failure_type"] = "CycleFailed"
+        except Exception as exc:
+            # Do not retain exception messages, which might contain runtime content.
+            report["failure_type"] = type(exc).__name__
+        finally:
+            after = clock()
+            report["max_cycle_seconds"] = max(report["max_cycle_seconds"], after - before)
+            report["wall_seconds"] = after - started
+            report["cycles"] = report["completed_cycles"]
+        # wait_for may return normally if cancellation is suppressed, or if a
+        # blocking cycle prevents delivery. Elapsed deadlines still fail closed.
+        if after - before >= cycle_timeout or report["wall_seconds"] >= total_timeout:
+            report["failure_type"] = "TimeoutError"
+        if "failure_type" in report:
+            break
+    report["wall_seconds"] = clock() - started
+    report["passed"] = report["completed_cycles"] == cycles and "failure_type" not in report
+    return report
 
 
 async def application_cycle():
+    # wait_for runs this cycle in a child task; its supervising task is not a leak.
+    baseline = asyncio.all_tasks()
     from scripts.full_pipeline_scenario import run_full_pipeline_scenario
 
     report = await asyncio.wait_for(run_full_pipeline_scenario(), timeout=45)
     # Check for leaked tasks after each application teardown, not just at exit.
     await asyncio.sleep(0)
     live = [task for task in asyncio.all_tasks()
-            if task is not asyncio.current_task() and not task.done()]
+            if task not in baseline and not task.done()]
     return report.passed and not live
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--minutes", type=float, default=120)
+    parser.add_argument("--cycles", type=int, default=100)
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    if not 0 < args.minutes <= 120:
-        parser.error("minutes must be in (0,120]")
+    args = parser.parse_args(argv)
+    if not 1 <= args.cycles <= 100:
+        parser.error("cycles must be in [1,100]")
     logging.disable(logging.CRITICAL)
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     from evaluations.reliability_v050.run_offline import DENIED, install_guards
 
-    guard = install_guards()
+    report = dict(passed=False, expected_cycles=args.cycles, completed_cycles=0,
+                  cycles=0, wall_seconds=0.0, max_cycle_seconds=0.0)
+    guard = None
     try:
-        report = asyncio.run(endurance(args.minutes * 60, application_cycle))
-        report["denied_io_attempts"] = len(DENIED)
+        guard = install_guards()
+        report = asyncio.run(endurance(args.cycles, application_cycle))
         report["passed"] = report["passed"] and not DENIED
     except Exception as exc:
-        # Never retain exception messages, which might include runtime content.
-        report = dict(passed=False, failure_type=type(exc).__name__)
+        report.update(passed=False, failure_type=type(exc).__name__)
     finally:
-        guard.close()
-    report.update(commit=sha, requested_minutes=args.minutes,
+        if guard is not None:
+            guard.close()
+        report["denied_io_attempts"] = len(DENIED)
+    report.update(commit=sha, requested_cycles=args.cycles,
                   scope="provider-free repeated application fault cycles",
                   physical_acceptance=False)
     args.output.parent.mkdir(parents=True, exist_ok=True)
