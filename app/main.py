@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -451,6 +452,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "TTS is enabled but MISTRAL_TTS_VOICE_ID is not set; default VOICE_MAP values may be invalid for your account. "
             "Set MISTRAL_TTS_VOICE_ID to a saved voice UUID to avoid TTS failures."
         )
+    translation_diagnostics = dispatcher.diagnostics_snapshot()
+    logger.info("Translation timeout policy: %s",
+                json.dumps(translation_diagnostics["timeouts"], sort_keys=True))
+    if translation_diagnostics["drain_shorter_than_max_request"]:
+        logger.warning("Translation drain deadline is shorter than a configured request deadline; "
+                       "Stop may cancel admitted captions before their request deadline")
     logger.info("CaptionBridge started on %s:%s", settings.host, settings.port)
     yield
     poller.stop()

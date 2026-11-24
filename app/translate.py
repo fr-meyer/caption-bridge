@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
@@ -13,6 +14,7 @@ from app.config import AppConfig
 from app.errors import extract_provider_error_info, is_capacity_exceeded
 from app.glossary import Glossary, add_to_messages, effective_source
 from app.languages import get_language_label
+from app.pipeline_diagnostics import TranslationDiagnostics
 from app.providers import MistralTranslationProvider, TranslationProvider, TranslationResponse
 from app.state import SegmentQuality
 from app.translation_models import (
@@ -68,6 +70,9 @@ class TranslationDispatcher:
             max_concurrency = 8
         self._provider_slots = asyncio.Semaphore(max_concurrency)
         self._in_flight: set[asyncio.Task] = set()
+        self._task_segments: dict[asyncio.Task, tuple[int, str, int]] = {}
+        self._diagnostics = TranslationDiagnostics()
+        self._diagnostic_session_id: str | None = None
         # Each task keeps its dispatch-time model through retries and repair.
         self._request_model: ContextVar[str | None] = ContextVar(
             "caption_translation_model", default=None
@@ -78,6 +83,9 @@ class TranslationDispatcher:
         self._request_segment: ContextVar[object | None] = ContextVar(
             "caption_translation_segment", default=None
         )
+        self._request_session_id: ContextVar[str | None] = ContextVar(
+            "caption_translation_session", default=None
+        )
 
     # -- public API ---------------------------------------------------------
 
@@ -85,6 +93,7 @@ class TranslationDispatcher:
         # Capture before scheduling: reset/language changes cannot leak new terms
         # into work already dispatched for an earlier session.
         session = self._session_manager.session
+        self._sync_diagnostics()
         glossary = getattr(session, "glossary", None)
         if getattr(session, "id", None) != session_id or not isinstance(glossary, Glossary):
             glossary = None
@@ -92,6 +101,8 @@ class TranslationDispatcher:
         try:
             validate_translation_model(model, self._config)
         except ValueError:
+            self._record_failure(segment.seq, session_id, "admission",
+                                 "model_catalogue_unavailable", error_type="policy_error")
             self._session_manager.mark_translation_failed(
                 segment.seq, session_id, reason="model_catalogue_unavailable"
             )
@@ -99,6 +110,8 @@ class TranslationDispatcher:
         try:
             validate_reasoning_effort(getattr(segment, "translation_reasoning_effort", None) or "default", model)
         except ValueError:
+            self._record_failure(segment.seq, session_id, "admission",
+                                 "model_effort_unavailable", error_type="policy_error")
             self._session_manager.mark_translation_failed(
                 segment.seq, session_id, reason="model_effort_unavailable")
             return
@@ -120,7 +133,8 @@ class TranslationDispatcher:
             )
         )
         self._in_flight.add(task)
-        task.add_done_callback(self._in_flight.discard)
+        self._task_segments[task] = (segment.seq, session_id, self._timeout_for_model(model))
+        task.add_done_callback(self._task_done)
 
     async def drain(self) -> None:
         """Wait for in-flight tasks to settle, then cancel any remaining."""
@@ -129,17 +143,78 @@ class TranslationDispatcher:
         tasks = list(self._in_flight)
         timeout_s = self._config.translation_drain_timeout_ms / 1000
         _done, pending = await asyncio.wait(tasks, timeout=timeout_s)
-        for t in pending:
-            t.cancel()
+        for task in pending:
+            context = self._task_segments.get(task)
+            if context is not None:
+                seq, session_id, request_timeout_ms = context
+                self._record_failure(seq, session_id, "drain", "drain_timeout",
+                                     error_type="timeout", request_timeout_ms=request_timeout_ms)
+            task.cancel()
         if pending:
             await asyncio.wait(pending, timeout=2.0)
-        self._in_flight.clear()
+        # A cancellation-resistant provider may still own a task after the
+        # bounded join. Keep custody until its done callback actually runs.
+        for task in tasks:
+            if task.done():
+                self._task_done(task)
 
     # -- internals ----------------------------------------------------------
 
-    def _handle_translation_timeout(
-        self, seq: int, target_language: str, session_id: str
+    def _task_done(self, task: asyncio.Task) -> None:
+        self._in_flight.discard(task)
+        self._task_segments.pop(task, None)
+
+    def _sync_diagnostics(self) -> None:
+        current = self._session_manager.session.id
+        if current != self._diagnostic_session_id:
+            self._diagnostic_session_id = current
+            self._diagnostics = TranslationDiagnostics()
+
+    def diagnostics_snapshot(self) -> dict:
+        """Content-free runtime observation, not a journal/export schema change."""
+        self._sync_diagnostics()
+        budgets = {
+            "standard_request_ms": self._config.translation_timeout_ms,
+            "large_request_ms": self._config.translation_large_timeout_ms,
+            "glm_request_ms": self._config.translation_glm_timeout_ms,
+            "drain_ms": self._config.translation_drain_timeout_ms,
+        }
+        return {**self._diagnostics.snapshot(), "timeouts": budgets,
+                "in_flight": len(self._in_flight),
+                "drain_shorter_than_max_request": budgets["drain_ms"] < max(
+                    budgets["standard_request_ms"], budgets["large_request_ms"],
+                    budgets["glm_request_ms"],
+                )}
+
+    def _record_failure(
+        self, seq: int, session_id: str, stage: str, reason: str,
+        exc: Exception | None = None, *, error_type: str = "provider_error",
+        request_timeout_ms: int | None = None,
     ) -> None:
+        self._sync_diagnostics()
+        if session_id != self._diagnostic_session_id:
+            return  # Late completion from a replaced session cannot contaminate it.
+        info = extract_provider_error_info(exc) if exc is not None else None
+        status = info.status_code if info is not None else None
+        if isinstance(exc, TimeoutError):
+            error_type = "timeout"
+        elif type(status) is int and 100 <= status <= 599:
+            error_type = "http_error"
+        budget = request_timeout_ms if request_timeout_ms is not None else self._translation_timeout_ms()
+        # Never invent a deadline when a caller has no validated budget, or
+        # allow observation to change that caller's caption settlement.
+        if type(budget) is not int:
+            return
+        row = self._diagnostics.record_failure(
+            segment_seq=seq, stage=stage, reason=reason, error_type=error_type,
+            status_code=status, request_timeout_ms=budget,
+        )
+        logger.warning("Translation diagnostic: %s", json.dumps(row, sort_keys=True))
+
+    def _handle_translation_timeout(
+        self, seq: int, target_language: str, session_id: str, *, stage: str = "request"
+    ) -> None:
+        self._record_failure(seq, session_id, stage, "request_timeout", error_type="timeout")
         logger.warning(
             "Translation timed out for segment #%d: budget=%dms, lang=%s, model=%s, provider=%s",
             seq,
@@ -151,7 +226,9 @@ class TranslationDispatcher:
         self._session_manager.mark_translation_timed_out(seq, session_id)
 
     def _translation_timeout_ms(self) -> int:
-        model = self._request_model.get() or self._config.translate_model
+        return self._timeout_for_model(self._request_model.get() or self._config.translate_model)
+
+    def _timeout_for_model(self, model: str) -> int:
         if model in {"mistral-large-4", "mistral-large-4-0", "mistral-large-latest"}:
             return self._config.translation_large_timeout_ms
         if model in {"zai-glm-5-3", "zai-glm-5-3-flash", "deepseek-v4-1-flash-1017"}:
@@ -183,9 +260,10 @@ class TranslationDispatcher:
         try:
             return await self._await_translation(messages, timeout_s)
         except asyncio.TimeoutError:
-            self._handle_translation_timeout(seq, target_language, session_id)
+            self._handle_translation_timeout(seq, target_language, session_id, stage="retry")
             return None
         except Exception as retry_exc:
+            self._record_failure(seq, session_id, "retry", "provider_error", retry_exc)
             retry_info = extract_provider_error_info(retry_exc)
             if is_capacity_exceeded(retry_info):
                 raise
@@ -229,9 +307,10 @@ class TranslationDispatcher:
             try:
                 return await self._await_translation(messages, timeout_s)
             except asyncio.TimeoutError:
-                self._handle_translation_timeout(seq, target_language, session_id)
+                self._handle_translation_timeout(seq, target_language, session_id, stage="retry")
                 return None
             except Exception as retry_exc:
+                self._record_failure(seq, session_id, "retry", "provider_error", retry_exc)
                 retry_info = extract_provider_error_info(retry_exc)
                 if is_capacity_exceeded(retry_info):
                     continue
@@ -253,6 +332,7 @@ class TranslationDispatcher:
                     return None
                 return translated
         else:
+            self._record_failure(seq, session_id, "retry", "capacity_exhausted")
             logger.warning(
                 "Translation provider capacity exhausted for "
                 "segment #%d after %d retries",
@@ -283,6 +363,7 @@ class TranslationDispatcher:
         token = self._request_model.set(model or self._config.translate_model)
         effort_token = self._request_effort.set(effort)
         segment_token = self._request_segment.set(segment)
+        session_token = self._request_session_id.set(session_id)
         try:
             messages = self._build_messages(segment, context_segments, target_language, glossary)
             timeout_s = self._translation_timeout_ms() / 1000
@@ -294,6 +375,12 @@ class TranslationDispatcher:
                 return
             except Exception as first_exc:
                 info = extract_provider_error_info(first_exc)
+                failure_reason = "provider_error"
+                if info is not None and info.status_code in {400, 404, 422}:
+                    failure_reason = "provider_unsupported"
+                elif info is not None and info.status_code in {401, 403}:
+                    failure_reason = "provider_unavailable"
+                self._record_failure(seq, session_id, "request", failure_reason, first_exc)
                 if info is not None and info.status_code in {400, 401, 403, 404, 422}:
                     reason = "provider_unsupported" if info.status_code in {400, 404, 422} else "provider_unavailable"
                     self._session_manager.mark_translation_failed(seq, session_id, reason=reason)
@@ -328,6 +415,8 @@ class TranslationDispatcher:
                         return
 
             if getattr(segment, "translation_finish_reason", None) == "length":
+                self._record_failure(seq, session_id, "request", "provider_output_limit",
+                                     error_type="response_error")
                 logger.warning("Translation output limit reached for segment #%d", seq)
                 self._session_manager.mark_translation_failed(
                     seq, session_id, reason="provider_output_limit"
@@ -335,14 +424,20 @@ class TranslationDispatcher:
                 return
 
             if getattr(segment, "translation_finish_reason", None) in {"content_filter", "refusal"}:
+                self._record_failure(seq, session_id, "request", "provider_refusal",
+                                     error_type="response_error")
                 self._session_manager.mark_translation_failed(seq, session_id, reason="provider_refusal")
                 return
 
             if getattr(segment, "translation_finish_reason", None) == "reasoning_only":
+                self._record_failure(seq, session_id, "request", "provider_reasoning_only",
+                                     error_type="response_error")
                 self._session_manager.mark_translation_failed(seq, session_id, reason="provider_reasoning_only")
                 return
 
             if not translated or not translated.strip():
+                self._record_failure(seq, session_id, "request", "provider_no_text",
+                                     error_type="response_error")
                 logger.warning("Translation provider returned no answer text for segment #%d", seq)
                 self._session_manager.mark_translation_failed(
                     seq, session_id, reason="provider_no_text"
@@ -360,6 +455,9 @@ class TranslationDispatcher:
             )
 
         except asyncio.CancelledError:
+            self._sync_diagnostics()
+            if session_id == self._diagnostic_session_id:
+                self._diagnostics.cancellations += 1
             logger.warning(
                 "Translation task cancelled for segment #%d (shutdown/drain)", seq
             )
@@ -367,6 +465,8 @@ class TranslationDispatcher:
             raise
 
         except Exception as exc:
+            self._record_failure(seq, session_id, "task", "internal_error", exc,
+                                 error_type="internal_error")
             logger.error(
                 "Unhandled translation failure: seq=%d error_type=%s",
                 seq,
@@ -374,6 +474,7 @@ class TranslationDispatcher:
             )
             self._session_manager.mark_translation_failed(seq, session_id)
         finally:
+            self._request_session_id.reset(session_token)
             self._request_segment.reset(segment_token)
             self._request_effort.reset(effort_token)
             self._request_model.reset(token)
@@ -463,6 +564,7 @@ class TranslationDispatcher:
         ) / 1000
 
         repair_started = time.monotonic()
+        repair_failure_reason = "repair_error"
         try:
             async with self._provider_slots:
                 repair_text = await asyncio.wait_for(
@@ -472,8 +574,15 @@ class TranslationDispatcher:
                 if getattr(segment, "translation_finish_reason", None) == "length":
                     # A fluent partial repair can omit a qualification or negation.
                     # Keep the original flagged answer instead of accepting it.
+                    repair_failure_reason = "provider_output_limit"
                     raise ValueError("translation_repair_output_limit")
-        except Exception:
+        except Exception as exc:
+            session_id = self._request_session_id.get()
+            if session_id is not None:
+                self._record_failure(segment.seq, session_id, "repair",
+                                     "repair_timeout" if isinstance(exc, TimeoutError) else repair_failure_reason,
+                                     exc, error_type="response_error" if repair_failure_reason == "provider_output_limit"
+                                     else "provider_error", request_timeout_ms=round(repair_timeout_s * 1000))
             return raw_text, SegmentQuality(
                 flagged=True,
                 reasons=initial_reasons,

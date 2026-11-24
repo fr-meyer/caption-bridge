@@ -1,4 +1,4 @@
-"""Content-free capture and ASR aggregates with an exact persistence schema."""
+"""Content-free pipeline aggregates and ephemeral failure diagnostics."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import sys
 from array import array
 from dataclasses import asdict, dataclass, field
 from typing import Any
+from uuid import uuid4
 
 ASR_STATES = frozenset({"idle", "connecting", "ready", "draining", "failed", "stopped"})
 ASR_REASONS_V5 = frozenset({
@@ -262,3 +263,66 @@ def validate_pipeline_snapshot(value: object, *, legacy_v5: bool = False) -> boo
         and types["text_delta"] == asr["text_events"]
         and asr["sent_bytes"] % 2 == 0
     )
+
+
+TRANSLATION_FAILURE_STAGES = frozenset({"admission", "request", "retry", "repair", "drain", "task"})
+TRANSLATION_FAILURE_REASONS = frozenset({
+    "model_catalogue_unavailable", "model_effort_unavailable", "request_timeout",
+    "provider_error", "provider_unsupported", "provider_unavailable", "capacity_exhausted",
+    "provider_output_limit", "provider_refusal", "provider_reasoning_only", "provider_no_text",
+    "repair_timeout", "repair_error", "drain_timeout", "internal_error",
+})
+TRANSLATION_ERROR_TYPES = frozenset({
+    "timeout", "http_error", "provider_error", "response_error", "policy_error", "internal_error",
+})
+
+
+@dataclass(frozen=True)
+class TranslationFailure:
+    """Content-free first observed failure, not the final segment outcome."""
+
+    segment_seq: int
+    stage: str
+    reason: str
+    error_type: str
+    status_code: int | None
+    request_timeout_ms: int
+
+
+@dataclass
+class TranslationDiagnostics:
+    """One session's bounded diagnostic state, separate from durable schemas.
+
+    A recovered retry still counts as an observed failure. Normal cancellation
+    is counted separately and never replaces (or invents) a failure cause.
+    """
+
+    run_id: str = field(default_factory=lambda: uuid4().hex)
+    first_failure: TranslationFailure | None = None
+    failure_events: int = 0
+    cancellations: int = 0
+
+    def record_failure(
+        self, *, segment_seq: int, stage: str, reason: str, error_type: str,
+        status_code: object = None, request_timeout_ms: int,
+    ) -> dict[str, Any]:
+        if (type(segment_seq) is not int or segment_seq < 1
+                or type(request_timeout_ms) is not int or not 1 <= request_timeout_ms <= 120000
+                or not isinstance(stage, str) or stage not in TRANSLATION_FAILURE_STAGES
+                or not isinstance(reason, str) or reason not in TRANSLATION_FAILURE_REASONS
+                or not isinstance(error_type, str) or error_type not in TRANSLATION_ERROR_TYPES):
+            raise ValueError("invalid translation diagnostic")
+        status = status_code if type(status_code) is int and 100 <= status_code <= 599 else None
+        failure = TranslationFailure(
+            segment_seq, stage, reason, error_type, status, request_timeout_ms,
+        )
+        self.failure_events += 1
+        if self.first_failure is None:
+            self.first_failure = failure
+        return {"event": "translation_failure", "run_id": self.run_id, **asdict(failure),
+                "first_failure": asdict(self.first_failure)}
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"run_id": self.run_id, "failure_events": self.failure_events,
+                "cancellations": self.cancellations,
+                "first_failure": asdict(self.first_failure) if self.first_failure else None}
