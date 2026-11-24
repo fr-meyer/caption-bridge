@@ -14,7 +14,7 @@ from app.model_lifecycle import (
 )
 
 
-@pytest.mark.parametrize("badge,status", [("GA", "active"), ("Public Preview", "active"),
+@pytest.mark.parametrize("badge,status", [("GA", "active"), ("Public Preview", "preview"), ("Labs", "labs"),
                                           ("Deprecated", "deprecated"), ("Retired", "retired")])
 def test_official_status_badges(badge, status):
     html = '<nav>Deprecated & retired models</nav><span data-slot="badge">' + badge + '</span>'
@@ -96,7 +96,7 @@ def current_header(records):
 
 
 @pytest.mark.parametrize("status,expected", [("GA", "active"), ("Deprecated", "deprecated"),
-                                            ("Public Preview", "active"), ("Retired", "retired")])
+                                            ("Public Preview", "preview"), ("Labs", "labs"), ("Retired", "retired")])
 def test_actual_current_card_lifecycle_scope(status, expected):
     records = flight_records()
     header = current_header(records)
