@@ -3,12 +3,12 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from test_caption_native_pcm import make_capture
 
 import app.main as main
 from app.native_capture import NativeCaptureFactory
 from app.state import SessionManager
 from scripts.attended_native_launch import EmergencyStop
-from test_caption_native_pcm import make_capture
 
 
 def test_default_remains_legacy_but_selected_unadmitted_native_never_falls_back():

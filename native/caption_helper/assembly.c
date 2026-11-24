@@ -318,6 +318,9 @@ int main(int argc,char **argv) {
    result=70;goto cleanup;
   }
   if(!remaining)break;
+  /* The immutable capture deadline is not the reap grace. Stopped roles must
+   * enter owned group termination now; forced cleanup remains HOLD. */
+  if(mach_continuous_time()>=end){result=70;goto cleanup;}
   struct pollfd stop={.fd=capture_stop_fd,.events=POLLIN|POLLHUP|POLLERR};
   if(poll(&stop,1,0)!=0 || getppid()!=launch_parent || !cb_capture_wall_valid(cb_capture_expires_unix_ns)){result=70;goto cleanup;}
   if(usleep(1000)<0 && errno!=EINTR){result=70;goto cleanup;}

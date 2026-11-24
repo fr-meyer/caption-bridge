@@ -17,7 +17,7 @@ from pathlib import Path
 
 from native.caption_helper.qualify_assembly import validate_startup
 from native.caption_helper.qualify_budget import BoundedLines
-from scripts.attended_native_admission import CaptureAdmission, MIN_CAPTURE_MS
+from scripts.attended_native_admission import MIN_CAPTURE_MS, CaptureAdmission
 from scripts.attended_native_clock import continuous_ns
 
 

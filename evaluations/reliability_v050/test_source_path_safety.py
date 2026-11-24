@@ -160,7 +160,7 @@ class SourcePathTests(unittest.TestCase):
         with patch.object(os, "open", swap_then_open), \
              patch.object(os, "supports_dir_fd", set(os.supports_dir_fd) | {swap_then_open}), \
              patch.object(os, "fdopen", side_effect=AssertionError("outside_payload_read")) as reads:
-            with self.assertRaises(OSError):
+            with self.assertRaisesRegex(ValueError, "^source_io_unavailable$"):
                 READER.source_file_value(self.root, "app/example.py")
         self.assertTrue(replaced)
         reads.assert_not_called()
@@ -215,3 +215,55 @@ class WiredSourceIdentityTests(unittest.TestCase):
             self.identity([b"app/example.py", b"app/deleted.py"])
         self.assertEqual([call.args[1] for call in reader.call_args_list],
                          ["app/deleted.py", "app/example.py"])
+
+
+class SourcePrivacyTests(unittest.TestCase):
+    def test_real_permission_error_has_no_private_filename(self):
+        if os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+            self.skipTest("real permission denial requires non-root POSIX")
+        with tempfile.TemporaryDirectory(prefix="private-source-boundary-") as scratch:
+            root = Path(scratch)
+            (root / "app").mkdir()
+            private = root / "app/private.py"
+            private.write_text("unit-only bytes")
+            private.chmod(0)
+            try:
+                with self.assertRaises(ValueError) as caught:
+                    READER.source_file_value(root, "app/private.py")
+                self.assertEqual(str(caught.exception), "source_io_unavailable")
+                self.assertNotIn(scratch, str(caught.exception))
+                self.assertTrue(caught.exception.__suppress_context__)
+            finally:
+                private.chmod(0o600)
+
+    def test_cli_redacts_pre_and_post_scan_and_receipt_errors(self):
+        import contextlib
+        import io
+        import sys
+
+        for error in (PermissionError(13, "denied", "/private/example/source.py"),
+                      ValueError("/private/example/scan"),
+                      subprocess.CalledProcessError(1, ["git", "-C", "/private/example"])):
+            with self.subTest(error_type=type(error).__name__), \
+                 patch.object(READER, "_main", side_effect=error), \
+                 contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertEqual(READER.main(), 1)
+                self.assertEqual(output.getvalue().strip(),
+                                 '{"status": "failed", "error": "software_evidence_unavailable"}')
+                self.assertNotIn("/private", output.getvalue())
+                self.assertNotIn("Traceback", output.getvalue())
+                self.assertEqual(sys.exc_info(), (None, None, None))
+
+    def test_existing_runner_selects_both_safety_modules(self):
+        import ast
+        tree = ast.parse(MODULE_PATH.read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "_main")
+        selected = next(node.value for node in ast.walk(main)
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "selected"
+                                for target in node.targets))
+        paths = ast.literal_eval(selected)
+        for path in ("evaluations/reliability_v050/test_source_path_safety.py",
+                     "evaluations/reliability_v050/test_keyboard_shortcut_contract.py"):
+            self.assertIn(path, paths)

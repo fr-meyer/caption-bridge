@@ -108,15 +108,13 @@ permit an application ASR upload: its scope must be independently reconciled wit
 any separately authorized provider consumer, preserving helper network denial.
 Offline synthetic tests prove software contracts only, not these facts.
 
-An additional cross-file output guard must be reviewed/integrated before an
-app-asr consumer-boundary proof can pass: current websocket new-session/Start
-unmute/replay routes are not globally intercepted by this lane. Muted-before-Start
-and per-packet invalidation are defense-in-depth, NOT a proof that a concurrent
-unmute can never initiate output. That shared websocket patch belongs to parent
-integration; this source lane does not silently modify shared ws/state/workflows.
-All ordinary PCM transport/factory/lifecycle source is implemented above; remaining
-facts and this narrowly identified shared patch are not renamed 'human transport'
-work or treated as Phase-A/real full-cycle acceptance.
+The shared websocket output guard is now integrated: while native capture is
+selected, unmuted Start/new-session, unmute, replay, audio unlock and catch-up
+controls fail closed. Muted-before-Start and per-packet invalidation remain
+defense-in-depth. These reviewed source boundaries are NOT independent runtime
+consumer/egress or acoustic proof. All ordinary PCM transport/factory/lifecycle
+source is implemented above; the remaining independent facts are not renamed
+'human transport' work or treated as Phase-A/real full-cycle acceptance.
 
 Rollback: do not install the optional factory; existing default/noaudio routes stay
 unchanged. Remove an installed factory only while idle; live instances must Stop

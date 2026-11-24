@@ -15,9 +15,8 @@ import threading
 import time
 from pathlib import Path
 
-from scripts.attended_native_clock import continuous_ns
-
 from scripts.attended_acceptance import hex_id
+from scripts.attended_native_clock import continuous_ns
 
 MIN_CAPTURE_MS = 1000
 IMAGES = ('CaptureController', 'CaptureGuardianA', 'CaptureGuardianB', 'CaptureHelper')

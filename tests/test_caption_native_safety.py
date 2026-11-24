@@ -1,6 +1,6 @@
 """Offline source/policy regressions. Never native/HAL/physical acceptance."""
-import io
 import hashlib
+import io
 import json
 import re
 import subprocess
@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 import test_caption_native_capture as baseline
+
 from scripts.attended_native_admission import MIN_CAPTURE_MS
 from scripts.attended_native_launch import EmergencyStop, _run, capture_valid_until, qualify_noinput
 
@@ -307,3 +307,32 @@ def test_real_linux_sleep_inclusive_clock_is_not_platform_mocked():
     with patch("sys.platform", "darwin"):
         after = continuous_ns()  # Must NOT load libSystem on this real Linux host.
     assert 0 < before <= after
+
+
+def test_active_controller_deadline_is_not_reap_grace():
+    """Replay the actual active branch's predicate, not the Linux process model."""
+    source = (ROOT / "native/caption_helper/assembly.c").read_text()
+    marker = "#ifdef CB_CAPTURE_CONTROLLER\n while(mach_continuous_time()<reap_end)"
+    start = source.index(marker)
+    branch = source[start:source.index("#else", start)]
+    normalized = re.sub(r"\s+", "", branch)
+    required = "if(mach_continuous_time()>=end){result=70;gotocleanup;}"
+    assert required in normalized
+    assert normalized.index("if(!remaining)break;") < normalized.index(required)
+    assert normalized.index(required) < normalized.index("structpollfdstop=")
+    assert normalized.index(required) < normalized.index("usleep(1000)")
+    # Three stopped roles never report WEXITED; wall validity/parent/emergency
+    # stay valid. The source-pinned predicate must kill at end, not end + 2s.
+    end = 2_000_000_000
+    clock = end - 5_000_000
+    while clock < end + 2_000_000_000:
+        remaining = 3
+        assert remaining
+        if clock >= end:  # identical to the required active C predicate above
+            result, cleanup = 70, True
+            break
+        clock += 1_000_000
+    assert (clock, result, cleanup) == (end, 70, True)
+    cleanup_branch = source[source.index("\ncleanup:\n", start):]
+    assert "if(capture_group>1 && !kill_capture_group())result=70;" in cleanup_branch
+    assert '"terminal":"HOLD"' in cleanup_branch.replace(chr(92), "")

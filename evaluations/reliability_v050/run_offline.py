@@ -33,6 +33,14 @@ def forbidden(label):
 
 
 def source_file_value(root, name):
+    """Expose only a stable error code, never filesystem filenames or causes."""
+    try:
+        return _source_file_value(root, name)
+    except OSError:
+        raise ValueError("source_io_unavailable") from None
+
+
+def _source_file_value(root, name):
     """Read source only beneath a frozen root; never resolve an ancestor alias.
 
     A direct leaf symlink binds link TEXT only (the existing digest contract),
@@ -170,7 +178,7 @@ class Outcome:
             (self.xfailed if hasattr(report, "wasxfail") else self.skipped).append(report.nodeid)
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--receipt-dir", type=Path, required=True)
     parser.add_argument("--focused-only", action="store_true")
@@ -185,6 +193,8 @@ def main():
     source_before = software_source_identity()
     selected = [
         "evaluations/reliability_v050/test_source_identity.py",
+        "evaluations/reliability_v050/test_source_path_safety.py",
+        "evaluations/reliability_v050/test_keyboard_shortcut_contract.py",
         "tests/unit/test_software_network_guard.py",
         "evaluations/reliability_v050/test_endurance.py",
         "evaluations/reliability_v050/test_windows_software.py",
@@ -252,6 +262,17 @@ def main():
         json.dumps(result, indent=2, sort_keys=True) + "\n"
     )
     return 0 if result["status"] == "passed" else 1
+
+
+def main():
+    try:
+        return _main()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # Source/receipt failures must never emit raw paths, exception text or
+        # chained tracebacks into shareable CI logs. A failure is not a receipt.
+        print(json.dumps({"status": "failed", "error": "software_evidence_unavailable"}),
+              file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

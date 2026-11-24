@@ -10,8 +10,8 @@ import threading
 import time
 
 from scripts.attended_acceptance import hex_id
-from scripts.attended_native_clock import continuous_ns
 from scripts.attended_native_admission import CaptureAdmission, document
+from scripts.attended_native_clock import continuous_ns
 
 PCM_CHECKS = ("framing_epoch", "bounded_backpressure_close", "stop_drain",
               "no_retention", "consumer_boundary")

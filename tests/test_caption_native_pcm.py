@@ -4,18 +4,26 @@ import os
 import random
 import struct
 import sys
-from types import SimpleNamespace
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from app.audio_devices import GrantedNativeInputDevices, NativeInputSelection
 from app.native_capture import NativeAudioCapture, NativeCaptureFactory
-from app.native_pcm import (ASR_RATE, END, HEADER, MAGIC, MAX_PACKET, AsrPcmConverter,
-                            PcmDecoder, PcmProtocolError)
+from app.native_pcm import (
+    ASR_RATE,
+    END,
+    HEADER,
+    MAGIC,
+    MAX_PACKET,
+    AsrPcmConverter,
+    PcmDecoder,
+    PcmProtocolError,
+)
 from scripts.attended_native_launch import EmergencyStop, launch_pcm
 
 EPOCH = bytes.fromhex("12" * 16)

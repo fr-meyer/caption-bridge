@@ -3,11 +3,11 @@ import json
 from unittest.mock import patch
 
 import pytest
+import test_caption_native_capture as _baseline
+from test_caption_native_capture import raw
 
 from scripts.attended_native_admission import digest
 from scripts.attended_pcm_admission import PCM_CHECKS, PcmAdmission
-import test_caption_native_capture as _baseline
-from test_caption_native_capture import raw
 
 
 @pytest.fixture

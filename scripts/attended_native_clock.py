@@ -3,6 +3,7 @@
 Use real kernel identity, never a test's mocked sys.platform. No wall fallback.
 """
 from __future__ import annotations
+
 import os
 import time
 from functools import lru_cache
