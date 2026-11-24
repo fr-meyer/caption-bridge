@@ -1,9 +1,17 @@
 # Hosted Darwin owned-group signal diagnostic
 
-This is diagnostic source, not a CaptureController repair or native admission.
-The production group kill, fail-closed HOLD, budget, validators, noaudio protocol,
-and success schema 1 are unchanged. No devices, capture API, provider or network
-calls occur in the probe. Do not run it on the owner's Mac.
+The probe is diagnostic, never native admission. The narrow production repair
+now shares its closure predicate; see
+[Native zombie-group closure](../../docs/native-zombie-group-closure.md).
+Native budgets, status validators, noaudio protocol and success schema 1 remain
+unchanged. No devices, capture API, provider or network calls occur in the probe.
+Do not run it on the owner's Mac.
+
+The actual e9aa766 hosted run 45456295172 on Darwin 25.6.0/build 25G332
+subsequently demonstrated both successful live/mixed signals and all-zombie EPERM
+with normal reaping and zero forced cleanup. That is actual historical mechanism
+evidence, not proof of the new production predicate or adverse fourth-child path.
+The older first-failure evidence below is retained as history, not backfilled.
 
 ## Actual retained failure
 
@@ -47,8 +55,9 @@ Apple XNU source pinned to f6217f891ac0bb64f3d375211650a4c1ff8ca1ea:
 
 Thus the retained outcome is specifically consistent with POSIX Darwin's
 existing-group/no-eligible-live-recipient path, even with identical credentials.
-This is source-backed, not yet execution proof for the hosted kernel. The
-published source commit is not attested to be the source of build 25G332.
+The later e9aa766 real hosted probe demonstrates this mechanism for its owned
+closed topology. The published source commit is still not attested to be the
+source of build 25G332, nor does the old probe prove new production closure.
 EPERM still cannot generally be accepted as closed: a live unauthorized or
 MAC-denied descendant can also leave nfound==0. Never just whitelist EPERM,
 reap the anchor before group closure, skip group kill, or loosen the validator.
@@ -92,13 +101,28 @@ images, records their signatures/entitlements/hashes and never executes them.
 
 ## Probe safety and interpretation
 
-probe_group_signal.c uses real fork/setpgid/waitid(WNOWAIT)/kill/sysctl/waitpid.
+probe_group_signal.c uses real fork/setpgid/waitid(WNOWAIT)/kill/sysctl/waitpid
+and the SAME owned_group_closure.h predicate as production, including libproc
+complete PID enumeration and enrolled birth/ownership checks.
 Three fresh, direct owned children are observed in each of these cases:
 
 1. All alive, group SIGKILL positive control.
 2. Leader a retained normal-exit-72 zombie, two live peers. This separates dead
    anchor from no live recipient, and keeps real live-peer group closure in view.
 3. All three retained normal-exit-72 zombies, the exact relevant state pattern.
+   The predicate must close exactly those three. Then a genuinely owned fourth
+   child is added but omitted from the expected identity set: both its live and
+   retained-zombie states must reject closure. Only after its independent reap
+   may the original three-member proof succeed again. No group signal is made
+   while that extra child is present; the original common budgets are unchanged.
+
+Diagnostic schema 2 adds nullable all_owned_zombies and a fixed adverse object
+with rejection booleans and bounded snapshot-byte/status/cleanup values. Actual
+shared enumeration readback must be 12 bytes for three zombies and 16 bytes for
+both extra-member rejections, so generic census error is not adverse-path proof. These are actual
+software/OS observations, never predicted errno or a production admission packet.
+Capture success schema 1 is unchanged. Missing new observations are not filled in
+from the old three-case receipt.
 
 A new private session excludes existing runner processes from joining a probe
 group. Children never fork or exec and exit naturally when their lifeline closes.
@@ -127,12 +151,11 @@ supply acceptance for this change.
 
 ## Guarded follow-through
 
-If the hosted kernel reproduces EPERM only for the all-zombie group with working
-live/mixed controls, this confirms that mechanism on that kernel, not automatic
-production closure. Next repair must retain the actual group signal and anchor,
-prove bounded complete absence of live unknown descendants with stable identity,
-and keep all ambiguous/denied census outcomes fail-closed. A production census
-cannot assume the probe's closed-world/private-session topology. It must handle
-real descendant races and ownership explicitly, with hosted noinput readback.
-If the positive controls fail or all-zombie behavior differs, inspect actual
-signature/entitlements and same-run sandbox/kernel logs before any policy change.
+The real e9aa766 probe completed the initial three-case mechanism check. The
+new strict proof and real extra-member adverse paths are source work pending
+independent parent review/publication and exact-new-head hosted execution. Require
+actual header/source/image/generated-pin bindings, real predicate rejection for
+live/mixed/extra-member states, and successful unchanged noinput readback with
+normal owned reaping and no forced cleanup. Keep all unknown/denied/truncated
+census states fail-closed. The production proof does not assume this diagnostic
+private session, and old evidence is not acceptance of this new implementation.

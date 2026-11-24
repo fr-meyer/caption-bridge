@@ -31,12 +31,14 @@ PUBLIC_FILE = 'group-signal-observation.json'
 MAX_PUBLIC = 32768
 SOURCES = ('.github/workflows/ci.yml', 'scripts/ci_group_signal_observer.py',
            'native/caption_helper/probe_group_signal.c',
-           'native/caption_helper/probe_group_signal.sh')
+           'native/caption_helper/probe_group_signal.sh',
+           'native/caption_helper/owned_group_closure.h')
 IMAGES = ('CaptureController', 'CaptureGuardianA', 'CaptureGuardianB', 'CaptureHelper')
 CASES = (0, 1, 3)
 OBS_KEYS = frozenset('''schema kind natural_exits observation_complete mechanism_complete group
 uid euid private_session pids census_complete states waitid_exits signal_zero signal_kill
-reaped_status cleanup_forced remaining_owned darwin_unix03 capture native_admission'''.split())
+reaped_status cleanup_forced remaining_owned darwin_unix03 capture native_admission
+all_owned_zombies closure_snapshot_bytes adverse'''.split())
 KERNEL = re.compile(r'[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\Z')
 BUILD = re.compile(r'[0-9]{1,3}[A-Z][0-9]{1,6}[a-z]?\Z')
 BINDINGS = {'COMPLETE', 'PARTIAL', 'MISSING', 'REJECTED', 'UNKNOWN'}
@@ -44,7 +46,7 @@ BINDINGS = {'COMPLETE', 'PARTIAL', 'MISSING', 'REJECTED', 'UNKNOWN'}
 
 def checked_observation(value, index):
     require(type(value) is dict and set(value) == OBS_KEYS)
-    require(type(value['schema']) is int and value['schema'] == 1
+    require(type(value['schema']) is int and value['schema'] == 2
             and value['kind'] == 'DARWIN_OWNED_GROUP_SIGNAL_OBSERVATION'
             and type(value['natural_exits']) is int and value['natural_exits'] == CASES[index])
     require(value['capture'] is False and value['native_admission'] is False)
@@ -64,6 +66,39 @@ def checked_observation(value, index):
         require(type(value[key]) is dict and set(value[key]) == {'rc', 'errno'}
                 and integer(value[key]['rc'], -2, 0)
                 and integer(value[key]['errno'], 0, 4095))
+    require(value['all_owned_zombies'] is None or type(value['all_owned_zombies']) is bool)
+    require(integer(value['closure_snapshot_bytes'], -1, 16))
+    adverse = value['adverse']
+    require(type(adverse) is dict and set(adverse) == {
+        'live_extra_rejected', 'zombie_extra_rejected', 'extra_reaped_status',
+        'live_extra_snapshot_bytes', 'zombie_extra_snapshot_bytes',
+        'cleanup_forced', 'remaining_owned'})
+    for key in ('live_extra_rejected', 'zombie_extra_rejected'):
+        require(adverse[key] is None or type(adverse[key]) is bool)
+    require(integer(adverse['live_extra_snapshot_bytes'], -1, 16)
+            and integer(adverse['zombie_extra_snapshot_bytes'], -1, 16)
+            and integer(adverse['extra_reaped_status'], -1, 65535)
+            and integer(adverse['cleanup_forced'], 0, 1)
+            and integer(adverse['remaining_owned'], 0, 1))
+    if value['mechanism_complete']:
+        require(value['observation_complete'] and value['census_complete']
+                and value['all_owned_zombies'] is (value['natural_exits'] == 3)
+                and value['closure_snapshot_bytes'] == (12 if value['natural_exits'] == 3 else -1))
+        if value['natural_exits'] == 3:
+            require(adverse['live_extra_rejected'] is True
+                    and adverse['zombie_extra_rejected'] is True
+                    and adverse['live_extra_snapshot_bytes'] == 16
+                    and adverse['zombie_extra_snapshot_bytes'] == 16
+                    and os.WIFEXITED(adverse['extra_reaped_status'])
+                    and os.WEXITSTATUS(adverse['extra_reaped_status']) == 72
+                    and adverse['cleanup_forced'] == 0 and adverse['remaining_owned'] == 0)
+        else:
+            require(adverse['live_extra_rejected'] is None
+                    and adverse['zombie_extra_rejected'] is None
+                    and adverse['live_extra_snapshot_bytes'] == -1
+                    and adverse['zombie_extra_snapshot_bytes'] == -1
+                    and adverse['extra_reaped_status'] == -1
+                    and adverse['cleanup_forced'] == 0 and adverse['remaining_owned'] == 0)
     # No predicted errno/result is supplied, and no row means no observation.
     return value
 
@@ -234,7 +269,7 @@ def validate(value):
         require(type(candidate['sha256']) is dict and set(candidate['sha256']) == set(IMAGES)
                 and all(type(item) is str and HEX64.fullmatch(item)
                         for item in candidate['sha256'].values()))
-    for record, count in ((probe, 3), (candidate, 4)):
+    for record, count in ((probe, 4), (candidate, 4)):
         require(record['hash_binding'] in BINDINGS and integer(record['recorded_hashes'], 0, count))
         require(record['hash_binding'] != 'COMPLETE' or record['recorded_hashes'] == count)
         require(record['hash_binding'] != 'PARTIAL' or record['recorded_hashes'] < count)

@@ -19,7 +19,7 @@ OUT=$(CDPATH= cd -- "$1" && pwd)
  printf 'diagnostic_only=true\ncapture=false\nnative_admission=false\n'
 } > "$OUT/runtime.txt" 2>&1
 /usr/bin/clang -std=c11 -Wall -Wextra -Werror -Os \
- "$ROOT/native/caption_helper/probe_group_signal.c" -o "$OUT/GroupSignalProbe" \
+ "$ROOT/native/caption_helper/probe_group_signal.c" -lproc -o "$OUT/GroupSignalProbe" \
  > "$OUT/build.stdout" 2> "$OUT/build.stderr"
 # Same runtime signing option and no entitlements as the source CaptureController.
 # Forked members share this signature; this is not the production exec topology.
@@ -31,7 +31,8 @@ OUT=$(CDPATH= cd -- "$1" && pwd)
 /usr/bin/codesign --display --verbose=4 --entitlements :- "$OUT/GroupSignalProbe" \
  > "$OUT/probe.entitlements.plist" 2> "$OUT/probe.signature.txt"
 /usr/bin/shasum -a 256 "$ROOT/native/caption_helper/probe_group_signal.c" \
- "$ROOT/native/caption_helper/probe_group_signal.sh" "$OUT/GroupSignalProbe" \
+ "$ROOT/native/caption_helper/probe_group_signal.sh" \
+ "$ROOT/native/caption_helper/owned_group_closure.h" "$OUT/GroupSignalProbe" \
  > "$OUT/source-binary.sha256"
 # Read-only evidence of the actual candidate, if already built by the CI lane.
 # Missing or unverifiable candidate metadata fails this invocation, never waived.
