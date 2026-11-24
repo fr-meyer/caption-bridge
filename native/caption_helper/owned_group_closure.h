@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <libproc.h>
 #include <stdint.h>
+#include <errno.h>
 #include <unistd.h>
 #include <string.h>
 #define CB_OWNED_GROUP_MEMBERS 3
@@ -19,24 +20,55 @@ typedef struct {
  pid_t pid,parent,group;uid_t ruid,euid;
  struct timeval birth;int enrolled;
 } cb_owned_group_member;
-static inline int cb_owned_group_metadata(pid_t pid,struct kinfo_proc *row){
+/* Diagnostic-only distinctions. No failed predicate is relaxed or retried. */
+enum cb_owned_group_pin_result {
+ CB_PIN_OK=0,CB_PIN_ARGUMENT,CB_PIN_WAIT,CB_PIN_TERMINAL,
+ CB_PIN_METADATA_QUERY,CB_PIN_METADATA_SIZE,CB_PIN_METADATA_PID,CB_PIN_ZOMBIE,
+ CB_PIN_PARENT,CB_PIN_GROUP,CB_PIN_RUID,CB_PIN_EUID,CB_PIN_BIRTH_SEC,CB_PIN_BIRTH_USEC
+};
+static inline enum cb_owned_group_pin_result cb_owned_group_metadata_detail(
+ pid_t pid,struct kinfo_proc *row,int *system_errno){
  int mib[]={CTL_KERN,KERN_PROC,KERN_PROC_PID,pid};size_t bytes=sizeof(*row);
+ if(system_errno)*system_errno=0;
  memset(row,0,sizeof(*row));
- return !sysctl(mib,4,row,&bytes,NULL,0) && bytes==sizeof(*row) && row->kp_proc.p_pid==pid;
+ if(sysctl(mib,4,row,&bytes,NULL,0)){
+  if(system_errno)*system_errno=errno;
+  return CB_PIN_METADATA_QUERY;
+ }
+ if(bytes!=sizeof(*row))return CB_PIN_METADATA_SIZE;
+ if(row->kp_proc.p_pid!=pid)return CB_PIN_METADATA_PID;
+ return CB_PIN_OK;
+}
+static inline int cb_owned_group_metadata(pid_t pid,struct kinfo_proc *row){
+ return cb_owned_group_metadata_detail(pid,row,NULL)==CB_PIN_OK;
+}
+static inline enum cb_owned_group_pin_result cb_owned_group_pin_detail(
+ cb_owned_group_member *pin,pid_t pid,pid_t group,int *system_errno){
+ if(system_errno)*system_errno=0;
+ if(!pin)return CB_PIN_ARGUMENT;
+ memset(pin,0,sizeof(*pin));
+ if(pid<=1 || group<=1)return CB_PIN_ARGUMENT;
+ siginfo_t info;memset(&info,0,sizeof(info));
+ if(waitid(P_PID,(id_t)pid,&info,WEXITED|WNOHANG|WNOWAIT)){
+  if(system_errno)*system_errno=errno;
+  return CB_PIN_WAIT;
+ }
+ if(info.si_pid)return CB_PIN_TERMINAL;
+ struct kinfo_proc row;
+ enum cb_owned_group_pin_result result=cb_owned_group_metadata_detail(pid,&row,system_errno);
+ if(result!=CB_PIN_OK)return result;
+ if(row.kp_proc.p_stat==SZOMB)return CB_PIN_ZOMBIE;
+ if(row.kp_eproc.e_ppid!=getpid())return CB_PIN_PARENT;
+ if(row.kp_eproc.e_pgid!=group)return CB_PIN_GROUP;
+ if(row.kp_eproc.e_pcred.p_ruid!=getuid())return CB_PIN_RUID;
+ if(row.kp_eproc.e_ucred.cr_uid!=geteuid())return CB_PIN_EUID;
+ if(row.kp_proc.p_starttime.tv_sec<=0)return CB_PIN_BIRTH_SEC;
+ if(row.kp_proc.p_starttime.tv_usec<0 || row.kp_proc.p_starttime.tv_usec>=1000000)return CB_PIN_BIRTH_USEC;
+ pin->pid=pid;pin->parent=getpid();pin->group=group;pin->ruid=getuid();pin->euid=geteuid();
+ pin->birth=row.kp_proc.p_starttime;pin->enrolled=1;return CB_PIN_OK;
 }
 static inline int cb_owned_group_pin(cb_owned_group_member *pin,pid_t pid,pid_t group){
- memset(pin,0,sizeof(*pin));
- if(pid<=1 || group<=1)return 0;
- siginfo_t info;memset(&info,0,sizeof(info));
- if(waitid(P_PID,(id_t)pid,&info,WEXITED|WNOHANG|WNOWAIT) || info.si_pid)return 0;
- struct kinfo_proc row;
- if(!cb_owned_group_metadata(pid,&row) || row.kp_proc.p_stat==SZOMB ||
-    row.kp_eproc.e_ppid!=getpid() || row.kp_eproc.e_pgid!=group ||
-    row.kp_eproc.e_pcred.p_ruid!=getuid() || row.kp_eproc.e_ucred.cr_uid!=geteuid() ||
-    row.kp_proc.p_starttime.tv_sec<=0 || row.kp_proc.p_starttime.tv_usec<0 ||
-    row.kp_proc.p_starttime.tv_usec>=1000000)return 0;
- pin->pid=pid;pin->parent=getpid();pin->group=group;pin->ruid=getuid();pin->euid=geteuid();
- pin->birth=row.kp_proc.p_starttime;pin->enrolled=1;return 1;
+ return cb_owned_group_pin_detail(pin,pid,group,NULL)==CB_PIN_OK;
 }
 static inline int cb_owned_group_all_zombies_readback(pid_t group,const cb_owned_group_member *pins,int *snapshot_bytes){
  if(snapshot_bytes)*snapshot_bytes=-1;

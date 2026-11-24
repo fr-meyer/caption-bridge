@@ -45,8 +45,27 @@ static cb_capture_diagnostic capture_diagnostic={.wait_status={-1,-1,-1}};
 static const int *capture_current_status=NULL;
 #define CAPTURE_FAILURE(stage,role) cb_capture_failure_note(&capture_diagnostic,CB_CAPTURE_FAIL_##stage,role,mach_continuous_time(),capture_current_status)
 #define CAPTURE_SYSTEM_FAILURE(reason,role) do{int captured_errno=errno;int first_failure=capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE;CAPTURE_FAILURE(reason,role);if(first_failure)capture_diagnostic.errno_class=cb_capture_errno_class(captured_errno);}while(0)
+#define CAPTURE_PIN_FAILURE(reason,role,value) do{int first_failure=capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE;CAPTURE_FAILURE(reason,role);if(first_failure)capture_diagnostic.errno_class=cb_capture_errno_class(value);}while(0)
 #define CAPTURE_EVENT(event) cb_capture_event_note(&capture_diagnostic,(enum cb_capture_event)(CB_CAPTURE_EVENT_##event))
 #define CAPTURE_CLEANUP(error) (capture_diagnostic.cleanup_errors|=CB_CAPTURE_CLEANUP_##error)
+static void capture_pin_failure(enum cb_owned_group_pin_result reason,int role,int system_errno){
+ switch(reason){
+  case CB_PIN_ARGUMENT:CAPTURE_PIN_FAILURE(PIN_ARGUMENT,role,system_errno);break;
+  case CB_PIN_WAIT:CAPTURE_PIN_FAILURE(PIN_WAIT,role,system_errno);break;
+  case CB_PIN_TERMINAL:CAPTURE_PIN_FAILURE(PIN_TERMINAL,role,system_errno);break;
+  case CB_PIN_METADATA_QUERY:CAPTURE_PIN_FAILURE(PIN_METADATA_QUERY,role,system_errno);break;
+  case CB_PIN_METADATA_SIZE:CAPTURE_PIN_FAILURE(PIN_METADATA_SIZE,role,system_errno);break;
+  case CB_PIN_METADATA_PID:CAPTURE_PIN_FAILURE(PIN_METADATA_PID,role,system_errno);break;
+  case CB_PIN_ZOMBIE:CAPTURE_PIN_FAILURE(PIN_ZOMBIE,role,system_errno);break;
+  case CB_PIN_PARENT:CAPTURE_PIN_FAILURE(PIN_PARENT,role,system_errno);break;
+  case CB_PIN_GROUP:CAPTURE_PIN_FAILURE(PIN_GROUP,role,system_errno);break;
+  case CB_PIN_RUID:CAPTURE_PIN_FAILURE(PIN_RUID,role,system_errno);break;
+  case CB_PIN_EUID:CAPTURE_PIN_FAILURE(PIN_EUID,role,system_errno);break;
+  case CB_PIN_BIRTH_SEC:CAPTURE_PIN_FAILURE(PIN_BIRTH_SEC,role,system_errno);break;
+  case CB_PIN_BIRTH_USEC:CAPTURE_PIN_FAILURE(PIN_BIRTH_USEC,role,system_errno);break;
+  default:CAPTURE_FAILURE(GROUP_CUSTODY,role);break;
+ }
+}
 static int capture_failure_packet(int physical,const pid_t *pids,const int *statuses){
  if(capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE)CAPTURE_FAILURE(DIAGNOSTIC_INVALID,0);
  uint64_t elapsed=0,window=0;
@@ -169,13 +188,15 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  owned_identity[role-1]=pid;retained[role-1]=pid;
 #ifdef CB_CAPTURE_CONTROLLER
  if(role==1)capture_group=pid;
- if(getpgid(pid)!=capture_group){CAPTURE_FAILURE(GROUP_CUSTODY,role);goto done;}
+ errno=0;pid_t observed_group=getpgid(pid);int group_errno=observed_group<0?errno:0;
+ if(observed_group!=capture_group){CAPTURE_PIN_FAILURE(GROUP_PGID,role,group_errno);goto done;}
 #endif
  failure_stage="IDENTITY_VERIFY";failure_code=-10002;
  if(!verify(pid,path,role))goto done;
 #ifdef CB_CAPTURE_CONTROLLER
  /* Pin the birth/parent/group only after the existing exact image check. */
- if(!cb_owned_group_pin(&capture_members[role-1],pid,capture_group)){CAPTURE_FAILURE(GROUP_CUSTODY,role);goto done;}
+ int pin_errno=0;enum cb_owned_group_pin_result pin_result=cb_owned_group_pin_detail(&capture_members[role-1],pid,capture_group,&pin_errno);
+ if(pin_result!=CB_PIN_OK){capture_pin_failure(pin_result,role,pin_errno);goto done;}
 #endif
  failure_stage="CAPABILITY";failure_code=0;errno=0;
 #ifdef CB_CAPTURE_CONTROLLER
