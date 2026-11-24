@@ -178,3 +178,81 @@ provider Start. The APIs are prepared analysis entrypoints, NOT an operational
 capture admission or cleanup implementation. Native Chromium/Safari measurements,
 measured budget preflight, output continuity, human listening and actual speed-go
 remain required. No production speed control is shipped and no no-go inferred.
+
+## 2026-11-24 execution package and listener sheet
+
+The source-only software package now has a no-install command in
+[evaluations/speech_timing](../evaluations/speech_timing/README.md). It reuses the
+production player, numeric probe and existing scheduler comparator. Its actual
+wall-clock Node execution still uses a modeled sink. The prepared real-browser
+OfflineAudioContext test measures rendered sample correctness only, never
+realtime route latency. Neither scope is digital loopback or acoustic evidence.
+Do not merge these observations into the frozen 30-pair physical comparison.
+
+### Prepare before the attended window
+
+1. Freeze candidate/source hashes, actual browser versions, source/PCM hashes,
+   packet schedule and the anonymous slot's mode/rate orders. Reuse completed
+   public-quartet findings only within their original scope; do not relabel old
+   aggregates as new per-chunk measurements.
+2. Use original public text in
+   [listener-programme.json](../speed-evaluation/listener-programme.json) for
+   multi-sentence English/Korean material containing pauses, numbers, acronyms
+   and technical terms. Text is ready, but speech is not provisioned by that
+   file. An approved existing local/offline synthesis tool or a qualified public
+   speech asset must supply the actual voice; record engine/version/voice/license
+   and exact decoded mono 24 kHz PCM hash/duration before collection. Do not call
+   a provider, use browser speechSynthesis (which may use a remote voice), or
+   treat generated tones/short greetings as multi-sentence comprehension proof.
+3. Reuse benchmark_pcm.cjs and the existing WSOLA Worker/client, not playbackRate
+   resampling. Interleave the six rate permutations as the manifest declares.
+   Measure real native browser Worker startup/processing and tracked reservations
+   separately. Node processing of a generated signal is not speech quality,
+   browser startup, total process RAM or a human GO.
+4. Physical validation still requires the A1 guarded runner, actual owner-ready
+   window, confirmed route, denied provider network, one capture custodian,
+   watchdog/emergency stop, closure readback and the reconciled original programme
+   ledger. Unknown historical consumption is not available balance. No capture
+   is implied by preparing this package.
+
+### Neutral listener task, after explicit attended readiness
+
+Use opaque labels, not “better”, “fast” or the mode/rate name. Keep the same
+fixture, output route and agreed comfortable level; no level/route changes
+between variants. Allocate B/P/P/B to the first anonymous slot, P/B/B/P to the
+next. For speed, preassign one of all six rate permutations, not always normal
+first. Do not repeat only a disliked or failed variant: retain every attempt,
+reason and original identity. Record actual order and protocol deviations.
+
+Say: “You will hear versions of the same short passage. For each, write the
+protocol identifier, percentage, two compared numbers and acronym you understood.
+Rate clarity and naturalness from 1 to 5, note any gaps/overlap, and say whether
+you would choose it for longer listening. There is no preferred answer. Stop
+whenever you want.” Do not show the answer key until answers are committed.
+Ask separately about pitch, pronunciation, pauses, fatigue and preference;
+do not infer comprehension from preference. Repeat for each supported study
+language and actual target browser. A participant unable to assess a language
+leaves that cell unassessed, not passed.
+
+Include one interruption, cancellation and replay at each candidate rate through
+the existing prototype mechanism only after that fixture/route is authorized.
+Record missing/stale/overlapping output independently of intelligibility.
+Longer listening does not authorize extra physical recording; all acoustic
+instruments/calibration/failures/retries consume the original cumulative cap.
+The 30-pair per-fixture/browser acoustic protocol and its budget feasibility
+remain separate from this smaller listener programme.
+
+### Blank result and decision
+
+Record anonymous slot, frozen candidate/browser/fixture, actual mode/rate order,
+comprehension answers, clarity, pitch naturalness, gaps/overlap, interruption/
+replay result, preference, assistance, verdict and fixed reason. Allowed verdicts:
+GO, NO-GO, INCONCLUSIVE, NOT RUN. An empty cell is unknown, never a pass. Record
+participant effort and actual capture duration separately. A listener verdict
+cannot waive failed software, native performance, budget or capture safeguards.
+
+Speed production integration stays conditional on a real recorded GO. Preserve
+1x/buffered defaults, queue-time rate snapshot, replay provenance, memory
+admission, normal-speed fallback provenance and all cancellation/epoch/cleanup
+contracts described above. Material output changes after integration require
+renewed listening within the agreed programme, not recycled prototype approval.

@@ -1,9 +1,10 @@
 # Offline per-chunk speech timing
 
-This evaluation is not imported by the application. Import and construction do
-not create a device, AudioContext, player, SDK, socket or process. There is no
-launcher or readiness receipt here. The installed Medium configuration and
-buffered/default speech behavior are unchanged.
+These helper modules are not imported by the application. Import and
+construction of the delivery/probe helpers create no device, AudioContext,
+player, SDK, socket or process. They do not launch a production session. The
+explicit standalone observation commands below are software-only. The installed
+Medium configuration and buffered/default speech behavior are unchanged.
 
 `FixtureDelivery` accepts already-prepared public mono float32 PCM at 24 kHz.
 It preserves the isolated cadence-v3 formula: each deadline includes consumer
@@ -50,7 +51,8 @@ The original attended quartet only retained aggregate gaps (160/163 ms) and
 human clarity/no-overlap. It cannot be retroactively given this per-chunk
 evidence. Prior relative-cadence and cadence-v3 reviews remain valid for their
 separate helper versions. The collector and pinned-fixture integration entered
-`dev` through PR86/PR85; the browser attachment at `51c56bb` remains local.
+`dev` through PR86/PR85. The browser attachment is present in this source tree;
+its historical receipts are not requalified by the new software preparation.
 Neither changes the immutable qualified helper.
 
 ## Synthetic contracts
@@ -188,3 +190,64 @@ onset requires a defined acoustic measurement; ACK/scheduling proxies must
 remain labeled. Native Safari listening, comparative terminology usability,
 and physical Windows coverage are separate. None blocks ordinary installed
 Medium use.
+
+## 2026-11-24 provider-free runnable software preparation
+
+The earlier helpers and historical receipts above are retained unchanged. The
+new generated fixture is original code producing a harmonic/pause test signal,
+**not speech**. It is 15,840 samples at 24 kHz (660 ms), delivered in six 100 ms
+chunks and a 60 ms tail. No asset download, provider, synthesizer, microphone or
+physical output is needed.
+
+Run from the repository with existing Python/Node, choosing a new output file in
+an existing private evidence directory:
+
+```sh
+python3 -B evaluations/speech_timing/run_software_observation.py --receipt evidence.json
+```
+
+This executes the unchanged production PCM player and existing ChunkTimingProbe
+in B/P/P/B order against **real monotonic clocks and actual wall-clock timers**.
+The Web Audio sink is modeled in memory. All 63,360 scheduled samples are checked
+against the generated source, and one start/completion, no remaining player
+bytes/clips and no live sink nodes are required for each clip. Scheduled copies
+are cleared after verification. Numeric receipt pins bind the source, existing classifier and
+existing comparator. The source trace also records actual delivery lateness and
+synchronous consumer work. The unchanged classifier validates complete coverage
+and returns evidence flags without assigning a cause. Probe schema clock names
+are inherited from the shared adapter; `probe_runtime=node_vm_with_modeled_audio`
+explicitly identifies these non-browser observations. The comparator's interval-frontier algorithm is reused
+unchanged. Its inter-clip gaps include intentional inter-trial idle, not audible
+continuity. Two observations per mode are a software readiness check, NOT the
+30-pair protocol or a statistical promotion decision.
+
+Reports say `actual software scheduling with modeled in-memory sink`,
+`digital_output_measured=false` and `acceptance=not_evaluated`. Running real code
+with real clocks does not turn a modeled sink into native output. Do not feed
+these results into the acoustic/digital-loopback acceptance summary. No absolute
+performance threshold is imposed on a shared-host timing observation. Errors
+return fixed messages; exclusive receipt creation preserves historical attempts.
+
+The separate `browser_tests/test_playback_offline_render.py` uses the production
+player and real OfflineAudioContext, with realtime AudioContext, media play and
+capture explicitly denied. It checks the rendered nonzero PCM against the source
+(including the 20 ms scheduled offset), quiet margins and completion/cleanup.
+It uses a readiness adapter because an offline context does not resume like a
+realtime context. Packet delivery uses real monotonic wall time, but rendering
+starts only AFTER delivery. Thus first receive-to-submission is a software
+scheduling observation; the rendered timeline is not realtime output onset,
+loopback, device latency or an underrun test.
+
+Use the existing browser suite/runtime, without installing anything implicitly:
+
+```sh
+python -m pytest -q browser_tests/test_playback_offline_render.py --browser chromium
+```
+
+If the environment lacks project Python/Playwright dependencies and a browser
+binary, report this test unrun and use the existing CI browser lane. Linux
+Chromium evidence does not transfer to native Safari. No evaluation code is
+imported by production, and no CI workflow, audio route, default or speed
+control is added. The keyboard
+focus and prepared human protocols are described in docs/terminology.md and
+docs/playback-measurement-protocol.md.

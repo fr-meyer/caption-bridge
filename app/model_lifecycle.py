@@ -7,8 +7,23 @@ from html.parser import HTMLParser
 
 import httpx
 
-_STATUS = {"GA": "active", "Public Preview": "active", "Deprecated": "deprecated",
-           "Retired": "retired"}
+_STATUS = {"GA": "active", "Public Preview": "preview", "Labs": "labs",
+           "Deprecated": "deprecated", "Retired": "retired"}
+
+
+def lifecycle_metadata(status):
+    """Vendor badge and ordinary-policy scope, never account privacy approval.
+
+    Preview/Labs are distinct from GA even while a provider offers inference.
+    Their exclusion cannot be undone by an account capability or consent flag.
+    """
+    return {
+        "vendor_status": next((badge for badge, value in _STATUS.items()
+                               if value == status), "Unknown"),
+        "privacy_status": ("ordinary_optout_zdr_excluded" if status in {"preview", "labs"}
+                           else "account_terms_unverified" if status == "active"
+                           else "unavailable"),
+    }
 
 
 class _Badges(HTMLParser):
@@ -247,5 +262,7 @@ async def refresh_public_lifecycle(evidence, fetch=None):
         async with asyncio.TaskGroup() as group:
             tasks = [group.create_task(read_page(url)) for url in pages]
     statuses = dict(task.result() for task in tasks)
-    return {model: dict(row, status=statuses[row["source"]]) if row.get("refresh_public") else dict(row)
+    return {model: dict(row, status=statuses[row["source"]],
+                        **lifecycle_metadata(statuses[row["source"]]))
+            if row.get("refresh_public") else dict(row)
             for model, row in evidence.items()}

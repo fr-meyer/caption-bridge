@@ -62,6 +62,10 @@ def reconcile(rows, lifecycle, policies):
     for row in rows:
         if not isinstance(row, dict):
             continue
+        # This annotation belongs to reconciliation, never to account input.
+        # Derive it below only from an observed row's explicit alias declaration.
+        row = dict(row)
+        row.pop("catalogue_target", None)
         expanded.append(row)
         aliases = row.get("aliases", [])
         if isinstance(aliases, list):

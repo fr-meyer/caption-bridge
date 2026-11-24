@@ -10,15 +10,16 @@ function slice(start, end) {
     assert(a >= 0 && b > a, "production function boundaries");
     return source.slice(a, b);
 }
-const functions = slice("    function canEditTerms()", "    function parseGlossaryText(");
+const functions = slice("    function trapTermFocus(", "    function parseGlossaryText(");
 function model() {
-    const context = vm.createContext({});
+    const context = vm.createContext({assert});
     vm.runInContext(`
         var document = {activeElement:null};
         class Element {
             constructor(tag='div') {
                 this.tagName=tag.toUpperCase(); this.children=[]; this.parentElement=null;
                 this.isConnected=false; this.disabled=false; this.hidden=false; this.inert=false;
+                this.tabIndex=['BUTTON','INPUT','SELECT','TEXTAREA','A'].includes(this.tagName) ? 0 : -1;
                 this.dataset={}; this.attributes={}; this.listeners={}; this.value=''; this.textContent='';
                 const classes=new Set();
                 this.classList={add(name){classes.add(name);},remove(name){classes.delete(name);},
@@ -36,8 +37,19 @@ function model() {
             addEventListener(name,callback) { this.listeners[name]=callback; }
             closest(selector) {
                 assertSelector(selector);
-                for (var el=this;el;el=el.parentElement) if (el.inert) return el;
+                for (var el=this;el;el=el.parentElement)
+                    if (el.inert || (selector.includes('[hidden]') && el.hidden)) return el;
                 return null;
+            }
+            querySelectorAll(selector) {
+                assert.equal(selector, 'button, input, select, textarea, a[href], [tabindex]');
+                const result=[];
+                const visit=element=>{ for (const child of element.children) {
+                    if (['BUTTON','INPUT','SELECT','TEXTAREA','A'].includes(child.tagName) || child.tabIndex>=0)
+                        result.push(child);
+                    visit(child);
+                }};
+                visit(this);return result;
             }
             getClientRects() {
                 for (var el=this;el;el=el.parentElement) if (el.hidden) return [];
@@ -50,15 +62,21 @@ function model() {
             showModal() { this.open=true; }
             close() { this.open=false; }
         }
-        function assertSelector(selector) { if (selector!=='[inert]') throw Error('unexpected selector'); }
+        function assertSelector(selector) {
+            if (!['[inert]', '[inert], [hidden]'].includes(selector)) throw Error('unexpected selector');
+        }
         document.createElement=tag=>new Element(tag);
         document.body=new Element('body');document.body.attach(true);document.activeElement=document.body;
         var els={};
         ['termDialog','termList','termVersion','termSource','termPreferred','termKind','termCaption',
-         'termError','termSave','termUndo','termClose','captionLog','statusLabel'].forEach(name=>els[name]=new Element());
+         'termError','termSave','termUndo','termClose','captionLog','statusLabel'].forEach(name=>{
+            const tag=['termSave','termUndo','termClose'].includes(name) ? 'button' :
+                name==='termKind' ? 'select' : ['termSource','termPreferred'].includes(name) ? 'input' : 'div';
+            els[name]=new Element(tag);
+        });
         document.body.appendChild(els.termDialog);document.body.appendChild(els.captionLog);
         document.body.appendChild(els.statusLabel);
-        ['termList','termVersion','termSource','termPreferred','termKind','termCaption','termError',
+        ['termList','termVersion','termKind','termSource','termPreferred','termCaption','termError',
          'termSave','termUndo','termClose'].forEach(name=>els.termDialog.appendChild(els[name]));
         els.termError.classList.add('hidden');
         var window={getSelection:()=>({anchorNode:null})};
@@ -72,6 +90,10 @@ function model() {
         function termEvent(type,message) { return {type,message,session_id:'synthetic-session',
             terminology_version:1,terminology_can_undo:true,terminology_changes:1,glossary:activeGlossary}; }
         function opener() { var el=new Element('button');document.body.appendChild(el);el.focus();return el; }
+        function tab(shiftKey=false, extra={}) {
+            var prevented=false;trapTermFocus({key:'Tab',shiftKey,...extra,preventDefault(){prevented=true;}});
+            return prevented;
+        }
     ` + functions, context);
     return context;
 }
@@ -172,5 +194,44 @@ for (const kind of ["validation", "server"]) {
     const css = fs.readFileSync(path.join(root, "app/static/styles.css"), "utf8");
     assert(css.includes("input:focus-visible"), "terminology text fields need an explicit visible-focus outline"); tests++;
 }
+function keyCase(name, setup, condition) {
+    const c=model();run(c, "activeGlossary=null;opener();openTermEditor(null);" + setup);
+    assert.equal(run(c, condition), true, name);tests++;
+}
+keyCase("forward boundary wraps to first current control",
+    "els.termClose.focus();var stopped=tab();",
+    "stopped && document.activeElement===els.termKind && sent.length===0");
+keyCase("reverse boundary wraps to Close",
+    "els.termKind.focus();var stopped=tab(true);",
+    "stopped && document.activeElement===els.termClose");
+keyCase("ordinary forward/backward order stays native-like",
+    "els.termSource.focus();var forward=tab();var preferred=document.activeElement===els.termPreferred;var back=tab(true);",
+    "forward && preferred && back && document.activeElement===els.termSource");
+keyCase("pending save skips disabled actions",
+    "termPending=true;renderTermEditor();els.termClose.focus();var stopped=tab(true);",
+    "stopped && els.termSave.disabled && els.termUndo.disabled && document.activeElement===els.termPreferred");
+keyCase("pending undo wraps without visiting its disabled invoking action",
+    "termPending=true;renderTermEditor();els.termClose.focus();var stopped=tab();",
+    "stopped && document.activeElement===els.termKind && els.termUndo.disabled");
+keyCase("list insertion and pending/re-enabled rebuild recompute the sequence",
+    "activeGlossary={target_language:'en',entries:[{source:'fresh',preferred:'new',kind:'target'}]};renderTermEditor();" +
+    "els.termClose.focus();tab();var row=document.activeElement===els.termList.children[0].children[1];" +
+    "termPending=true;renderTermEditor();els.termClose.focus();tab();var pending=document.activeElement===els.termKind;" +
+    "termPending=false;renderTermEditor();els.termClose.focus();tab();",
+    "row && pending && document.activeElement===els.termList.children[0].children[1]");
+keyCase("hidden inert and negative-tab-index controls are excluded",
+    "els.termSource.hidden=true;els.termPreferred.inert=true;els.termSave.tabIndex=-1;els.termUndo.disabled=true;" +
+    "els.termKind.focus();var stopped=tab();",
+    "stopped && document.activeElement===els.termClose");
+keyCase("programmatic help focus enters current control cycle",
+    "var help=new Element('p');els.termDialog.appendChild(help);help.focus();var stopped=tab();",
+    "stopped && document.activeElement===els.termKind");
+keyCase("closed non-Tab and modified navigation keep their default behavior",
+    "els.termSource.focus();var escape=tab(false,{key:'Escape'});var control=tab(false,{ctrlKey:true});" +
+    "els.termDialog.open=false;var closed=tab();",
+    "!escape && !control && !closed && document.activeElement===els.termSource");
+keyCase("no eligible controls still prevents background default and anchors Close",
+    "els.termDialog.querySelectorAll=()=>[];els.termSource.focus();var stopped=tab();",
+    "stopped && document.activeElement===els.termClose");
 process.stdout.write(JSON.stringify({tests,passed:true,real_browser:false,network:false,audio:false,
     permissions:false,storage:false}) + "\n");

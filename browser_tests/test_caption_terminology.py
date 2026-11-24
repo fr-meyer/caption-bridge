@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 
 import httpx
@@ -42,8 +44,91 @@ def fake_browser_media(page: Page) -> None:
     """)
 
 
+class _ControlFrames(list):
+    """Append-only receive observation with a causal, bounded drain checkpoint."""
+
+    def __init__(self):
+        super().__init__()
+        self.condition = threading.Condition()
+
+    def append(self, message):
+        with self.condition:
+            super().append(message)
+            self.condition.notify_all()
+
+    def snapshot(self):
+        with self.condition:
+            return deepcopy(list(self))
+
+    def wait_for_count(self, count, timeout=5):
+        with self.condition:
+            return self.condition.wait_for(lambda: len(self) >= count, timeout)
+
+
+def _assert_startup_baseline(frames):
+    # handleSnapshot synchronously sends refresh/mute before the later genuine
+    # live caption handler sends seq=1 ACK. Verify the entire initial exchange,
+    # not a whitelist of message types to discard throughout the test.
+    assert frames == [
+        {"type": "refresh_input_devices"},
+        {"type": "tts_mute", "muted": False},
+        {"type": "render_ack", "seq": 1},
+    ], "unexpected initialization exchange before keyboard actions"
+    assert frames[1]["muted"] is False
+    assert type(frames[2]["seq"]) is int
+    return len(frames)
+
+
+def _assert_shortcut_phase(frames, baseline):
+    assert type(baseline) is int
+    assert _assert_startup_baseline(frames[:baseline]) == baseline
+    # This fixture emits just one live caption, already ACKed before the keys.
+    # No later frame is expected: even a repeat of a startup type must fail.
+    assert frames[baseline:] == [], "unexpected frame after keyboard baseline"
+
+
 @pytest.fixture
-def term_server(tmp_path):
+def term_controls():
+    """Record every inbound frame before the fixture dispatch/ignore filter."""
+    return _ControlFrames()
+
+
+@pytest.fixture
+def term_reply_gate():
+    gate = threading.Event()
+    gate.set()
+    return gate
+
+
+@pytest.fixture
+def term_rendered():
+    return threading.Event()
+
+
+def _initial_messages(manager):
+    """Restore the room, then send a genuine numeric-seq production caption.
+
+    Snapshot history deliberately has no render acknowledgement. The real
+    delivery gate emits the live event; only the UI may originate render_ack.
+    """
+    assert not manager.config.tts_enabled and manager._tts_dispatcher is None
+    snapshot = {"type": "session_snapshot", **manager.get_snapshot(), "segments": [],
+                "connection_lifecycle": {"connection_id": "conn-000001", "state": "admitted",
+                                         "reason": "owner_admitted"}}
+    events = []
+    listener = events.append
+    manager.subscribe(listener)
+    try:
+        manager.session.highest_pushed_seq = 0
+        manager._try_deliver()
+    finally:
+        manager.unsubscribe(listener)
+    assert len(events) == 1 and events[0]["type"] == "caption" and events[0]["seq"] == 1
+    return [snapshot, *events]
+
+
+@pytest.fixture
+def term_server(tmp_path, term_controls, term_reply_gate, term_rendered):
     config = AppConfig(_env_file=None, MISTRAL_TTS_ENABLED=False,
                        journal_dir=str(tmp_path / "journal"), reliability_dir=str(tmp_path / "reliability"))
     manager = SessionManager(config)
@@ -69,17 +154,18 @@ def term_server(tmp_path):
     @app.websocket("/ws")
     async def websocket(connection: WebSocket):
         await connection.accept()
-        await connection.send_bytes(orjson.dumps({
-            "type": "session_snapshot", **manager.get_snapshot(),
-            "connection_lifecycle": {
-                "connection_id": "conn-000001", "state": "admitted", "reason": "owner_admitted",
-            },
-        }))
+        for message in _initial_messages(manager):
+            await connection.send_bytes(orjson.dumps(message))
         try:
             while True:
                 message = orjson.loads(await connection.receive_text())
+                term_controls.append(message)
+                if message.get("type") == "render_ack" and message.get("seq") == 1:
+                    term_rendered.set()
                 if message.get("type") not in {"update_terminology", "undo_terminology"}:
                     continue
+                if not await asyncio.to_thread(term_reply_gate.wait, 10):
+                    raise TimeoutError("synthetic terminology reply gate timed out")
                 try:
                     terminology.change(manager, message, undo=message["type"] == "undo_terminology")
                     event = {"type": "terminology_updated", **terminology.state(manager.session)}
@@ -106,13 +192,16 @@ def term_server(tmp_path):
             time.sleep(.02)
     else:
         raise RuntimeError("Synthetic terminology server did not start")
-    yield url, manager
-    server.should_exit = True
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-    with socket.socket() as probe:
-        probe.settimeout(.2)
-        assert probe.connect_ex(("127.0.0.1", port)) != 0, "Synthetic listener must close"
+    try:
+        yield url, manager
+    finally:
+        term_reply_gate.set()
+        server.should_exit = True
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        with socket.socket() as probe:
+            probe.settimeout(.2)
+            assert probe.connect_ex(("127.0.0.1", port)) != 0, "Synthetic listener must close"
 
 
 def open_caption(page: Page, url: str):
@@ -235,3 +324,141 @@ def test_term_focus_updates_read_only_inspection_and_hidden_opener(page: Page, t
     expect(page.locator("#term-dialog")).not_to_be_visible()
     expect(page.locator("#status-label")).to_be_focused()
     assert manager.session.status == "listening"  # Only synthetic UI state was changed.
+
+
+
+def _assert_focus_cycle(page):
+    for key in ["Tab"] * 10 + ["Shift+Tab"] * 10:
+        page.keyboard.press(key)
+        assert page.evaluate("document.querySelector('#term-dialog').contains(document.activeElement)")
+        assert page.evaluate("!document.activeElement.disabled")
+
+
+def test_keyboard_dialog_labels_traversal_pending_save_and_undo(
+    page: Page, term_server, term_reply_gate,
+):
+    """Keyboard/focus software contract only, not human assistive-tech acceptance."""
+    url, manager = term_server
+    page.goto(url, wait_until="domcontentloaded")
+    opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
+    opener.focus()  # Explicit test anchor, not evidence of uncoached discoverability.
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="Correct a term", exact=True)
+    expect(dialog).to_be_visible()
+    expect(page.get_by_label("Source term", exact=True)).to_be_focused()
+    _assert_focus_cycle(page)
+    page.keyboard.press("Shift+Tab")
+    expect(page.get_by_label("Correction type", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    page.keyboard.insert_text("misheard")
+    page.keyboard.press("Tab")
+    expect(page.get_by_label("Correct term or preferred rendering", exact=True)).to_be_focused()
+    page.keyboard.insert_text("corrected")
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Save for future captions", exact=True)).to_be_focused()
+    term_reply_gate.clear()
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-save")).to_be_disabled()
+    expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
+    assert manager.session.terminology_version == 0
+    term_reply_gate.set()
+    expect(page.locator("#term-version")).to_contain_text("v1")
+    expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
+    page.keyboard.press("Shift+Tab")
+    expect(page.get_by_role("button", name="Undo last change", exact=True)).to_be_focused()
+    term_reply_gate.clear()
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-undo")).to_be_disabled()
+    expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
+    assert manager.session.terminology_version == 1
+    term_reply_gate.set()
+    expect(page.locator("#term-version")).to_contain_text("v2")
+    expect(page.locator("#term-close")).to_be_focused()
+    # Retain the original full forward/backward containment assertion after undo.
+    for key in ["Tab"] * 10 + ["Shift+Tab"] * 10:
+        page.keyboard.press(key)
+        assert page.evaluate("document.querySelector('#term-dialog').contains(document.activeElement)")
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    page.keyboard.press("Escape")
+    expect(dialog).not_to_be_visible()
+    expect(opener).to_be_focused()
+    assert manager.session.status == "listening"
+
+
+def test_keyboard_editor_does_not_trigger_session_shortcuts(
+    page: Page, term_server, term_controls, term_rendered,
+):
+    url, manager = term_server
+    # Capture synchronous sends as well: a server/event-loop race cannot hide an
+    # accidental Stop behind the fixture's intentionally inert backend.
+    page.add_init_script("""(() => {
+        window.termShortcutFrames = [];
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function(payload) {
+            window.termShortcutFrames.push(JSON.parse(payload));
+            return send.call(this, payload);
+        };
+    })();""")
+    page.goto(url, wait_until="domcontentloaded")
+    opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    page.wait_for_function("window.termShortcutFrames.some(message => message.type === 'render_ack' && message.seq === 1)")
+    assert term_rendered.wait(timeout=5), "real render_ack must reach the WebSocket fixture"
+    expect(page.locator("#status-label")).to_contain_text("Listening")
+    # Both FIFO observations must contain exactly the admitted snapshot sends
+    # and the actual renderer ACK before any keyboard action. The ACK is the
+    # causal milestone, not a sleep, quiet-period guess or synthetic barrier.
+    sent_baseline = _assert_startup_baseline(page.evaluate("window.termShortcutFrames"))
+    received_baseline = _assert_startup_baseline(term_controls.snapshot())
+    assert sent_baseline == received_baseline
+    opener.focus()
+    page.keyboard.press("Enter")
+    # type()/press() dispatch real keydown/keyup. Explicit Space exercises the
+    # global Stop binding; letter/font bindings are checked on modal controls.
+    page.keyboard.type("protocol")
+    page.keyboard.press("Space")
+    page.keyboard.type("term")
+    expect(page.locator("#term-source")).to_have_value("protocol term")
+    page.keyboard.press("Tab")
+    page.keyboard.type("clear")
+    page.keyboard.press("Space")
+    page.keyboard.type("rendering")
+    expect(page.locator("#term-preferred")).to_have_value("clear rendering")
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Shift+Tab")
+    expect(page.locator("#term-kind")).to_be_focused()
+    for key in ["f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    page.locator("#term-close").focus()
+    for key in ["f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    # Anchor focus on modal help content, as assistive navigation can. This is
+    # deliberately not an input/button: removing the modal-level guard must
+    # expose Space -> Stop even when the ordinary text-field guard remains.
+    page.locator("#term-help").evaluate("element => { element.tabIndex = -1; element.focus(); }")
+    expect(page.locator("#term-help")).to_be_focused()
+    for key in ["Space", "f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    assert page.evaluate("document.fullscreenElement === null")
+    page.keyboard.press("Escape")
+    expect(opener).to_be_focused()
+    expect(page.locator("#status-label")).to_contain_text("Listening")
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    # Drain every observed send into the server recorder before checking either
+    # observer; an ignored Stop cannot hide in the server/event-loop race.
+    sent = page.evaluate("window.termShortcutFrames")
+    assert term_controls.wait_for_count(len(sent)), "all observed sends must reach the fixture"
+    received = term_controls.snapshot()
+    # Keep genuine seq=1 ACK liveness before AND after the keyboard phase,
+    # retain the whole histories, and freeze each original baseline index.
+    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in sent)
+    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in received)
+    _assert_shortcut_phase(sent, sent_baseline)
+    _assert_shortcut_phase(received, received_baseline)
+    assert sent == received
+    assert manager.session.status == "listening"
+    assert manager.session.terminology_version == 0
+    assert manager.session.glossary is None

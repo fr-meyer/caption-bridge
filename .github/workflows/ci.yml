@@ -472,6 +472,100 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Proposed opt-in candidate addition. Preserve the qualified noaudio suite.
+      # No physical-mode argument, device, grant or attended programme ledger.
+      - name: Build opt-in capture candidate (never execute input)
+        id: capture_provenance_build
+        if: runner.os == 'macOS'
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          umask 077
+          uv run --no-sync --python 3.13 python scripts/ci_capture_noinput_provenance.py prepare \
+            --private-dir "$RUNNER_TEMP/caption-capture-provenance-private" \
+            --checkout "${{ github.sha }}" \
+            --event-head "${{ github.event.pull_request.head.sha || github.sha }}"
+          build_status=0
+          sh native/caption_helper/build_capture.sh "$RUNNER_TEMP/caption-capture-noinput" > "$RUNNER_TEMP/caption-capture-provenance-private/build.stdout" 2> "$RUNNER_TEMP/caption-capture-provenance-private/build.stderr" || build_status=$?
+          snapshot_status=0
+          uv run --no-sync --python 3.13 python scripts/ci_capture_noinput_provenance.py snapshot \
+            --private-dir "$RUNNER_TEMP/caption-capture-provenance-private" \
+            --build-root "$RUNNER_TEMP/caption-capture-noinput" \
+            --returncode "$build_status" || snapshot_status=$?
+          if [ "$build_status" -ne 0 ]; then exit "$build_status"; fi
+          exit "$snapshot_status"
+      - name: Observe hosted Darwin owned-group signals (noinput)
+        id: native_group_signal_probe
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.capture_provenance_build.outcome == 'success' }}
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          umask 077
+          sh native/caption_helper/probe_group_signal.sh "$RUNNER_TEMP/native-group-signal-observation" "$RUNNER_TEMP/caption-capture-noinput/CaptionHelper.app/Contents/MacOS" > "$RUNNER_TEMP/native-group-signal-probe-private.stdout" 2> "$RUNNER_TEMP/native-group-signal-probe-private.stderr"
+      - name: Qualify opt-in capture candidate with no input
+        id: capture_provenance_qualifier
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.capture_provenance_build.outcome == 'success' }}
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          umask 077
+          qualifier_status=0
+          uv run --no-sync --python 3.13 python -m native.caption_helper.qualify_capture_noinput "$RUNNER_TEMP/caption-capture-noinput/CaptionHelper.app/Contents/MacOS" > "$RUNNER_TEMP/caption-capture-provenance-private/qualifier.stdout" 2> "$RUNNER_TEMP/caption-capture-provenance-private/qualifier.stderr" || qualifier_status=$?
+          receipt_status=0
+          uv run --no-sync --python 3.13 python scripts/ci_capture_noinput_provenance.py record \
+            --private-dir "$RUNNER_TEMP/caption-capture-provenance-private" \
+            --checkout "${{ github.sha }}" \
+            --event-head "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --returncode "$qualifier_status" || receipt_status=$?
+          if [ "$qualifier_status" -ne 0 ]; then exit "$qualifier_status"; fi
+          exit "$receipt_status"
+      - name: Finalize content-free capture noinput provenance
+        id: capture_provenance_finalize
+        if: always() && runner.os == 'macOS'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          capture_retention_status=0
+          uv run --no-sync --python 3.13 python scripts/ci_capture_noinput_provenance.py finalize \
+            --private-dir "$RUNNER_TEMP/caption-capture-provenance-private" \
+            --build-root "$RUNNER_TEMP/caption-capture-noinput" \
+            --public-dir "$RUNNER_TEMP/caption-capture-provenance-public" \
+            --github-output "$GITHUB_OUTPUT" \
+            --checkout "${{ github.sha }}" \
+            --event-head "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --build-outcome "${{ steps.capture_provenance_build.outcome || 'unknown' }}" \
+            --qualifier-outcome "${{ steps.capture_provenance_qualifier.outcome || 'unknown' }}" || capture_retention_status=$?
+          probe_retention_status=0
+          if [ "${{ steps.capture_provenance_build.outcome }}" = success ]; then
+            uv run --no-sync --python 3.13 python scripts/ci_group_signal_observer.py collect \
+              --private-dir "$RUNNER_TEMP/native-group-signal-observation" \
+              --build-root "$RUNNER_TEMP/caption-capture-noinput" \
+              --public-dir "$RUNNER_TEMP/native-group-signal-observation-public" \
+              --github-output "$GITHUB_OUTPUT" \
+              --checkout "${{ github.sha }}" \
+              --probe-outcome "${{ steps.native_group_signal_probe.outcome || 'unknown' }}" || probe_retention_status=$?
+          fi
+          if [ "$capture_retention_status" -ne 0 ]; then exit "$capture_retention_status"; fi
+          exit "$probe_retention_status"
+      - name: Retain only validated capture noinput provenance
+        if: always() && runner.os == 'macOS' && steps.capture_provenance_finalize.outputs.safe_artifact == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: caption-capture-noinput-provenance
+          path: |
+            ${{ runner.temp }}/caption-capture-provenance-public/capture-noinput-provenance.json
+            ${{ runner.temp }}/caption-capture-provenance-public/capture-noinput-qualifier.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain only validated owned-group signal observation
+        if: always() && runner.os == 'macOS' && steps.capture_provenance_finalize.outputs.safe_probe_artifact == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: caption-native-group-signal-observation
+          path: ${{ runner.temp }}/native-group-signal-observation-public/group-signal-observation.json
+          retention-days: 7
+          if-no-files-found: error
+
   dependency-audit:
     name: Locked dependency audit (9 marker resolutions)
     runs-on: ubuntu-latest

@@ -1603,6 +1603,7 @@
         els.sessionTerms.addEventListener("click", function () { openTermEditor(null); });
         els.termClose.addEventListener("click", function () { els.termDialog.close(); });
         els.termDialog.addEventListener("close", restoreTermFocus);
+        els.termDialog.addEventListener("keydown", trapTermFocus);
         els.termForm.addEventListener("submit", function (event) {
             event.preventDefault();
             saveCaptionTerm();
@@ -1811,7 +1812,7 @@
 
     function setupKeyboard() {
         document.addEventListener("keydown", function (e) {
-            if (els.termDialog.open) return; // native dialog traps focus and handles Escape
+            if (els.termDialog.open) return; // dialog owns Tab; native cancel handles Escape
             const modal = els.discardModal.classList.contains("visible")
                 ? els.discardModal
                 : (els.exportFailureModal.classList.contains("visible") ? els.exportFailureModal : null);
@@ -1878,6 +1879,25 @@
     }
 
     // ===== Terminology preferences =====
+
+    function trapTermFocus(event) {
+        if (!els.termDialog.open || event.key !== "Tab" ||
+            event.altKey || event.ctrlKey || event.metaKey) return;
+        // Native dialog Tab can visit browser chrome at its boundary. Recompute
+        // the enabled, visible sequence on every key: pending writes and list
+        // rebuilds change which controls are available while the dialog is open.
+        const controls = Array.from(els.termDialog.querySelectorAll(
+            "button, input, select, textarea, a[href], [tabindex]"
+        )).filter(function (element) {
+            return !element.disabled && element.tabIndex >= 0 &&
+                !element.closest("[inert], [hidden]") && element.getClientRects().length;
+        });
+        const current = controls.indexOf(document.activeElement);
+        const next = current < 0 ? (event.shiftKey ? controls.length - 1 : 0) :
+            (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+        event.preventDefault();
+        (controls[next] || els.termClose).focus();
+    }
 
     function canEditTerms() {
         return canOpenTerms() && terminologyState.changes < 100;
@@ -1960,6 +1980,9 @@
         if (!els.termList) return;
         const focused = els.termDialog.open && els.termList.contains(document.activeElement)
             ? document.activeElement : null;
+        const focusedAction = els.termDialog.open &&
+            (document.activeElement === els.termSave || document.activeElement === els.termUndo)
+            ? document.activeElement : null;
         let nextFocus = null;
         els.termVersion.textContent = "Session terms v" + terminologyState.version +
             " · " + currentTerms().length + "/20 pairs" +
@@ -2008,6 +2031,10 @@
             row.appendChild(remove);
             els.termList.appendChild(row);
         });
+        // Move focus before disabling a keyboard-activated pending action. Native
+        // buttons otherwise blur to the document body and lose the dialog position.
+        if (focusedAction && (!canEditTerms() ||
+            (focusedAction === els.termUndo && !terminologyState.canUndo))) els.termClose.focus();
         els.termSave.disabled = !canEditTerms();
         els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
         if (focused) (nextFocus || els.termClose).focus();

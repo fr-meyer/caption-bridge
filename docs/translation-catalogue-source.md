@@ -2,6 +2,14 @@
 
 Source implementation completed in the exclusive E worktree. Not a deployment or live qualification claim. No authenticated account request, inference, capture, device operation or provider spend occurred. Only unauthenticated official public model cards were read.
 
+## 2026-11-24 source refresh
+
+The completed [provider evidence refresh](provider-evidence-20261124.md) supplies
+fresh first-party Markdown cards, official GLM rolling aliases, current preview
+privacy exclusions, and a criterion-6 evidence matrix. This is source research,
+not account-wide eligibility or live acceptance. Existing catalogue delivery
+remains delivered; narrower lifecycle/privacy/alias gaps are backend handoffs.
+
 ## Catalogue and lifecycle
 
 Account enumeration is metadata-only and separate from inference. Reconciliation checks completion_chat, lifecycle, account deprecation timestamps, duplicate/conflicting cards, verified aliases and explicit execution policies. Unknown compatible families remain visible and disabled with a concrete reason. Embedding/OCR/transcription/TTS-only endpoints are excluded from translation choices. Account metadata cannot independently prove lifecycle or live quality.
@@ -12,17 +20,17 @@ Verified official cards (https://docs.mistral.ai/models/):
 | --- | --- | --- | --- |
 | mistral-large-4-0 | mistral-large-4, mistral-large-4-0, mistral-large-latest | GA | 4096 |
 | mistral-small-4-0-26-03 | mistral-small-2603, mistral-small-latest | GA | 200/default, 1024/high |
-| mistral-medium-3-5-26-04 | mistral-medium-3-5, mistral-medium-latest | Deprecated | unavailable |
-| zai-glm-5-3 | zai-glm-5-3 | GA | 4096/default or high |
+| mistral-medium-3-5-26-04 | mistral-medium-3-5, mistral-medium-3, mistral-medium-latest | Deprecated | unavailable |
+| zai-glm-5-3 | zai-glm-5-3, zai-glm-5, zai-glm-latest | GA | 4096/default or high |
 | zai-glm-5-3-flash | zai-glm-5-3-flash | GA | 4096/default |
-| deepseek-v4-flash-1017 | deepseek-v4-1-flash-1017 | GA | 4096/default |
+| deepseek-v4-flash-1017 | deepseek-v4-1-flash-1017 | Public Preview | 4096/default |
 | codestral-25-08 | codestral-2508, codestral-latest | GA | 200/default |
 | ministral-3-3b-25-12 | ministral-3b-2512, ministral-3b-latest | GA | 200/default |
 | ministral-3-8b-25-12 | ministral-8b-2512, ministral-8b-latest | GA | 200/default |
 | ministral-3-14b-25-12 | ministral-14b-2512, ministral-14b-latest | GA | 200/default |
 | voxtral-small-25-07 | voxtral-small-2507, voxtral-small-latest | GA | 200/default |
 
-Public refresh of all 11 cards passed on 2026-11-17. Medium's precise current model-card Deprecated badge supersedes older capability guides mentioning its alias. Startup remains Medium, visibly unavailable; no silent family switch. Historical Large 3 and GLM 5.2 remain deprecated, not revived through replacement cards. Magistral Small 1.2 card was also checked and is deprecated. Other returned account chat families without verified evidence remain explicitly unknown/unavailable, not silently eligible. The catalogue does not claim these 11 cards exhaust future account inventories.
+Public refresh of all 11 cards passed on 2026-11-17; the table's current names/lifecycle were refreshed from complete official Markdown cards on 2026-11-24. The output-cap column remains an application source policy, not vendor capacity. GLM now has a documented rolling alias; Flash and DeepSeek do not. DeepSeek's Public Preview excludes ordinary training opt-out/ZDR, so a general active lifecycle status cannot establish privacy eligibility. These new declarations need account-target/policy corroboration and coordinator/backend changes before expanded runtime eligibility. Medium's precise current model-card Deprecated badge supersedes older capability guides mentioning its alias. Startup remains Medium, visibly unavailable; no silent family switch. Historical Large 3 and GLM 5.2 remain deprecated, not revived through replacement cards. Magistral Small 1.2 card was also checked and is deprecated. Other returned account chat families without verified evidence remain explicitly unknown/unavailable, not silently eligible. The catalogue does not claim these 11 cards exhaust future account inventories.
 
 Explicit refresh runs bounded public and account metadata in parallel with sibling cancellation: public requests have four-second per-request limits, three concurrent requests, 3MB response ceiling, eight-second aggregate deadline; complete refresh ten seconds. Success/failure cooldown is five minutes. Disconnect cancels ownership. Public evidence has a seven-day freshness ceiling (initial packet expires 2026-11-24); successful public refresh renews it. Refresh emits a catalogue-only event, not a player-resetting session snapshot.
 

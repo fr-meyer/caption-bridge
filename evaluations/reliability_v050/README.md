@@ -8,7 +8,16 @@ python -B evaluations/reliability_v050/run_offline.py --receipt-dir /tmp/caption
 
 The runner denies native sounddevice APIs, outbound connections and unapproved child processes, disables saved dotenv loading, and permits only Git, Node and an optional PowerShell AST parser. It runs finite generated callback/SDK/PCM state checks, focused existing reliability/reconnect/Windows contracts, one existing full-pipeline case and the existing 250-segment injected-provider soak. Normal application budgets, defaults, routes and session lifetime are unchanged. On POSIX, the runner has a 15-second CPU-time limit; each Node/SDK loop also has a short explicit test timeout.
 
-Reports identify actual skips and expected failures. The Windows lock-byte initialization test requires Windows; the PowerShell AST test requires an installed `pwsh`. The Mac/POSIX lifecycle's missing Windows Python path is an explicit expected-failure. No browser run, physical input/output, provider request, GCP operation or GitHub/hosted CI run is performed.
+Reports identify actual skips and expected failures, with reasons in the `-ra` summary.
+Receipts now bind HEAD, clean/dirty state, actual software-input bytes (including
+untracked candidate source), and unchanged-source verification across the run.
+A byte change fails the result even when pytest succeeds. Source symlinks are
+hashed as links without reading their targets. The added lifecycle regressions
+exercise fake process/state ownership and idempotence, not native process control.
+See [the current-candidate packet](../../docs/windows-current-candidate-acceptance.md)
+for native software execution, sanitized receipt retention and recovery.
+
+The Windows lock-byte initialization test requires Windows; the PowerShell AST test requires an installed `pwsh`. The Mac/POSIX lifecycle's missing Windows Python path is an explicit expected-failure. No browser run, physical input/output, provider request, GCP operation or GitHub/hosted CI run is performed.
 
 The source files and synthetic fixture counts are bounded. Do not interpret 64 callback cycles, 24 fake SDK connections or 512 fake PCM clips as elapsed two-hour endurance. The source module paths, versions, generated PCM hash and content-free cleanup counters are recorded separately from the physical Windows plan in `docs/windows-0.5.0-offline-and-physical-plan.md`.
 
@@ -48,8 +57,8 @@ source/fixture evidence. Native Windows execution is now recorded by
 [run40164259241](https://github.com/fr-meyer/caption-bridge/actions/runs/40164259241)
 at `a912ea2f73630dba9c0205e6a33988f3add8c164`: four headless/report tests,
 47 offline tests, one known expected failure, and owned fake-app/browser
-teardown passed. The aggregate changes only documentation from that source;
-its own Ubuntu CI remains pending. See the [source binding and coverage limits](../../docs/release-delta-after-v0.5.0-2026-10-25.md).
+teardown passed. That historical aggregate changed only documentation;
+this statement does not bind later 0.6.0 harness/test changes to that native pass. See the [source binding and coverage limits](../../docs/release-delta-after-v0.5.0-2026-10-25.md).
 `owned_fallback_ipc_pairs` is a content-free count, not hardware acceptance.
 The three fresh-process headless import regressions use the same guard so
 missing-device/backend behavior can also be tested on Windows.

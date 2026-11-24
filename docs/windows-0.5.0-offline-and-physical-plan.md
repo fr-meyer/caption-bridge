@@ -1,4 +1,28 @@
-# Windows 0.5.0 preparation and remaining physical checks
+# Windows software preparation and remaining physical checks
+
+## Current-source reconciliation (0.6.0)
+
+The retained v050 filenames describe the existing harness, not the current
+package version. Current source is version 0.6.0; its harness checks that version
+and the exact caller-supplied commit. Historical results below stay historical,
+not proof for a newer head. Use the [current-candidate packet](windows-current-candidate-acceptance.md)
+for software execution, evidence retention and the separate attended criteria.
+
+The current runner adds bounded lifecycle state/ownership regressions, explicit
+skip/xfail reasons, and a digest of actual application, script, test and locked
+dependency bytes. It records clean/dirty source and rejects source mutation
+during the suite. Unit-test lifecycle fakes still do not establish native Windows
+process ownership. The Windows harness rechecks zero native/provider activity
+after the idle DOM gate, then emits its final status only after owned cleanup.
+Optional `-ReceiptPath` retains a content-free JSON summary outside the checkout;
+raw server/browser output and the temporary profile are still removed.
+
+No new native Windows result is claimed by this source update. A connected
+machine is not automatically an executable test environment: verify the executor
+can run the exact bounded command and that existing dependencies are available.
+An access refusal is an access gate, not proof the hardware is unavailable.
+
+## Historical preparation
 
 The original preparation used released main
 `39ecd3e7e6eafd367877eff3b0a0ef878a17b127`, package 0.5.0. The October 25
@@ -26,12 +50,14 @@ PowerShell 7.6.7. Native streams and provider calls stayed disabled.
 Teardown recorded zero listeners and no temporary browser profile.
 
 Its application tree `64dcfa6b3aaccb8b0a0ba97301fbcb15bd3e7d37` equals
-published PR89 `fbb213f4db2247e0d0192ca3802463524e73991c`. The aggregate
-adds documentation-only updates to that tested harness source; it changes no
-application, dependency, workflow, harness executable or test bytes.
+published PR89 `fbb213f4db2247e0d0192ca3802463524e73991c`. That historical aggregate
+added documentation-only updates to the tested harness source; it changed no
+application, dependency, workflow, harness executable or test bytes. This byte
+equivalence statement does not apply to later 0.6.0 source updates.
 This is not aggregate-head Ubuntu CI, native audio acceptance or ordinary
-Windows controller support. Both approved Windows attempts are consumed;
-there is no authorization for another attempt or an automatic retry loop.
+Windows controller support. Those two historical one-shot attempts are consumed; neither receipt itself
+authorizes another attempt or an automatic retry loop. Later current-candidate
+CI authority is described below.
 
 ## What the offline evidence covers
 
@@ -89,7 +115,7 @@ hearing, live provider recovery or the unsupported ordinary Windows controller.
 
 ## Separate Windows lifecycle limitation
 
-`app.lifecycle` is the Mac/POSIX lifecycle controller: its Python path uses `.venv/bin/python`, process identity uses `ps` plus POSIX parsing, and Stop uses the POSIX signal path. The fake `msvcrt` contention tests do not prove native Windows process ownership. One real Windows lock-byte test is skipped on Mac; a new strict expected-failure records the missing `Scripts/python.exe` contract. The new software gate owns its fixture process directly and does not imply that this controller supports Windows.
+`app.lifecycle` is the Mac/POSIX lifecycle controller: its Python path uses `.venv/bin/python`, process identity uses `ps` plus POSIX parsing, and Stop uses the POSIX signal path. The fake `msvcrt` contention tests do not prove native Windows process ownership. One real Windows lock-byte test is skipped off Windows; a strict expected-failure records the missing `Scripts/python.exe` contract. The new software gate owns its fixture process directly and does not imply that this controller supports Windows.
 
 A separate scoped lifecycle change would need platform-specific Python resolution, immutable Windows process creation identity and argv parsing, owned-only termination, stale-PID protection and Windows command-lock/process tests. Do not repair ownership by ignoring the start token or using a broad process kill. No lifecycle rewrite is included here.
 

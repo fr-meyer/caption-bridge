@@ -1,5 +1,12 @@
 # Provider design verdicts, checked 2026-11-16
 
+> **2026-11-24 superseding public-source refresh:** see
+> [completed provider evidence](provider-evidence-20261124.md). Complete official
+> card Markdown now documents the v3 rolling alias and GLM rolling aliases,
+> restores legacy/Medium prices, and corrects DeepSeek to Public Preview. Preview
+> training/ZDR exclusions persist; exact account/retention/concurrency leaves
+> remain open. Older observations below are historical, not current negatives.
+
 Research only for #90/#13. No audio, private captions, credentials, paid probe,
 new provider client or default switch. Medium/Mistral translation, existing ASR,
 normal buffered speech and explicit fallback policy remain unchanged.

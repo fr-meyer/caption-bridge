@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -15,11 +16,12 @@ from starlette.staticfiles import StaticFiles
 from app import ws
 from app.asr_diagnostics import safe_asr_reason
 from app.audio import AudioCapture
-from app.audio_devices import native_input_devices
+from app.audio_devices import GrantedNativeInputDevices, native_input_devices
 from app.boundary import BoundaryDetector
 from app.config import settings
 from app.identity import runtime_identity
 from app.journal import SessionJournal, run_recovery
+from app.native_capture import NativeAudioCapture, NativeCaptureFactory
 from app.profiles import resolve_profile
 from app.readiness import ReadinessPoller
 from app.reconnect import ReconnectionManager
@@ -48,12 +50,15 @@ reconnect_manager = ReconnectionManager(session_manager=manager, config=settings
 ws.catalogue_loader = dispatcher._provider.list_models
 ws.manager = manager
 ws.poller = poller
+ws.native_capture_selected = lambda: _native_capture_factory is not None
 
 # ---------------------------------------------------------------------------
 # Pipeline state (one session at a time)
 # ---------------------------------------------------------------------------
 
-_audio: AudioCapture | None = None
+_audio: AudioCapture | NativeAudioCapture | None = None
+_native_capture_factory: NativeCaptureFactory | None = None
+_legacy_input_devices = None
 _detector: BoundaryDetector | None = None
 _transcribe_task: asyncio.Task | None = None
 _stream_ready: asyncio.Event = asyncio.Event()
@@ -65,6 +70,48 @@ _has_verified_session: bool = False
 _initial_establishment_task: asyncio.Task | None = None
 _input_finishing: bool = False
 _stream_completed: bool = False
+
+
+def configure_native_capture(factory: NativeCaptureFactory | None) -> None:
+    """Independent coordinator only, never called from UI/config/startup.
+
+    Selection does not admit anything. Missing/consumed evidence fails closed at
+    Start and NEVER falls back to sounddevice. Existing default transport remains
+    unchanged until an explicitly authorized coordinator installs this factory.
+    """
+    global _native_capture_factory, _legacy_input_devices
+    if _audio is not None or (_transcribe_task is not None and not _transcribe_task.done()):
+        raise RuntimeError("capture_transport_change_requires_idle")
+    if factory is not None and type(factory) is not NativeCaptureFactory:
+        raise TypeError("exact_native_capture_factory_required")
+    if factory is not None:
+        if _native_capture_factory is None:
+            _legacy_input_devices = manager.input_devices
+        manager.input_devices = GrantedNativeInputDevices(factory)
+    elif _native_capture_factory is not None:
+        manager.input_devices = _legacy_input_devices
+        _legacy_input_devices = None
+    _native_capture_factory = factory
+
+
+def native_capture_status() -> dict:
+    """Content-free source status, not an attestation or physical acceptance."""
+    return {"selected": _native_capture_factory is not None,
+            "status": "requires_independent_proof_and_one_use_runtime_grant"
+                      if _native_capture_factory is not None else "disabled",
+            "physical_acceptance": False, "automatic_admission": False}
+
+
+def _make_capture(generation, loop, kwargs):
+    if _native_capture_factory is not None:
+        if not tts_dispatcher._muted:
+            raise RuntimeError("native_pcm_requires_muted_output")
+        return _native_capture_factory.create(
+            session_id=manager.session.id, generation=generation, loop=loop,
+            is_current=lambda: generation == _pipeline_generation and tts_dispatcher._muted, **kwargs)
+    return AudioCapture(
+        device=manager.input_devices.capture_device() if manager.input_devices is not None else None,
+        loop=loop, **kwargs)
 
 
 def _on_session_created(generation: int | None = None) -> None:
@@ -141,6 +188,19 @@ async def _wait_for_stream_established() -> None:
         raise _stream_error
 
 
+async def _transcribe_capture(audio, generation, **kwargs):
+    if isinstance(audio, NativeAudioCapture):
+        try:
+            await audio.wait_started()
+        except Exception:
+            if generation == _pipeline_generation and not _pipeline_stopping:
+                kwargs["on_error"](AsrStreamError("microphone_error"))
+            return
+        if not _is_current_pipeline(generation):
+            return
+    await transcribe(**kwargs)
+
+
 async def _start_pipeline() -> None:
     """Spin up mic capture → transcription → boundary detection."""
     global _audio, _detector, _transcribe_task, _stream_error, _pipeline_stopping  # noqa: PLW0603
@@ -161,10 +221,8 @@ async def _start_pipeline() -> None:
     _stream_error = None
 
     loop = asyncio.get_running_loop()
-    audio = AudioCapture(
-        device=manager.input_devices.capture_device() if manager.input_devices is not None else None,
+    audio_kwargs = dict(
         sample_rate=settings.audio_sample_rate,
-        loop=loop,
         max_queue_chunks=settings.audio_queue_max_chunks,
         metrics_callback=manager.record_audio_queue,
         onset_callback=lambda chunk: manager.observe_speech_pcm(chunk) if _is_current_pipeline(generation) else None,
@@ -183,11 +241,16 @@ async def _start_pipeline() -> None:
         min_segment_tokens=settings.fragment_min_tokens,
     )
 
+    audio = None
     try:
+        audio = _make_capture(generation, loop, audio_kwargs)
         audio.start()
-    except Exception:
+    except BaseException:
         try:
-            audio.stop()
+            if audio is not None:
+                audio.stop()
+                if isinstance(audio, NativeAudioCapture):
+                    await audio.aclose()
         except Exception:
             pass
         manager.set_capture_active(False)
@@ -206,8 +269,8 @@ async def _start_pipeline() -> None:
 
     attempt_id = reconnect_manager.current_attempt_id
     _transcribe_task = asyncio.ensure_future(
-        transcribe(
-            audio_stream=_audio.stream(),
+        _transcribe_capture(
+            _audio, generation, audio_stream=_audio.stream(),
             config=settings,
             on_delta=lambda text: detector.push(text) if _accepts_stream_data(generation) else None,
             on_final_text=lambda text: detector.push(text) if _accepts_stream_data(generation) else None,
@@ -232,6 +295,8 @@ async def _teardown_pipeline() -> None:
 
     if _audio is not None:
         _audio.stop()
+        if isinstance(_audio, NativeAudioCapture):
+            await _audio.aclose()
         manager.set_capture_active(False)
 
     if _transcribe_task is not None:
@@ -289,6 +354,8 @@ async def _finish_input() -> None:
     reconnect_manager.cancel()
     manager.set_asr_state("draining")
     _audio.finish_input()
+    if isinstance(_audio, NativeAudioCapture):
+        await _audio.wait_input_finished()
     manager.set_capture_active(False)
 
 
@@ -451,6 +518,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "TTS is enabled but MISTRAL_TTS_VOICE_ID is not set; default VOICE_MAP values may be invalid for your account. "
             "Set MISTRAL_TTS_VOICE_ID to a saved voice UUID to avoid TTS failures."
         )
+    translation_diagnostics = dispatcher.diagnostics_snapshot()
+    logger.info("Translation timeout policy: %s",
+                json.dumps(translation_diagnostics["timeouts"], sort_keys=True))
+    if translation_diagnostics["drain_shorter_than_max_request"]:
+        logger.warning("Translation drain deadline is shorter than a configured request deadline; "
+                       "Stop may cancel admitted captions before their request deadline")
     logger.info("CaptionBridge started on %s:%s", settings.host, settings.port)
     yield
     poller.stop()

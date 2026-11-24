@@ -15,7 +15,7 @@ from app.translation_catalogue import ModelCatalogue
 @pytest.mark.parametrize("model,limit", [
     ("mistral-medium-latest", 200), ("mistral-small-latest", 200),
     ("mistral-large-latest", 4096), ("zai-glm-5-3", 4096),
-    ("zai-glm-5-3-flash", 4096), ("deepseek-v4-1-flash-1017", 4096),
+    ("zai-glm-5-3-flash", 4096), ("zai-glm-5", 4096), ("zai-glm-latest", 4096),
     ("codestral-latest", 200), ("ministral-3b-latest", 200),
     ("ministral-8b-latest", 200), ("ministral-14b-latest", 200),
     ("voxtral-small-latest", 200),
