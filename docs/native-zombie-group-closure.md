@@ -81,9 +81,9 @@ ECHILD readback replaces numeric kill(pid,0): no recycled PID is queried/signale
 as though it were the old identity. This checks lost OWN custody, not global PID
 absence. The noaudio-only controller branch is unchanged.
 
-## Diagnostic extension, deliberately not production admission
+## Original e9/20d diagnostic extension, not production admission
 
-The hosted fork-only probe now compiles the SAME production predicate and records
+The e9/20d fork-based probe compiled the SAME production predicate and records
 its real answer for the existing live/mixed/all-zombie cases. It must reject live
 and mixed, and close the exact three-zombie group. Within the all-zombie case a
 real fourth owned child joins the private group, but is omitted from the expected
@@ -103,6 +103,15 @@ with exact schema-2 keys and four source/binary hash records (C, shell, shared
 header, binary). Capture provenance includes the new header in its exact inventory
 (now 34 files). Raw runtime/signature/absolute-path data remain private. Existing
 workflow invocation and single-file upload routes need no changes.
+
+## Subsequent actual enrollment failure
+
+The 20d hosted run passed all five real fork-based shared-predicate evaluations,
+but production stopped at first-child GROUP_CUSTODY before reaching normal
+closure. See [Suspended-spawn custody enrollment](native-group-custody-enrollment.md)
+for the exact ambiguity, unchanged guards, enum-only pinpoint instrumentation and
+new suspended-exec probe source. This does not convert the production HOLD into
+success or establish the root cause from old fork evidence.
 
 ## Required next-head checks
 

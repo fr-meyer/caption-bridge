@@ -19,10 +19,11 @@ OUT=$(CDPATH= cd -- "$1" && pwd)
  printf 'diagnostic_only=true\ncapture=false\nnative_admission=false\n'
 } > "$OUT/runtime.txt" 2>&1
 /usr/bin/clang -std=c11 -Wall -Wextra -Werror -Os \
- "$ROOT/native/caption_helper/probe_group_signal.c" -lproc -o "$OUT/GroupSignalProbe" \
+ "$ROOT/native/caption_helper/probe_group_signal.c" -lproc -framework Security -framework CoreFoundation -o "$OUT/GroupSignalProbe" \
  > "$OUT/build.stdout" 2> "$OUT/build.stderr"
 # Same runtime signing option and no entitlements as the source CaptureController.
-# Forked members share this signature; this is not the production exec topology.
+# Owned members exec this exact signed image suspended. Live/disk identity and
+# direct custody are pinned before SIGCONT; no capture-role image is executed.
 /usr/bin/codesign --sign - --identifier local.captionbridge.group-signal-probe \
  --options runtime --timestamp=none "$OUT/GroupSignalProbe" \
  > "$OUT/sign.stdout" 2> "$OUT/sign.stderr"

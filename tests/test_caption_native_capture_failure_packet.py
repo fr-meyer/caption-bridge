@@ -154,10 +154,14 @@ def test_fixed_c_stage_registry_matches_parser_and_critical_branches_are_recorde
     native = set(re.findall(r'X\(([A-Z_]+)\)', header.split("enum cb_capture_failure_stage")[0]))
     assert native == _FAILURE_STAGES
     source = (ROOT / "native/caption_helper/assembly.c").read_text()
-    reasons = set(re.findall(r'CAPTURE_(?:FAILURE|SYSTEM_FAILURE|REJECT)\(([A-Z_]+),', source))
+    reasons = set(re.findall(r'CAPTURE_(?:FAILURE|SYSTEM_FAILURE|REJECT|PIN_FAILURE)\(([A-Z_]+),', source))
     assert reasons <= native
     assert {"ACTIVE_DEADLINE", "STOP_READER", "OBSERVE_OWNED", "CHILD_STATUS",
-            "READINESS_DEADLINE", "GROUP_SIGNAL", "REAP_WAIT", "IDENTITY_VISIBLE"} <= reasons
+            "READINESS_DEADLINE", "GROUP_SIGNAL", "REAP_WAIT", "IDENTITY_QUERY",
+            "GROUP_PGID", "PIN_WAIT", "PIN_METADATA_QUERY", "PIN_METADATA_SIZE",
+            "PIN_METADATA_PID", "PIN_PARENT", "PIN_GROUP", "PIN_RUID", "PIN_EUID",
+            "PIN_BIRTH_SEC", "PIN_BIRTH_USEC", "PIN_TERMINAL", "PIN_ZOMBIE",
+            "PIN_ARGUMENT"} <= reasons
     active = source.split("while(mach_continuous_time()<reap_end){", 1)[1].split("#else", 1)[0]
     assert all("CAPTURE_FAILURE(" in line or "CAPTURE_SYSTEM_FAILURE(" in line
                for line in active.splitlines() if "result=70" in line)
@@ -166,6 +170,58 @@ def test_fixed_c_stage_registry_matches_parser_and_critical_branches_are_recorde
     assert "end+2000000000ULL*tb.denom/tb.numer" in source
     assert "end+=" not in source and "deadline+=" not in source
 
+
+
+def test_postreap_identity_checks_are_own_custody_not_global_pid_absence():
+    source = (ROOT / "native/caption_helper/assembly.c").read_text()
+    start = source.index("/* Successful waitpid readback")
+    branch = source[start:source.index("CAPTURE_EVENT(IDENTITIES_CHECKED)", start)]
+    assert "waitid(P_PID,(id_t)identities[i],&gone,WEXITED|WNOHANG|WNOWAIT)" in branch
+    for guard in ("retained[i]>0", "saved_status[i]<0", "observed==0", "errno!=ECHILD"):
+        assert guard in branch
+    assert "CAPTURE_SYSTEM_FAILURE(IDENTITY_QUERY,i+1)" in branch
+    assert "CAPTURE_CLEANUP(IDENTITY);result=70" in branch
+    assert "kill(" not in branch and "getpgid(" not in branch
+    # Keep historical failures readable without demanding global PID absence.
+    assert "IDENTITY_VISIBLE" in _FAILURE_STAGES
+
+
+def test_owned_pin_reasons_preserve_guards_and_suspended_probe_order():
+    header = (ROOT / "native/caption_helper/owned_group_closure.h").read_text()
+    assembly = (ROOT / "native/caption_helper/assembly.c").read_text()
+    probe = (ROOT / "native/caption_helper/probe_group_signal.c").read_text()
+    start = header.index("cb_owned_group_pin_detail(")
+    pin = header[start:header.index("static inline int cb_owned_group_pin(", start)]
+    assert "memset(&info,0,sizeof(info))" in pin
+    assert "WEXITED|WNOHANG|WNOWAIT" in pin
+    for guard in ("if(info.si_pid)", "p_stat==SZOMB", "e_ppid!=getpid()",
+                  "e_pgid!=group", "p_ruid!=getuid()", "cr_uid!=geteuid()",
+                  "tv_sec<=0", "tv_usec<0", "tv_usec>=1000000"):
+        assert guard in pin
+    for reason in ("ARGUMENT", "WAIT", "TERMINAL", "METADATA_QUERY", "METADATA_SIZE",
+                   "METADATA_PID", "ZOMBIE", "PARENT", "GROUP", "RUID", "EUID",
+                   "BIRTH_SEC", "BIRTH_USEC"):
+        assert "CB_PIN_" + reason in header
+        assert ("case CB_PIN_" + reason + ":CAPTURE_PIN_FAILURE(PIN_" + reason
+                + ",role,system_errno);break;") in assembly
+    assert "*system_errno=errno" in header
+    assert pin.count("return CB_PIN_OK;") == 1
+    assert pin.index("pin->birth=") < pin.index("pin->enrolled=1;return CB_PIN_OK")
+    spawn = assembly[assembly.index("static pid_t spawn_role("):assembly.index("static int observe_owned(")]
+    for flag in ("POSIX_SPAWN_CLOEXEC_DEFAULT", "POSIX_SPAWN_START_SUSPENDED", "POSIX_SPAWN_SETPGROUP"):
+        assert flag in spawn and flag in probe
+    assert "posix_spawnattr_setpgroup(&attr," in spawn and "posix_spawnattr_setpgroup(&attr," in probe
+    assert 'char *env[]={NULL}' in probe and '"--owned-member"' in probe
+    assert "posix_spawn(&pid,executable,&actions,&attr,argv,env)" in probe
+    assert "stopped.kp_proc.p_stat!=SSTOP" in probe
+    verify = probe.index("!verify_member(pid)")
+    enrolled = probe.index("cb_owned_group_pin_detail(pin,pid,*group,&pin_errno)")
+    continued = probe.index("kill(pid,SIGCONT)")
+    ready = probe.index("wait_ready(ready_pipe[0],&r,end)", continued)
+    assert verify < enrolled < continued < ready
+    assert "fork()" not in probe
+    assert "pin_result!=CB_PIN_OK" in assembly
+    assert "capture_pin_failure(pin_result,role,pin_errno);goto done" in assembly
 
 def test_state_setup_rejection_precedes_cleanup_without_changing_noaudio_projection():
     source = (ROOT / "native/caption_helper/assembly.c").read_text()

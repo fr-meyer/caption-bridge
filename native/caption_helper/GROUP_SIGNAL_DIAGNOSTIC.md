@@ -7,6 +7,13 @@ Native budgets, status validators, noaudio protocol and success schema 1 remain
 unchanged. No devices, capture API, provider or network calls occur in the probe.
 Do not run it on the owner's Mac.
 
+Current follow-through: [Suspended-spawn custody enrollment](../../docs/native-group-custody-enrollment.md).
+The actual 20d run passed the five fork/live predicate evaluations but production
+failed an ambiguous first-child enrollment guard. The revised probe replaces
+fork-only members with its exact signed self-image via production-style suspended
+posix_spawn, live/disk verification and pinning before SIGCONT. This is source work
+pending new hosted execution; old fork observations are not relabeled as exec proof.
+
 The actual e9aa766 hosted run 45456295172 on Darwin 25.6.0/build 25G332
 subsequently demonstrated both successful live/mixed signals and all-zombie EPERM
 with normal reaping and zero forced cleanup. That is actual historical mechanism
@@ -101,7 +108,8 @@ images, records their signatures/entitlements/hashes and never executes them.
 
 ## Probe safety and interpretation
 
-probe_group_signal.c uses real fork/setpgid/waitid(WNOWAIT)/kill/sysctl/waitpid
+probe_group_signal.c now uses real suspended posix_spawn/self-exec, pre-SIGCONT
+verified pinning, waitid(WNOWAIT)/kill/sysctl/waitpid
 and the SAME owned_group_closure.h predicate as production, including libproc
 complete PID enumeration and enrolled birth/ownership checks.
 Three fresh, direct owned children are observed in each of these cases:
