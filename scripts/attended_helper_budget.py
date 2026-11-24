@@ -4,7 +4,9 @@ One coordinator holds one locked Journal for ALL devices, failures and retries.
 Ephemeral capabilities/key remain in parent memory, never JSON/argv/files. Parent
 creates inherited socketpair endpoints; reconnects and claimed PIDs are not proof.
 Receipts prove custody only, not helper identity, kernel safety or human readiness.
-Native verification/launch remains unavailable. Crash loses key and retains hold.
+Default/native-noaudio paths never admit capture. An explicit exact-reviewed
+opt-in adapter lives in attended_native_admission/attended_native_launch.
+Crash loses key and retains hold.
 """
 from __future__ import annotations
 
@@ -152,9 +154,26 @@ class Custody:
         to native ticks. Native independently rejects late/trailing/wrong replies.
         A fake challenge can waste budget, never confer capture authority.
         """
+        return self._prepare_budget(capability, channel, receipt, challenge_event,
+                                    'noaudio_budget_ready', b'CBNA0001')
+
+    def prepare_capture_budget(self, capability, channel, receipt, challenge_event, *, no_input):
+        """Distinct wire protocol, NOT capture admission.
+
+        Physical callers use the exact-reviewed admitted launcher. No-input callers
+        use a disposable software ledger. Neither path releases outstanding HOLD.
+        """
+        if type(no_input) is not bool:
+            raise ValueError('capture_mode')
+        return self._prepare_budget(
+            capability, channel, receipt, challenge_event,
+            'capture_noinput_budget_ready' if no_input else 'capture_budget_ready',
+            b'CBNC0001' if no_input else b'CBCA0001')
+
+    def _prepare_budget(self, capability, channel, receipt, challenge_event, event, magic):
         if (type(challenge_event) is not dict
                 or set(challenge_event) != {'event', 'challenge', 'ceiling_ms'}
-                or challenge_event['event'] != 'noaudio_budget_ready'
+                or challenge_event['event'] != event
                 or type(challenge_event['ceiling_ms']) is not int
                 or challenge_event['ceiling_ms'] != 2000
                 or not hex_id(challenge_event['challenge'], 64)):
@@ -165,7 +184,7 @@ class Custody:
             with self._lock:
                 self._launches.pop(capability, None)
             raise RuntimeError('noaudio_budget_limit_hold')
-        wire = (b'CBNA0001' + bytes.fromhex(challenge_event['challenge'])
+        wire = (magic + bytes.fromhex(challenge_event['challenge'])
                 + (reservation.reserved_ms * 1_000_000).to_bytes(8, 'big')
                 + reservation.sequence.to_bytes(8, 'big'))
         return reservation, wire
@@ -203,14 +222,16 @@ class Custody:
                 entry[1].close()
 
 
-def admit_helper(*_args, **_kwargs):
-    """Future adapter injection boundary, deliberately no callable verifier yet.
+def admit_helper(*_args, admission=None, permit=None, custody=None, **_kwargs):
+    """Opt-in reviewed adapter; absence of any prerequisite remains fail-closed.
 
-    Require OS peer/code identity on inherited IPC, fresh session/challenge-bound
-    helper+guardian proofs, kernel deny, single-input/deadline/cleanup verification
-    and explicit human readiness. MACs/hashes/booleans do not substitute for these.
-    Reserve before input; independently verify terminal state before journal close.
-    Unknown terminal state retains permanent debit AND admission hold. Route change
-    must mute first. No auto admission, provider access, output or native launch.
+    Authenticity comes from the independent coordinator's trusted review/grant
+    pins, not hashes/booleans presented by a child/UI. This only consumes an opaque
+    registered permit; the launcher still binds fresh challenge/debit and native
+    suspended image identity. Neither this result nor native JSON clears HOLD.
+    No auto-admission, provider calls, output route or default application changes.
     """
-    raise RuntimeError('helper_identity_kernel_readiness_verifier_unavailable')
+    from scripts.attended_native_admission import CaptureAdmission
+    if _args or _kwargs or type(admission) is not CaptureAdmission or permit is None or custody is None:
+        raise RuntimeError('helper_identity_kernel_readiness_verifier_unavailable')
+    return admission.consume(permit, custody)

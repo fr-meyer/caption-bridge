@@ -13,7 +13,14 @@
 #include <stdlib.h>
 #include <limits.h>
 #include "input_state.h"
+#ifdef CB_CAPTURE_CONTROLLER
+#include "capture_pins.h"
+#include "capture_protocol.h"
+static cb_capture_options capture_options;
+static int capture_stop_fd=-1;
+#else
 #include "role_pins.h"
+#endif
 #include "budget.h"
 #include <errno.h>
 #include <poll.h>
@@ -63,6 +70,9 @@ static void close_owned(int *fd){if(*fd>=0){if(close(*fd)<0)closure_error=1;*fd=
 static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int role,uint64_t deadline) {
  failure_stage="SPAWN_SETUP";failure_role=role;failure_code=0;errno=0;
  int ready_pipe[2]={-1,-1};int ready_writer=-1;
+#ifdef CB_CAPTURE_CONTROLLER
+ int stop_copy=-1;
+#endif
  int cap[2]={-1,-1},mapped[5]={-1,-1,-1,-1,-1};pid_t pid=-1;
  posix_spawn_file_actions_t f;posix_spawnattr_t attr;int fi=0,ai=0,ok=0;
  if(pipe(cap) || pipe(ready_pipe))goto done;
@@ -75,6 +85,12 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  if(posix_spawnattr_init(&attr))goto done;ai=1;
  for(int i=0;i<5;i++)if(mapped[i]>=0 && posix_spawn_file_actions_adddup2(&f,mapped[i],3+i))goto done;
  if(posix_spawn_file_actions_adddup2(&f,ready_writer,8))goto done;
+#ifdef CB_CAPTURE_CONTROLLER
+ if(role==3){
+  stop_copy=fcntl(capture_stop_fd,F_DUPFD_CLOEXEC,40);if(stop_copy<0)goto done;
+  if(posix_spawn_file_actions_adddup2(&f,stop_copy,9))goto done;
+ }
+#endif
  if(posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT))goto done;
  char *args[]={(char *)path,NULL};char *environment[]={NULL};
  if((failure_code=posix_spawn(&pid,path,&f,&attr,args,environment))) {pid=-1;goto done;}
@@ -88,6 +104,9 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
   ssize_t n=write(cap[1],(const char *)&capability+offset,sizeof(capability)-offset);
   if(n<0 && errno==EINTR)continue;if(n<=0)goto done;offset+=(size_t)n;
  }
+#ifdef CB_CAPTURE_CONTROLLER
+ if(role==3 && write(cap[1],&capture_options,sizeof(capture_options))!=(ssize_t)sizeof(capture_options))goto done;
+#endif
  if(kill(pid,SIGCONT)<0)goto done;
  close_owned(&ready_pipe[1]);
  failure_stage="READY_ACK";failure_code=0;errno=0;
@@ -107,27 +126,58 @@ done:
  if(ai && posix_spawnattr_destroy(&attr))closure_error=1;
  for(int i=0;i<2;i++){close_owned(&cap[i]);close_owned(&ready_pipe[i]);}
  for(int i=0;i<5;i++)close_owned(&mapped[i]);close_owned(&ready_writer);
+#ifdef CB_CAPTURE_CONTROLLER
+ close_owned(&stop_copy);
+#endif
  if(!ok && pid>0){if(!reap_owned(pid,role))closure_error=1;else retained[role-1]=-1;pid=-1;}
  return pid;
 }
 int main(int argc,char **argv) {
- /* Explicit noaudio mode only. Capture admission is compile-time false. */
+#ifdef CB_CAPTURE_CONTROLLER
+ int physical=argc==5 && !strcmp(argv[1],"--capture-budget");
+ int noinput=argc==4 && !strcmp(argv[1],"--capture-noinput-budget");
+ if(!physical && !noinput)return 64;
+ char *after=NULL;errno=0;
+ unsigned long device=physical?strtoul(argv[3],&after,10):0;
+ if(physical && (errno || !after || *after || !device || device>UINT32_MAX))return 64;
+ const char *stoparg=argv[physical?4:3];after=NULL;errno=0;
+ long stop_fd=strtol(stoparg,&after,10);
+ if(errno || !after || *after || stop_fd<3 || stop_fd>INT_MAX)return 64;
+ struct stat stop_stat;int stop_flags=fcntl((int)stop_fd,F_GETFL);
+ if(stop_flags<0 || (stop_flags&O_ACCMODE)!=O_RDONLY || fstat((int)stop_fd,&stop_stat) || !S_ISFIFO(stop_stat.st_mode))return 64;
+ if(fcntl((int)stop_fd,F_SETFD,FD_CLOEXEC)<0)return 70;
+ int32_t launch_parent=getppid();capture_stop_fd=(int)stop_fd;
+ capture_options=(cb_capture_options){CB_CAPTURE_MAGIC,physical?CB_CAPTURE_ARMED:0,(uint32_t)device,0};
+ int budget_mode=1;const char *mode="deadline";
+#else
+ /* Existing qualification-only binary cannot capture. */
  if((argc!=3 && argc!=4) || (strcmp(argv[1],"--noaudio") && strcmp(argv[1],"--noaudio-budget")))return 64;
  int budget_mode=!strcmp(argv[1],"--noaudio-budget");
  if(budget_mode && argc!=3)return 64;
  const char *mode=argc==4?argv[3]:"deadline";
  if(strcmp(mode,"deadline") && strcmp(mode,"guardian_a") && strcmp(mode,"guardian_b") && strcmp(mode,"helper") && strcmp(mode,"suspend") && strcmp(mode,"parent_death"))return 64;
+#endif
  char root[PATH_MAX];if(!realpath(argv[2],root))return 64;
  if(signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 70;
  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer)return 70;
  uint64_t end;
- if(budget_mode){if(!cb_budget_deadline(&end,tb))return 70;}
+ if(budget_mode){
+#ifdef CB_CAPTURE_CONTROLLER
+  if(!cb_budget_deadline_for(&end,tb,physical?"capture_budget_ready":"capture_noinput_budget_ready",physical?"CBCA0001":"CBNC0001"))return 70;
+#else
+  if(!cb_budget_deadline(&end,tb))return 70;
+#endif
+ }
  else end=mach_continuous_time()+2000000000ULL*tb.denom/tb.numer;
  int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};int statuses[3]={-1,-1,-1};pid_t identities[3]={-1,-1,-1};
  for(int i=0;i<3;i++){
   if(pipe(lifelines[i]))goto cleanup;
   for(int j=0;j<2;j++)if(fcntl(lifelines[i][j],F_SETFD,FD_CLOEXEC)<0)goto cleanup;
  }
+#ifdef CB_CAPTURE_CONTROLLER
+ struct pollfd before_spawn={.fd=(int)stop_fd,.events=POLLIN|POLLHUP|POLLERR};
+ if(getppid()!=launch_parent || mach_continuous_time()>=end || poll(&before_spawn,1,0)!=0)goto cleanup;
+#endif
  if(!cb_reserve(&state,end) || !cb_synthetic_input(&state) || !cb_route_change(&state))goto cleanup;
  for(int i=0;i<2;i++){
   char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/Guardian%c",root,'A'+i)>=(int)sizeof(path))goto cleanup;
@@ -138,6 +188,9 @@ int main(int argc,char **argv) {
  /* Fixed synthetic helper consumes three read capabilities via a dedicated role image. */
  char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/SyntheticHelper",root)>=(int)sizeof(path))goto cleanup;
  /* Helper receives role configuration; no actual input opening exists in any image. */
+#ifdef CB_CAPTURE_CONTROLLER
+ if(snprintf(path,sizeof(path),"%s/CaptureHelper",root)>=(int)sizeof(path))goto cleanup;
+#endif
  children[2]=spawn_role(path,lifelines[0][0],lifelines[0][0],lifelines[1][0],lifelines[2][0],3,end);
  if(children[2]<0)goto cleanup;
  for(int i=0;i<3;i++)identities[i]=children[i];
@@ -150,6 +203,18 @@ int main(int argc,char **argv) {
  if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;if(usleep(2100000)<0 && errno!=EINTR)result=70;if(kill(children[2],SIGCONT)<0)result=70;}
  uint64_t reap_end=end+2000000000ULL*tb.denom/tb.numer;
  while(mach_continuous_time()<reap_end) {
+#ifdef CB_CAPTURE_CONTROLLER
+  /* Independent of capture/UI callbacks. Only direct, unreaped children are
+   * signalled. A forced reap remains HOLD, never closure acceptance. */
+  struct pollfd emergency={.fd=(int)stop_fd,.events=POLLIN|POLLHUP|POLLERR};
+  int changed=poll(&emergency,1,0);
+  if(changed<0 || emergency.revents || getppid()!=launch_parent ||
+     mach_continuous_time()>=end || children[0]<0 || children[1]<0) {
+   close_owned(&lifelines[0][1]);
+   if(children[2]>0){if(!reap_owned(children[2],3))closure_error=1;else {children[2]=-1;retained[2]=-1;}}
+   if(changed<0 || emergency.revents || getppid()!=launch_parent)result=70;
+  }
+#endif
   int remaining=0;
   for(int i=0;i<3;i++)if(children[i]>0){
    pid_t done=waitpid(children[i],&statuses[i],WNOHANG);
@@ -179,6 +244,10 @@ cleanup:
  if(closure_error)result=70;
  for(int i=0;i<3;i++)if(identities[i]>0){errno=0;if(kill(identities[i],0)==0 || errno!=ESRCH)result=70;}
  if(result && !strcmp(failure_stage,"NONE")){failure_stage="OWNED_REAP";failure_code=-10006;}
+#ifdef CB_CAPTURE_CONTROLLER
+ if(printf("{\"schema\":1,\"capture_exit\":%d,\"capture\":%s,\"terminal\":\"HOLD\",\"pids\":[%d,%d,%d],\"wait_status\":[%d,%d,%d],\"cleanup_killed\":[%d,%d,%d]}\n",result,physical?"true":"false",identities[0],identities[1],identities[2],statuses[0],statuses[1],statuses[2],cleanup_killed[0],cleanup_killed[1],cleanup_killed[2])<0)return 70;
+#else
  if(printf("{\"schema\":6,\"noaudio_exit\":%d,\"terminal\":\"HOLD\",\"pids\":[%d,%d,%d],\"wait_status\":[%d,%d,%d],\"failure_stage\":\"%s\",\"failure_role\":%d,\"failure_code\":%d,\"cleanup_killed\":[%d,%d,%d]}\n",result,identities[0],identities[1],identities[2],statuses[0],statuses[1],statuses[2],failure_stage,failure_role,failure_code,cleanup_killed[0],cleanup_killed[1],cleanup_killed[2])<0)return 70;
+#endif
  return result;
 }

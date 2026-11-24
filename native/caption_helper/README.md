@@ -1,5 +1,10 @@
 # Native sandbox qualification helper
 
+The existing default build and qualification paths below remain no-audio-only.
+The separate opt-in capture **source candidate** is documented in
+[CAPTURE_INTEGRATION.md](CAPTURE_INTEGRATION.md); it is not physical qualification,
+application integration, or runtime admission.
+
 Qualification-only macOS APPL bundle with no capture implementation, microphone entitlement,
 provider client, playback or admission switch. Every unknown invocation including --capture exits 64.
 Build using existing tools: sh scripts/build_caption_helper.sh /absolute/new/output
