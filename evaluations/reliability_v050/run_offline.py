@@ -193,12 +193,73 @@ def software_source_identity(root=ROOT):
     }
 
 
+NODE_DIAGNOSTIC_PREFIX = "SHORTCUT_NODE_TRANSPORT "
+NODE_STAGES = (
+    "ENTRY", "STDIN_READ_BEGIN", "STDIN_READ_END", "JSON_PARSED",
+    "ORIGINAL_BEGIN", "ORIGINAL_DONE", "MUTANT_BEGIN", "MUTANT_DONE",
+    "FORWARD_BEGIN", "FORWARD_DONE", "RESULT_WRITE_BEGIN", "RESULT_ENQUEUED", "EXIT_EVENT",
+)
+
+
+def _public_node_diagnostic(line: str) -> dict | None:
+    """Fixed-shape privacy filter only; neither a gate nor a simulated Node outcome."""
+    if not line.startswith(NODE_DIAGNOSTIC_PREFIX) or len(line) > 2048:
+        return None
+    try:
+        value = json.loads(line[len(NODE_DIAGNOSTIC_PREFIX):])
+    except (ValueError, TypeError, RecursionError):
+        return None
+    keys = {"schema", "kind", "model_only", "cause", "outcome", "returncode",
+            "timeout_seconds", "elapsed_ms", "input_bytes", "input_sha256",
+            "stdin_bytes_observed", "stages_observed", "last_stage", "stage_protocol_valid",
+            "stderr_scan_truncated", "node_error_class", "node_error_code"}
+    if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
+            or value["schema"] != 1 or value["kind"] != "NODE_SHORTCUT_TRANSPORT_DIAGNOSTIC"
+            or value["model_only"] is not True or value["cause"] != "UNKNOWN"
+            or type(value["timeout_seconds"]) is not int or value["timeout_seconds"] != 5):
+        return None
+    if (type(value["outcome"]) is not str
+            or value["outcome"] not in {"EXITED", "NONZERO", "TIMEOUT", "SPAWN_ERROR"}
+            or (value["returncode"] is not None and type(value["returncode"]) is not int)):
+        return None
+    if value["returncode"] is not None and not -(2**31) <= value["returncode"] <= 2**32 - 1:
+        return None
+    if ((value["outcome"] == "EXITED" and value["returncode"] != 0)
+            or (value["outcome"] == "NONZERO" and value["returncode"] in (None, 0))
+            or (value["outcome"] in {"TIMEOUT", "SPAWN_ERROR"} and value["returncode"] is not None)):
+        return None
+    for key in ("elapsed_ms", "input_bytes", "stdin_bytes_observed"):
+        number = value[key]
+        if number is None and key == "stdin_bytes_observed":
+            continue
+        if type(number) is not int or not 0 <= number <= 2**63 - 1:
+            return None
+    if (type(value["input_sha256"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", value["input_sha256"]) is None):
+        return None
+    stages = value["stages_observed"]
+    if (type(stages) is not list or len(stages) > 13
+            or any(type(stage) is not int or not 0 <= stage < len(NODE_STAGES) for stage in stages)
+            or value["last_stage"] != (NODE_STAGES[stages[-1]] if stages else "NO_STAGE_OBSERVED")):
+        return None
+    if any(type(value[key]) is not bool for key in ("stage_protocol_valid", "stderr_scan_truncated")):
+        return None
+    for key, allowed in (("node_error_class", {"AssertionError", "SyntaxError", "TypeError",
+                                             "ReferenceError", "RangeError", "Error"}),
+                         ("node_error_code", {"ERR_ASSERTION", "EPIPE", "EBADF", "EINVAL",
+                                            "EAGAIN", "ENOENT", "EACCES"})):
+        if value[key] is not None and (type(value[key]) is not str or value[key] not in allowed):
+            return None
+    return value
+
+
 class Outcome:
     def __init__(self):
         self.passed = 0
         self.failed = 0
         self.skipped = []
         self.xfailed = []
+        self.node_diagnostic: dict | None = None
 
     def pytest_runtest_logreport(self, report):
         if report.when == "call" and report.passed:
@@ -207,6 +268,21 @@ class Outcome:
             self.failed += 1
         if report.skipped:
             (self.xfailed if hasattr(report, "wasxfail") else self.skipped).append(report.nodeid)
+        if (report.when == "call" and getattr(report, "nodeid", "") ==
+                "evaluations/reliability_v050/test_keyboard_shortcut_contract.py::"
+                "ShortcutContractTests::test_capture_forwards_and_modal_guard_mutation_is_detectable"):
+            # Otherwise pytest hides successful-call stdout. Keep only this
+            # bounded public diagnostic, even on green; never raw Node logs.
+            for line in getattr(report, "capstdout", "")[:8192].splitlines():
+                value = _public_node_diagnostic(line)
+                if value is not None:
+                    self.node_diagnostic = value
+                    break
+
+    def pytest_terminal_summary(self, terminalreporter):
+        if self.node_diagnostic is not None:
+            terminalreporter.write_line(NODE_DIAGNOSTIC_PREFIX + json.dumps(
+                self.node_diagnostic, sort_keys=True, separators=(",", ":")))
 
 
 def _main():
