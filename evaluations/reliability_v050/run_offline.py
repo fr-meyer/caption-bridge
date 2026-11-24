@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import ntpath
 import os
 import platform
+import posixpath
 import stat
 import subprocess
 import sys
@@ -101,6 +103,38 @@ def _source_file_value(root, name):
     return b"file\0" + path.read_bytes()
 
 
+def permitted_subprocess_argv(argv, *, windows=None):
+    """Keep the existing names; only Windows filename casing is equivalent.
+
+    Do not consult PATHEXT, strip suffixes, parse a shell command or resolve a
+    new executable. Full paths retain the existing basename-only policy.
+    """
+    if not isinstance(argv, (list, tuple)) or not argv:
+        return False
+    try:
+        program = os.fspath(argv[0])
+    except TypeError:
+        return False
+    if not isinstance(program, str) or not program:
+        return False
+    windows = os.name == "nt" if windows is None else windows
+    name = ntpath.basename(program) if windows else posixpath.basename(program)
+    # Approved names are ASCII; Unicode folds must not introduce new names.
+    name = name.lower() if windows and name.isascii() else name
+    return name in {"git", "node", "node.exe", "pwsh"}
+
+
+def guarded_subprocess_popen(original, argv, *args, **kwargs):
+    # Popen positional order after argv: bufsize, executable, stdin, stdout,
+    # stderr, preexec_fn, close_fds, shell. No override may bypass argv checks.
+    shell_override = kwargs.get("shell") or (len(args) > 7 and args[7])
+    executable_override = (kwargs.get("executable") is not None
+                           or (len(args) > 1 and args[1] is not None))
+    if shell_override or executable_override or not permitted_subprocess_argv(argv):
+        return forbidden("unapproved_process")(argv)
+    return original(argv, *args, **kwargs)
+
+
 def install_guards():
     for key in list(os.environ):
         if key.upper().startswith(("MISTRAL_", "OPENAI_")) or "PROXY" in key.upper():
@@ -129,10 +163,7 @@ def install_guards():
     original_popen = subprocess.Popen
 
     def popen(argv, *args, **kwargs):
-        allowed = {"git", "node", "node.exe", "pwsh"}
-        if not isinstance(argv, (list, tuple)) or Path(str(argv[0])).name not in allowed:
-            return forbidden("unapproved_process")(argv)
-        return original_popen(argv, *args, **kwargs)
+        return guarded_subprocess_popen(original_popen, argv, *args, **kwargs)
 
     subprocess.Popen = popen
     return network_guard
@@ -194,6 +225,7 @@ def _main():
     selected = [
         "evaluations/reliability_v050/test_source_identity.py",
         "evaluations/reliability_v050/test_source_path_safety.py",
+        "evaluations/reliability_v050/test_subprocess_guard.py",
         "evaluations/reliability_v050/test_keyboard_shortcut_contract.py",
         "tests/unit/test_software_network_guard.py",
         "evaluations/reliability_v050/test_endurance.py",

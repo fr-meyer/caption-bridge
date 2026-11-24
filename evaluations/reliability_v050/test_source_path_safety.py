@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 DEFAULT_MODULE = Path(__file__).with_name("run_offline.py")
 MODULE_PATH = Path(os.environ.get("CAPTION_SOURCE_READER_MODULE", str(DEFAULT_MODULE)))
@@ -98,12 +98,23 @@ class SourcePathTests(unittest.TestCase):
             leaf.symlink_to(target)
         except OSError:
             self.skipTest("Temporary symlink unavailable; no privilege change requested")
+        link_text_before = os.fsencode(os.readlink(leaf))
         with patch.object(Path, "read_bytes", side_effect=AssertionError("payload_read")), \
-             patch.object(os, "fdopen", side_effect=AssertionError("payload_read")):
+             patch.object(os, "fdopen", side_effect=AssertionError("payload_read")), \
+             patch.object(Path, "resolve", side_effect=AssertionError("target_resolution")):
             before = READER.source_file_value(self.root, "app/link.py")
             target.write_bytes(b"changed outside test bytes")
             self.assertEqual(READER.source_file_value(self.root, "app/link.py"), before)
-        self.assertEqual(before, b"symlink\0" + os.fsencode(str(target)))
+        self.assertEqual(os.fsencode(os.readlink(leaf)), link_text_before)
+        self.assertEqual(before, b"symlink\0" + link_text_before)
+
+    def test_windows_extended_link_text_is_preserved_without_normalizing_or_reads(self):
+        # Model Windows readlink spelling only; this is not native qualification.
+        link_text = r"\\?\C:\public-fixture\outside\example.py"
+        with patch.object(os, "supports_dir_fd", set()), \
+             patch.object(os, "readlink", return_value=link_text) as readlink:
+            self.test_leaf_symlink_binds_only_link_text_not_target_bytes()
+        self.assertEqual(readlink.call_args_list, [call(self.root / "app/link.py")] * 4)
 
     def reparse_metadata(self, component):
         original = Path.lstat
