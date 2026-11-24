@@ -72,3 +72,80 @@ cover these actions; they do not replace that human review.
 Rollback: return to immutable `v0.3.0` and clear the optional browser glossary
 copy if desired. Older versions ignore the additional journal record and keep
 recovering caption text; they do not preserve glossary metadata in old exports.
+
+## Prepared human comparison and accessibility programme
+
+Preparation is not participant/VoiceOver/onboarding acceptance. Reuse the editor
+and caption action above; no alternative UI or production speed feature is added.
+Automated browser checks cover labels, keyboard activation, modal Tab/Shift+Tab
+containment, Escape/return focus, unchanged captions and continued listening.
+When Save/Undo becomes disabled while awaiting a reply, focus moves to Close
+before native disabling can blur the keyboard position to the page body. These
+contracts cannot certify spoken screen-reader announcements or discoverability.
+
+### Counterbalanced terminology task card
+
+Use anonymous slots and an offline public-text caption scenario, not a live
+meeting/provider session. Freeze the candidate and reset session/glossary/browser
+persistence between task cards. Prepare matching X/Y cards: X asks for
+“protocol → procedure”, Y for “interval → range”. The two captions contain only
+their own source term. Rotate four assignments before recruitment:
+
+1. Pre-session X, then caption-action Y.
+2. Caption-action X, then pre-session Y.
+3. Pre-session Y, then caption-action X.
+4. Caption-action Y, then pre-session X.
+
+Neutral instruction: “Make future translations use the preferred wording on
+this card, without changing the caption already shown. Tell us when you believe
+it is saved.” Do not name the control or demonstrate the successful path. The
+pre-session condition necessarily saves at Start; the caption condition saves
+during listening. Compare only the shared preference-entry outcome, not total
+session startup or unmatched inspect/undo functionality. The observer records
+first action, elapsed time, wrong turns, requests for help, save confirmation,
+original-caption preservation and reported confidence. Preserve failed attempts.
+The observer may stop unsafe behavior but logs that intervention as assistance.
+
+After the comparison, separately ask the participant to inspect, edit, remove,
+undo, cancel an unsaved edit, refresh and explain whether earlier captions
+changed. Also cover a misheard-source correction, target-language suspension,
+local persistence off by default, opt-in and clearing. These are additional
+functional tasks, not retroactively scored into the paired comparison. Check
+listening status, original captions and terminology versions independently.
+
+### Human VoiceOver sheet (actual Mac window required)
+
+Before starting, record browser/version, screen-reader/version, keyboard
+navigation setting and whether the participant already knows the product. Do
+not change system accessibility/TCC/audio settings during autonomous preparation.
+Use only the agreed provider-free fixture, with capture absent.
+
+Ask the participant to navigate headings/controls, discover the caption action,
+open the dialog, identify its title/help, correction type, both inputs, current
+version, errors and Save/Undo/Close. Traverse forward/backward, attempt invalid
+input, save, inspect/remove/undo, then Escape. Ask where focus landed and what
+was announced after each operation, without suggesting the expected wording.
+Repeat entry from Settings, a pending mutation, a read-only 100-change limit and
+a hidden/disconnected opener. The observer checks no focus escape, meaningful
+labels/status/error announcement, predictable fallback and unchanged listening.
+Record actual announcements, confusion, assistance and PASS/FAIL/NOT ASSESSED
+per task. Chromium accessibility-tree/keyboard tests are not VoiceOver evidence.
+
+### Uncoached second-operator card (participant-facing)
+
+“Using the supplied offline demonstration only, prepare English captions with
+spoken readback off. Add the term preference on your card. Decide whether the
+application is ready, start the demonstration when appropriate, make one future
+term correction, stop it, find the private export and leave the application
+idle. Do not grant unexpected device/account permissions or change system audio.
+If something is unclear, say what you expect before taking action. You may stop.”
+
+Do not give the participant these observer answers in advance: readiness must
+come from public status/checklist, not an assumed caption or internal JS state;
+Captions only should remain explicit; the original caption must survive a future
+correction; Stop must leave no pending speech; export must be readable privately;
+final status must be idle with no capture. The observer records independent
+completion, elapsed time, each instruction requested, every intervention and
+privacy/safety confusion. One coached rescue is not uncoached success. No external
+participant is contacted by this preparation; owner-approved participants and
+attended readiness remain prerequisites.

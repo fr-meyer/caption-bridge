@@ -235,3 +235,59 @@ def test_term_focus_updates_read_only_inspection_and_hidden_opener(page: Page, t
     expect(page.locator("#term-dialog")).not_to_be_visible()
     expect(page.locator("#status-label")).to_be_focused()
     assert manager.session.status == "listening"  # Only synthetic UI state was changed.
+
+
+
+def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term_server):
+    """Keyboard/focus software contract only, not human assistive-tech acceptance."""
+    url, manager = term_server
+    page.goto(url, wait_until="domcontentloaded")
+    opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
+    opener.focus()  # Explicit test anchor, not evidence of uncoached discoverability.
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="Correct a term", exact=True)
+    expect(dialog).to_be_visible()
+    expect(page.get_by_label("Source term", exact=True)).to_be_focused()
+    page.keyboard.press("Shift+Tab")
+    expect(page.get_by_label("Correction type", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    page.keyboard.insert_text("misheard")
+    page.keyboard.press("Tab")
+    expect(page.get_by_label("Correct term or preferred rendering", exact=True)).to_be_focused()
+    page.keyboard.insert_text("corrected")
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Save for future captions", exact=True)).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-version")).to_contain_text("v1")
+    expect(page.locator("#term-close")).to_be_focused()
+    page.keyboard.press("Shift+Tab")
+    expect(page.get_by_role("button", name="Undo last change", exact=True)).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(page.locator("#term-version")).to_contain_text("v2")
+    expect(page.locator("#term-close")).to_be_focused()
+    # Tab may visit the dialog container in some engines, but never background controls.
+    for key in ["Tab"] * 10 + ["Shift+Tab"] * 10:
+        page.keyboard.press(key)
+        assert page.evaluate("document.querySelector('#term-dialog').contains(document.activeElement)")
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    page.keyboard.press("Escape")
+    expect(dialog).not_to_be_visible()
+    expect(opener).to_be_focused()
+    assert manager.session.status == "listening"
+
+
+def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_server):
+    url, manager = term_server
+    page.goto(url, wait_until="domcontentloaded")
+    opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
+    opener.focus()
+    page.keyboard.press("Enter")
+    page.keyboard.insert_text("protocol term")
+    expect(page.locator("#term-source")).to_have_value("protocol term")
+    page.keyboard.press("Tab")
+    page.keyboard.insert_text("clear rendering")
+    page.keyboard.press("Escape")
+    expect(opener).to_be_focused()
+    assert manager.session.status == "listening"
+    assert manager.session.terminology_version == 0
+    assert manager.session.glossary is None

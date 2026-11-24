@@ -1960,6 +1960,9 @@
         if (!els.termList) return;
         const focused = els.termDialog.open && els.termList.contains(document.activeElement)
             ? document.activeElement : null;
+        const focusedAction = els.termDialog.open &&
+            (document.activeElement === els.termSave || document.activeElement === els.termUndo)
+            ? document.activeElement : null;
         let nextFocus = null;
         els.termVersion.textContent = "Session terms v" + terminologyState.version +
             " · " + currentTerms().length + "/20 pairs" +
@@ -2008,6 +2011,10 @@
             row.appendChild(remove);
             els.termList.appendChild(row);
         });
+        // Move focus before disabling a keyboard-activated pending action. Native
+        // buttons otherwise blur to the document body and lose the dialog position.
+        if (focusedAction && (!canEditTerms() ||
+            (focusedAction === els.termUndo && !terminologyState.canUndo))) els.termClose.focus();
         els.termSave.disabled = !canEditTerms();
         els.termUndo.disabled = !canEditTerms() || !terminologyState.canUndo;
         if (focused) (nextFocus || els.termClose).focus();

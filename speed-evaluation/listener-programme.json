@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "scope": "prepared original text only; no synthesis, output, participants or GO",
+  "default_rate": 1,
+  "rates": [
+    1,
+    1.15,
+    1.3
+  ],
+  "rate_orders": [
+    [
+      1,
+      1.15,
+      1.3
+    ],
+    [
+      1.3,
+      1.15,
+      1
+    ],
+    [
+      1.15,
+      1.3,
+      1
+    ],
+    [
+      1,
+      1.3,
+      1.15
+    ],
+    [
+      1.3,
+      1,
+      1.15
+    ],
+    [
+      1.15,
+      1,
+      1.3
+    ]
+  ],
+  "assignment": "preassign anonymous slot modulo six; retain order on failure; no favorable rerun",
+  "text_license": "original repository test material; repository license",
+  "samples": [
+    {
+      "id": "original-en-pauses-v1",
+      "language": "en",
+      "text": "Protocol K seven uses a confidence interval of ninety five percent. Pause, then compare one point five with fifteen. The next step is EEG, not ECG. Keep the original result unchanged.",
+      "observer_answers": [
+        "K7",
+        "95%",
+        "1.5 versus 15",
+        "EEG, not ECG",
+        "original unchanged"
+      ]
+    },
+    {
+      "id": "original-ko-pauses-v1",
+      "language": "ko",
+      "text": "프로토콜 K 7의 신뢰 구간은 95퍼센트입니다. 잠시 멈춘 뒤, 1.5와 15를 비교하세요. 다음 단계는 ECG가 아니라 EEG입니다. 원래 결과는 변경하지 마세요.",
+      "observer_answers": [
+        "K7",
+        "95%",
+        "1.5 versus 15",
+        "EEG, not ECG",
+        "original unchanged"
+      ]
+    }
+  ],
+  "remaining_fixture_gate": "an approved local/offline synthesizer or an already qualified public multi-sentence speech asset; freeze actual engine, voice, PCM hash, pauses and duration before listening",
+  "listener_fields": [
+    "anonymous_slot",
+    "candidate_head",
+    "browser_version",
+    "fixture_pcm_sha256",
+    "actual_rate_order",
+    "rate",
+    "comprehension_answers",
+    "clarity_1_to_5",
+    "pitch_naturalness_1_to_5",
+    "gaps_or_overlap",
+    "interruption_replay_result",
+    "preference",
+    "assistance",
+    "verdict",
+    "reason"
+  ],
+  "verdicts": [
+    "go",
+    "no_go",
+    "inconclusive",
+    "not_run"
+  ],
+  "go_authority": "actual listener verdict, browser performance and product gates; software success never implies GO"
+}
