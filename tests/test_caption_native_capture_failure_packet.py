@@ -11,9 +11,10 @@ from unittest.mock import patch
 import pytest
 
 from native.caption_helper.capture_diagnostics import (
+    _FAILURE_KEYS,
     _FAILURE_STAGES,
+    _TERMINAL_KEYS,
     CaptureDiagnostics,
-    validated_terminal,
 )
 from scripts.attended_helper_budget import Custody
 from scripts.attended_journal import Journal
@@ -52,7 +53,16 @@ def receipt(value):
 @pytest.mark.parametrize("stage", sorted(_FAILURE_STAGES))
 def test_known_branch_is_observation_only_and_never_accepted(stage):
     value = packet(stage)
-    assert receipt(value)["native_terminal"] == value
+    observed = receipt(value)
+    if stage in {"PIN_WAIT_EVENT", "PIN_WAIT_STATE"}:
+        # The existing legacy packet has no raw wait event. These new stages
+        # require one, so rejection is correct; never invent an observed event.
+        assert "wait_event" not in value["failure"]
+        assert observed["native_terminal"] is None
+        assert not observed["terminal_shape_valid"]
+        assert observed["terminal_shape_error"] == "failure"
+    else:
+        assert observed["native_terminal"] == value
     for code in (0, 70):
         with pytest.raises(RuntimeError):
             _terminal(STARTUP, value, code, no_input=True)
@@ -132,21 +142,51 @@ def test_early_failure_survives_without_becoming_challenge_or_startup():
     assert other.terminal is None
 
 
-def test_source_emitter_is_one_bounded_json_line_and_matches_strict_parser():
-    # Interprets only actual C format literals, NOT C/HAL execution or acceptance.
+def test_source_emitter_fragments_are_complete_bounded_and_match_parser_fields():
+    # Actual source only: do not reconstruct a pretend native failure packet.
+    # Successful hosted schema1 execution does not prove live failure emission.
     source = (ROOT / "native/caption_helper/assembly.c").read_text()
-    prefix = next(line for line in source.splitlines() if r'\"schema\":2' in line)
-    suffix = next(line for line in source.splitlines() if r'\"deadline_reached\"' in line)
-    def literal(line):
-        return ast.literal_eval(re.search(r'printf\(("(?:\\.|[^"\\])*")', line).group(1))
-    value = packet()
-    first = literal(prefix) % ("false", 10, 11, 12, *([72 << 8] * 3), 0, 0, 0,
-                               "ACTIVE_DEADLINE", 0, "NONE", 0, 0)
-    last = literal(suffix).replace("%llu", "%d") % (72 << 8, 72 << 8, -1, "true",
-                                                         2_000_000_000, 2_000_000_000, "true")
-    text = first + ",".join(map(str, value["failure"]["events"])) + last
-    assert text.endswith("\n") and text.count("\n") == 1 and len(text.encode()) < 4096
-    assert json.loads(text) == value and validated_terminal(json.loads(text)) == value
+    start = source.index("static int capture_failure_packet(")
+    emitter = source[start:source.index("static int capture_early_failure(", start)]
+    literals = re.findall(r'printf\(("(?:\\.|[^"\\])*")', emitter)
+    assert len(literals) == emitter.count("printf(") == 6
+    formats = [ast.literal_eval(value) for value in literals]
+    prefix, events, timing, raw_event, no_event, closing = formats
+    assert prefix.startswith('{"schema":2,"capture_exit":70,')
+    assert prefix.endswith('"events":[')
+    assert events == "%s%u"
+    assert timing.startswith('],"wait_status":[%d,%d,%d],')
+    assert timing.endswith('"deadline_reached":%s')
+    assert raw_event == (',"wait_event":{"signo":%d,"code":%d,'
+                         '"status":%d,"pid_relation":%d}')
+    assert no_event == ',"wait_event":null'
+    assert closing == "}}\n"
+    assert all("\n" not in value for value in formats[:-1])
+    assert 'if(capture_diagnostic.wait_event_known){' in emitter
+    assert '}else if(printf(' + literals[4] + ')<0)return 70;' in emitter
+    assert 'if(printf(' + literals[5] + ')<0 || fflush(stdout))return 70;' in emitter
+    outer, failure = prefix.split('"failure":{')
+    def keys(value):
+        return re.findall(r'"([a-z_]+)":', value)
+    assert set(keys(outer)) == _TERMINAL_KEYS
+    assert len(keys(outer)) == len(_TERMINAL_KEYS)
+    failure_keys = keys(failure) + keys(timing)
+    assert set(failure_keys) == _FAILURE_KEYS
+    assert len(failure_keys) == len(_FAILURE_KEYS)
+    # Conservative source bound, not sampled/formatted values: include BOTH
+    # exclusive event branches, 16 event entries, and the longest stage for %s.
+    header = (ROOT / "native/caption_helper/capture_diagnostic.h").read_text()
+    assert "if(d->event_count<16)d->events[d->event_count++]=(unsigned)event;" in header
+    assert "i<capture_diagnostic.event_count" in emitter
+    widths = {"%d": 11, "%u": 10, "%llu": 20,
+              "%s": max(len(stage) for stage in _FAILURE_STAGES)}
+    bound = 0
+    for value in (prefix, *([events] * 16), timing, raw_event, no_event, closing):
+        tokens = re.findall(r"%llu|%[dsu]", value)
+        literal = re.sub(r"%llu|%[dsu]", "", value)
+        assert "%" not in literal
+        bound += len(literal.encode()) + sum(widths[token] for token in tokens)
+    assert bound < 4096
 
 
 def test_fixed_c_stage_registry_matches_parser_and_critical_branches_are_recorded():
