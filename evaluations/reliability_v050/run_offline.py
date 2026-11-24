@@ -144,14 +144,7 @@ def software_source_identity(root=ROOT):
     digest = hashlib.sha256()
     paths = sorted(set(name for name in names if name))
     for name in paths:
-        path = root / os.fsdecode(name)
-        # Never follow a source symlink into private or external files.
-        if path.is_symlink():
-            value = b"symlink\0" + os.fsencode(os.readlink(path))
-        elif path.exists():
-            value = b"file\0" + path.read_bytes()
-        else:
-            value = b"missing"
+        value = source_file_value(root, os.fsdecode(name))
         digest.update(name + b"\0" + hashlib.sha256(value).hexdigest().encode("ascii") + b"\n")
     return {
         "source_head": git("rev-parse", "HEAD").decode("ascii").strip(),
