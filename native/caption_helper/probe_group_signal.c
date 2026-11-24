@@ -151,7 +151,11 @@ static int census(pid_t group,const pid_t *pids,const int *held,int *states){
  */
 static int cleanup_reap(pid_t pid,int *held,int *saved){
  int status=-1;pid_t done=waitpid(pid,&status,WNOHANG);
- if(done==pid){*saved=status;*held=0;return 1;}
+ if(done==pid){
+  /* A traced-stop notification can return this PID without reaping it. */
+  if(!WIFEXITED(status) && !WIFSIGNALED(status))return -1;
+  *saved=status;*held=0;return 1;
+ }
  if(done==0)return 0;
  if(done<0 && errno==EINTR)return 2;
  return -1;

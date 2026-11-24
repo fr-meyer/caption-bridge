@@ -81,7 +81,10 @@ consume lifeline EOF. The source permits exactly this deadlock; the old receipt
 alone does not identify which event/earlier branch actually occurred.
 
 After the last group action, cleanup now uses actual waitpid(WNOHANG), not siginfo.
-Only a returned requested PID records a reap/status and clears custody. A fresh
+Only a returned requested PID with WIFEXITED or WIFSIGNALED records a terminal
+reap/status and clears custody. A stopped, continued or unknown returned status
+fails cleanup without releasing custody or authorizing a signal. In particular,
+a traced-stop notification may return the requested PID without reaping it. A fresh
 return 0 is the direct-child, unreaped authority for per-PID SIGKILL; the probe has
 one reaper and does not release that identity between readback and signal. A
 terminal transition in that gap remains an unreaped zombie, not a recycled PID.
@@ -89,7 +92,7 @@ ECHILD/other failures deny signaling; only EINTR is retryable inside the origina
 common deadline. All four potentially owned children share the original one-second
 grace/two-second total, with no per-child deadline extension. Unknown/unreaped
 identities remain truthfully reported and fail the mechanism. No cleanup is claimed
-successful without a real returned-PID reap. Fresh hosted evidence is still needed.
+successful without a real returned-PID terminal reap. Fresh hosted evidence is still needed.
 
 ## Exact paired negative-diagnostic interoperability proposal
 

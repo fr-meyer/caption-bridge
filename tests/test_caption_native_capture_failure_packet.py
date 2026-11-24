@@ -249,7 +249,12 @@ def test_probe_cleanup_requires_fresh_waitpid_custody_before_kill():
     start = probe.index("static int cleanup_reap(")
     cleanup = probe[start:probe.index("static int run_case(", start)]
     assert "int status=-1;pid_t done=waitpid(pid,&status,WNOHANG)" in cleanup
-    assert "if(done==pid){*saved=status;*held=0;return 1;}" in cleanup
+    reap = cleanup[:cleanup.index("static int cleanup(")]
+    terminal_guard = "if(!WIFEXITED(status) && !WIFSIGNALED(status))return -1;"
+    release = "*saved=status;*held=0;return 1;"
+    assert reap.index("if(done==pid){") < reap.index(terminal_guard) < reap.index(release)
+    assert reap.count("*held=0") == 1
+    assert "*saved=" not in reap[:reap.index(terminal_guard)]
     assert "if(done==0)return 0" in cleanup
     assert "if(done<0 && errno==EINTR)return 2" in cleanup
     assert "observe(" not in cleanup and "waitid(" not in cleanup
