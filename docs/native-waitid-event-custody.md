@@ -38,7 +38,8 @@ f6217f891ac0bb64f3d375211650a4c1ff8ca1ea:
 The primary kernel macro expansion provides a causal source-level mechanism
 consistent with the observed nonzero PID, rather than an invented Libc ABI
 conversion. It does NOT reveal the unrecorded old event or attest the exact
-hosted kernel: actual runtime is macOS 26.7.2, build 25G332, Darwin 25.8.0 arm64.
+hosted kernel: the retained runtime reports build 25G332 and Darwin 25.6.0.
+No other OS-version or architecture claim is inferred from those two fields.
 No kernel build override or shipped binary implementation was directly inspected.
 
 The Apple-published XNU 7195.121.3 syscall generator/map identifies waitid as a
