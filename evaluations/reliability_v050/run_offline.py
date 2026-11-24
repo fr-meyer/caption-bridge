@@ -9,6 +9,7 @@ import ntpath
 import os
 import platform
 import posixpath
+import re
 import stat
 import subprocess
 import sys

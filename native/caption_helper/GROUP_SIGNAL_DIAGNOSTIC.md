@@ -133,7 +133,8 @@ Capture success schema 1 is unchanged. Missing new observations are not filled i
 from the old three-case receipt.
 
 A new private session excludes existing runner processes from joining a probe
-group. Children never fork or exec and exit naturally when their lifeline closes.
+group. Each child is created by suspended self-exec, then never forks or execs
+again and exits naturally when its lifeline closes.
 A complete bounded KERN_PROC_PGRP census must contain exactly the three owned,
 unreaped direct children with matching parent, group and credentials before BOTH
 group syscalls. Overflow, unknown membership or custody loss forbids the signal.
@@ -149,9 +150,10 @@ false. Both positive controls must deliver real SIGKILL and all statuses must be
 independently reaped. The zombie case permits any syscall observation to be
 recorded, so inspect it rather than interpreting diagnostic exit 0 as a fix.
 
-Limitation: forked unsandboxed children share the probe's signature. This isolates
-kernel group/zombie behavior, not CaptureHelper's exec/sandbox topology, the
-actual controller's effective sandbox context, or the historical e4be failure.
+Limitation: unsandboxed children execute the probe's signed image, not the
+CaptureHelper role images. This exercises suspended self-exec enrollment and
+kernel group/zombie behavior, not CaptureHelper's sandbox topology, the actual
+controller's effective sandbox context, or the historical e4be failure.
 The optional retained candidate metadata helps correlate, not erase that limit.
 No Darwin execution/compilation has been performed in the Linux authoring session.
 No synthetic tests, stubs, mocks, Linux stand-ins, devices or owner-node operations
