@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+from native.caption_helper.capture_diagnostics import CaptureDiagnostics
 from native.caption_helper.qualify_assembly import validate_startup
 from native.caption_helper.qualify_budget import BoundedLines
 from scripts.attended_native_admission import MIN_CAPTURE_MS, CaptureAdmission
@@ -108,7 +109,11 @@ def capture_valid_until(challenge, expires_unix_ns, milliseconds, valid_until_co
 
 
 def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_id=0,
-         check_grant=None, pcm=None, expires_unix_ns=None, expected_tail=None, valid_until_continuous_ns=None):
+         check_grant=None, pcm=None, expires_unix_ns=None, expected_tail=None, valid_until_continuous_ns=None,
+         _diagnostics=None):
+    diagnostics = _diagnostics if _diagnostics is not None else CaptureDiagnostics()
+    if type(diagnostics) is not CaptureDiagnostics:
+        raise ValueError("capture_diagnostics_type")
     if sys.platform != 'darwin':
         raise RuntimeError('macos_native_only')
     if type(milliseconds) is not int or not MIN_CAPTURE_MS <= milliseconds <= 2000:
@@ -136,6 +141,7 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
             arguments.extend((str(pcm[0]), str(pcm[1]), pcm[2]))
         if check_grant is not None:
             check_grant()
+        diagnostics.stage = "spawn"
         child = subprocess.Popen(arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, close_fds=True, pass_fds=(stop_fd, *pcm_owned),
                                  env={}, bufsize=0)
@@ -143,6 +149,7 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
             os.close(fd)
         pcm_owned.clear()
         reader = BoundedLines(child.stdout, time.monotonic() + 7)
+        diagnostics.stage = "challenge"
         challenge = reader.line()
         emergency.ready()
         if check_grant is not None:
@@ -150,6 +157,7 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
         if expected_tail is not None and custody._journal.tail != expected_tail:
             raise RuntimeError('runtime_ledger_changed')
         valid_until = capture_valid_until(challenge, expires_unix_ns, milliseconds, valid_until_continuous_ns)
+        diagnostics.stage = "debit"
         receipt = custody.offer(capability, channel, milliseconds)
         reservation, wire = (custody.prepare_pcm_budget(capability, channel, receipt, challenge, valid_until_ticks=valid_until, expires_unix_ns=expires_unix_ns or 0)
                              if pcm is not None else custody.prepare_capture_budget(
@@ -161,17 +169,25 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
             check_grant()
         if expires_unix_ns is not None and (time.time_ns() >= expires_unix_ns or continuous_ns() >= valid_until_continuous_ns):
             raise RuntimeError('runtime_grant_expired_after_debit_hold')
+        diagnostics.stage = "budget_delivery"
         if child.stdin.write(wire) != len(wire):
             raise RuntimeError('capture_budget_short_write_hold')
         child.stdin.close()  # Exact message + EOF; fsync/debit precedes any native opener.
-        started = validate_startup(reader.line())
+        diagnostics.stage = "startup"
+        diagnostics.startup = reader.line()
+        started = validate_startup(diagnostics.startup)
         if started is None:
             raise RuntimeError('capture_startup_unknown_hold')
+        diagnostics.stage = "terminal_read"
         terminal = reader.line()
+        diagnostics.terminal = terminal
         remaining = reader.deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('capture_terminal_timeout_hold')
+        diagnostics.stage = "controller_wait"
         code = child.wait(timeout=remaining)
+        diagnostics.returncode = code
+        diagnostics.stage = "eof"
         if reader.pending:
             raise RuntimeError('capture_trailing_output_hold')
         with selectors.DefaultSelector() as selector:
@@ -181,31 +197,42 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
                 raise TimeoutError('capture_eof_timeout_hold')
             if os.read(child.stdout.fileno(), 1):
                 raise RuntimeError('capture_trailing_output_hold')
+        diagnostics.stage = "terminal_validate"
         terminal = _terminal(started, terminal, code, no_input=no_input)
+        diagnostics.stage = "complete"
         return dict(qualification='NATIVE_CAPTURE_NOINPUT_ONLY' if no_input else 'PHYSICAL_ATTEMPT',
                     physical_acceptance=False, native_admission=False, terminal=terminal,
                     sequence=reservation.sequence, reserved_ms=reservation.reserved_ms)
     finally:
         # Never signal reported role PIDs. Native owns them; Python owns this child.
         emergency.stop()
+        diagnostics.cleanup["emergency_closed"] = True
         for fd in pcm_owned:
             os.close(fd)
         try:
             if child is not None:
-                if child.poll() is None:
+                polled = child.poll()
+                if polled is None:
                     try:
-                        child.wait(timeout=3)
+                        diagnostics.returncode = child.wait(timeout=3)
                     except subprocess.TimeoutExpired:
                         child.kill()
-                        child.wait(timeout=3)
+                        diagnostics.cleanup["kill_sent"] = True
+                        diagnostics.returncode = child.wait(timeout=3)
+                else:
+                    diagnostics.returncode = polled
+                diagnostics.cleanup["wait_completed"] = True
                 for stream in (child.stdin, child.stdout):
                     if stream is not None:
                         stream.close()
+                diagnostics.cleanup["streams_closed"] = True
         finally:
             if peer is not None:
                 peer.close()
+                diagnostics.cleanup["peer_closed"] = True
             if capability is not None:
                 custody.revoke(capability)
+                diagnostics.cleanup["custody_revoked"] = True
 
 
 def launch_capture(admission, permit, custody, emergency):
@@ -231,14 +258,15 @@ def launch_capture(admission, permit, custody, emergency):
                 expires_unix_ns=launch['expires_unix_ns'], expected_tail=launch['ledger_tail'], valid_until_continuous_ns=launch['valid_until_continuous_ns'])
 
 
-def qualify_noinput(root, custody, candidate, *, milliseconds=2000):
+def qualify_noinput(root, custody, candidate, *, milliseconds=2000, _diagnostics=None):
     """Caller-reviewed fixed image, software ledger only. No physical path/permit.
 
     Do not pass a real programme ledger: even this deliberately retains HOLD.
     """
     emergency = EmergencyStop()
     try:
-        return _run(root, custody, candidate, milliseconds, emergency, no_input=True)
+        return _run(root, custody, candidate, milliseconds, emergency, no_input=True,
+                    _diagnostics=_diagnostics)
     finally:
         emergency.close()
 

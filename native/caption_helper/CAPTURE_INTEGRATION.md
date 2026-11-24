@@ -172,3 +172,22 @@ or both guardians stopped with live retained-parent enforcement. Every synthetic
 process is owned and reaped. These are offline source/mechanism tests, NOT a macOS
 build, native ABI result, HAL fault injection, or physical/kernel acceptance.
 Exact new signed-image review and independent combined-fault proofs remain required.
+
+## Failure-only no-input diagnostics
+
+The no-input qualification CLI emits one bounded content-free FAIL/HOLD JSON
+receipt on failure, rather than an exception traceback. It records the fixed
+failure stage/class, observed controller return code, startup validity, a strictly
+shape-validated native terminal (or null), PID agreement and actual parent cleanup
+observations. Unknown statuses (-1), cleanup kills and failed native exits remain
+failure observations, never closure acceptance. Malformed/unexpected terminal
+fields are omitted entirely, not printed with repr or raw stdout/stderr. No raw
+error text, paths, environment, argv, device data, PCM or transcripts are emitted.
+
+The existing strict success validator and successful output schema are unchanged.
+A syntactically valid diagnostic terminal is not a successful terminal, independent
+closure evidence, physical qualification or permission to clear the journal HOLD.
+The hosted no-input rejection that motivated these diagnostics did not preserve
+its rejected terminal; its exact cause must not be inferred from the traceback.
+The next actual hosted run must supply the bounded observation before a native
+lifecycle repair can be justified. No guardian/deadline/closure guard is waived.
