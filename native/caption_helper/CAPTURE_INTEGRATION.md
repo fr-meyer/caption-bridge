@@ -191,3 +191,60 @@ The hosted no-input rejection that motivated these diagnostics did not preserve
 its rejected terminal; its exact cause must not be inferred from the traceback.
 The next actual hosted run must supply the bounded observation before a native
 lifecycle repair can be justified. No guardian/deadline/closure guard is waived.
+
+## Versioned native exit-70 branch evidence
+
+Hosted run 45425410805 observed controller/capture exit 70 with all three final
+wait statuses 18432 (exit 72), no cleanup kills, and matching startup PIDs. That
+aggregate does NOT encode which controller predicate rejected the run. Its cause
+remains unknown; it must not be labelled a deadline race, nor accepted as success.
+
+Successful native terminals retain their exact schema-1 fields and strict success
+validator. Capture controller failures now emit schema 2: the same seven fields
+plus a strictly validated failure object. Schema 2 is failure-only (exit 70), never
+accepted by the success parser. Historical schema-1 failures remain readable as
+observations, without inventing an absent reason. A failure before challenge or
+startup is retained diagnostically but still fails those unchanged validators.
+All failure receipts remain FAIL/HOLD with no native/physical/closure acceptance.
+
+The failure object has only these fields:
+- stage: a fixed enum from capture_diagnostic.h, independently allowlisted by the
+  Python parser. It distinguishes signal/clock/budget/setup, role identity and
+  capability, readiness deadline/EOF/id/IO, active deadline, owned observation,
+  child status, emergency reader/poll, parent/wall expiry, group custody/signal,
+  descriptor/spawn cleanup, reap wait/signal/timeout and post-reap identity checks.
+- role: 0 (controller) or the known role 1/2/3. No arbitrary text or errno messages.
+- errno_class: a first-branch syscall class from NONE/EINTR/EBADF/ECHILD/EPERM/
+  ESRCH/EINVAL/OTHER; no raw errno strings. NONE means not captured/applicable,
+  not a proof that the operating system did not report an error.
+- wait_status: the three observations at the FIRST rejecting branch, distinct
+  from the final outer wait_status after cleanup. Later cleanup cannot erase the
+  first branch/snapshot. Unknown -1 remains unknown, never a successful close.
+- cleanup_errors: independent bounded bitmask: 1 descriptor close, 2 spawn cleanup,
+  4 group cleanup, 8 reap, 16 identity check. These may describe secondary errors.
+- reader_events: normalized last poll flags: 1 readable, 2 HUP, 4 ERR, 8 NVAL.
+- events: at most 16 fixed integers preserving actual milestone order. IDs are
+  1 budget validated, 2 pipes prepared, 3/4 guardian A/B ready, 5 helper ready,
+  6 startup published, 7 all role exits observed, 8 cleanup entered, 9 group signal
+  accepted (including ESRCH), 10 lifeline close attempted, 11/12/13 role reaped,
+  14 post-reap identities checked. Events are observations, NOT closure authority.
+- timing_valid, elapsed_ns, window_ns, deadline_reached: integer-only relative
+  timing at first rejection. Origin is AFTER budget validation; window is the
+  remaining immutable deadline at that origin (not a newly issued permission).
+  Valid bounds are elapsed 0..10 seconds and window >0..2 seconds. Overflow,
+  unavailable origin or out-of-range timing gives validity false and zero values;
+  deadline_reached remains a tick comparison or null if unavailable. No absolute
+  clock values, time padding, extra capture permission or longer reap grace.
+
+No raw stdout/stderr/error text/path/argv/environment/device/audio/PCM/transcript
+is projected. Extra/malformed/unknown enum fields drop the entire native terminal
+from diagnostics. Output remains below the existing 4096-byte line bound.
+
+Portable helper-unit fixture (no HAL/native launch):
+    cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/native_capture_diagnostic_portable.c -o PRIVATE_OUTPUT/portable-test
+    PRIVATE_OUTPUT/portable-test
+Real owned POSIX wait/group/reap observation (also NOT HAL/native proof):
+    python -I -S tests/native_capture_natural_exit_observation.py
+The latter can observe 72/72/72 and successful retained-group cleanup, but cannot
+reproduce or attribute the hosted controller's unknown rejecting branch. Native
+macOS compilation and the next actual no-input receipt remain parent-owned gates.

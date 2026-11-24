@@ -151,6 +151,7 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
         reader = BoundedLines(child.stdout, time.monotonic() + 7)
         diagnostics.stage = "challenge"
         challenge = reader.line()
+        diagnostics.observe_native_failure(challenge)
         emergency.ready()
         if check_grant is not None:
             check_grant()
@@ -175,6 +176,7 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
         child.stdin.close()  # Exact message + EOF; fsync/debit precedes any native opener.
         diagnostics.stage = "startup"
         diagnostics.startup = reader.line()
+        diagnostics.observe_native_failure(diagnostics.startup)
         started = validate_startup(diagnostics.startup)
         if started is None:
             raise RuntimeError('capture_startup_unknown_hold')

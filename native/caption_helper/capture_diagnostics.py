@@ -5,6 +5,15 @@ from native.caption_helper.qualify_assembly import validate_startup
 
 _TERMINAL_KEYS = {'schema', 'capture_exit', 'capture', 'terminal', 'pids',
                   'wait_status', 'cleanup_killed'}
+_FAILURE_KEYS = {'stage', 'role', 'errno_class', 'reader_events', 'cleanup_errors', 'events', 'wait_status',
+                 'timing_valid', 'elapsed_ns', 'window_ns', 'deadline_reached'}
+_FAILURE_STAGES = frozenset('''SIGNAL_POLICY STOP_FLAGS TIMEBASE BUDGET STARTUP_DEADLINE
+PIPE_SETUP PIPE_FLAGS PATH_BOUNDS PRELAUNCH_STOP PARENT_CHANGED STATE_SETUP SPAWN_SETUP GROUP_CUSTODY
+IDENTITY_VERIFY CAPABILITY READINESS_DEADLINE READINESS_EOF READINESS_ID READINESS_IO
+FD_CLOSE SPAWN_ACTION_DESTROY SPAWN_ATTR_DESTROY STARTUP_OUTPUT OBSERVE_OWNED CHILD_STATUS
+ACTIVE_DEADLINE STOP_POLL STOP_READER WALL_EXPIRED LOOP_SLEEP OBSERVATION_INCOMPLETE
+GROUP_OBSERVE GROUP_SIGNAL REAP_WAIT REAP_SIGNAL REAP_TIMEOUT IDENTITY_VISIBLE
+IDENTITY_QUERY DIAGNOSTIC_INVALID'''.split())
 _STAGES = {'preflight', 'spawn', 'challenge', 'debit', 'budget_delivery', 'startup',
            'terminal_read', 'controller_wait', 'eof', 'terminal_validate', 'complete'}
 _ERRORS = {'RuntimeError', 'ValueError', 'OSError', 'TimeoutError', 'JSONDecodeError',
@@ -17,14 +26,51 @@ _CLEANUP = ('emergency_closed', 'wait_completed', 'kill_sent', 'streams_closed',
             'peer_closed', 'custody_revoked')
 
 
+def failure_shape_valid(value):
+    """Fixed-enum causal observation only; never a closure or timing proof."""
+    if type(value) is not dict or set(value) != _FAILURE_KEYS:
+        return False
+    if type(value['stage']) is not str or value['stage'] not in _FAILURE_STAGES:
+        return False
+    if (type(value['errno_class']) is not str or value['errno_class'] not in
+            {'NONE', 'EINTR', 'EBADF', 'ECHILD', 'EPERM', 'ESRCH', 'EINVAL', 'OTHER'}):
+        return False
+    for key, upper in (('role', 3), ('reader_events', 15), ('cleanup_errors', 31)):
+        if type(value[key]) is not int or not 0 <= value[key] <= upper:
+            return False
+    events = value['events']
+    if (type(events) is not list or len(events) > 16
+            or any(type(event) is not int or not 1 <= event <= 14 for event in events)
+            or len(set(events)) != len(events)):
+        return False
+    statuses = value['wait_status']
+    if (type(statuses) is not list or len(statuses) != 3
+            or any(type(status) is not int or not -1 <= status <= 65535 for status in statuses)):
+        return False
+    if type(value['timing_valid']) is not bool:
+        return False
+    elapsed, window, reached = (value[k] for k in ('elapsed_ns', 'window_ns', 'deadline_reached'))
+    if type(elapsed) is not int or type(window) is not int:
+        return False
+    if value['timing_valid']:
+        if (not 0 <= elapsed <= 10_000_000_000 or not 1 <= window <= 2_000_000_000
+                or type(reached) is not bool
+                or (reached and elapsed < window) or (not reached and elapsed > window)):
+            return False
+    elif elapsed != 0 or window != 0 or (reached is not None and type(reached) is not bool):
+        return False
+    return True
+
+
 def terminal_shape_error(value):
     """Fixed field labels only; never echo malformed keys or values."""
     if type(value) is not dict:
         return 'type'
-    if set(value) != _TERMINAL_KEYS:
-        return 'fields'
-    if type(value['schema']) is not int or value['schema'] != 1:
+    if type(value.get('schema')) is not int or value['schema'] not in (1, 2):
         return 'schema'
+    keys = _TERMINAL_KEYS | ({'failure'} if value['schema'] == 2 else set())
+    if set(value) != keys:
+        return 'fields'
     if type(value['capture']) is not bool:
         return 'capture'
     if type(value['capture_exit']) is not int or not 0 <= value['capture_exit'] <= 255:
@@ -43,6 +89,9 @@ def terminal_shape_error(value):
         return 'wait_status'
     if any(killed not in (0, 1) for killed in value['cleanup_killed']):
         return 'cleanup_killed'
+    if value['schema'] == 2 and (value['capture_exit'] != 70
+                                 or not failure_shape_valid(value['failure'])):
+        return 'failure'
     return None
 
 
@@ -55,9 +104,13 @@ def validated_terminal(value):
     if terminal_shape_error(value) is not None:
         return None
     # Reconstruct only allowlisted primitive fields; never return input aliases.
-    return dict(schema=1, capture_exit=value['capture_exit'], capture=value['capture'],
-                terminal='HOLD', pids=list(value['pids']), wait_status=list(value['wait_status']),
-                cleanup_killed=list(value['cleanup_killed']))
+    terminal = dict(schema=value['schema'], capture_exit=value['capture_exit'], capture=value['capture'],
+                    terminal='HOLD', pids=list(value['pids']), wait_status=list(value['wait_status']),
+                    cleanup_killed=list(value['cleanup_killed']))
+    if value['schema'] == 2:
+        terminal['failure'] = {key: list(item) if type(item) is list else item
+                               for key, item in value['failure'].items()}
+    return terminal
 
 
 class CaptureDiagnostics:
@@ -68,6 +121,13 @@ class CaptureDiagnostics:
         self.startup = None
         self.terminal = None
         self.cleanup = dict.fromkeys(_CLEANUP, False)
+
+    def observe_native_failure(self, packet):
+        # Early C failure may replace challenge/startup, but can NEVER replace
+        # their validators or admit a launch. Retain only the validated diagnostic.
+        terminal = validated_terminal(packet)
+        if terminal is not None and terminal['schema'] == 2:
+            self.terminal = terminal
 
     def receipt(self, error, *, journal_hold=None):
         terminal = validated_terminal(self.terminal)

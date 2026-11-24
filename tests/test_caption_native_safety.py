@@ -316,9 +316,9 @@ def test_active_controller_deadline_is_not_reap_grace():
     start = source.index(marker)
     branch = source[start:source.index("#else", start)]
     normalized = re.sub(r"\s+", "", branch)
-    required = "if(mach_continuous_time()>=end){result=70;gotocleanup;}"
+    required = "if(mach_continuous_time()>=end){CAPTURE_FAILURE(ACTIVE_DEADLINE,0);result=70;gotocleanup;}"
     assert required in normalized
-    assert normalized.index("if(!remaining)break;") < normalized.index(required)
+    assert normalized.index("if(!remaining){CAPTURE_EVENT(ALL_OBSERVED);break;}") < normalized.index(required)
     assert normalized.index(required) < normalized.index("structpollfdstop=")
     assert normalized.index(required) < normalized.index("usleep(1000)")
     # Three stopped roles never report WEXITED; wall validity/parent/emergency
@@ -334,5 +334,5 @@ def test_active_controller_deadline_is_not_reap_grace():
         clock += 1_000_000
     assert (clock, result, cleanup) == (end, 70, True)
     cleanup_branch = source[source.index("\ncleanup:\n", start):]
-    assert "if(capture_group>1 && !kill_capture_group())result=70;" in cleanup_branch
+    assert "if(capture_group>1 && !kill_capture_group()){CAPTURE_CLEANUP(GROUP);result=70;}" in cleanup_branch
     assert '"terminal":"HOLD"' in cleanup_branch.replace(chr(92), "")
