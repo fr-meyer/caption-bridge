@@ -154,11 +154,28 @@ def test_preview_future_dispatch_makes_no_provider_request(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("alias", ALIASES)
-def test_documented_alias_stays_disabled_until_actual_dispatch_contract_matches(alias):
+def test_documented_alias_requires_identical_actual_dispatch_contract(alias, monkeypatch):
     cache = populate([account(GLM, aliases=[alias])])
-    assert not by_id(cache)[alias]["enabled"]
-    assert by_id(cache)[alias]["reason"] == "alias_execution_contract_unverified"
-    assert alias not in models.EXECUTION_POLICIES
+    monkeypatch.setattr(models, "catalogue", cache)
+    choice = by_id(cache)[alias]
+    assert choice["enabled"]
+    assert choice["catalogue_target"] == GLM
+    assert models.EXECUTION_POLICIES[alias] == models.EXECUTION_POLICIES[GLM]
+    config = AppConfig(_env_file=None, TRANSLATION_TIMEOUT_MS=1234,
+                       TRANSLATION_GLM_TIMEOUT_MS=5678)
+    dispatcher = SimpleNamespace(_config=config)
+    assert TranslationDispatcher._timeout_for_model(dispatcher, alias) == 5678
+    assert TranslationDispatcher._timeout_for_model(dispatcher, GLM) == 5678
+    assert models.translation_output_limit(alias, "high") == 4096
+    assert models.validate_reasoning_effort("high", alias) == "high"
+    assert models.validate_translation_model(alias, config) == alias  # preserve selector
+
+
+@pytest.mark.parametrize("alias", ALIASES)
+def test_documented_alias_without_account_resolution_remains_disabled(alias):
+    choice = by_id(populate([account(alias)]))[alias]
+    assert not choice["enabled"]
+    assert choice["reason"] == "alias_target_unverified"
 
 
 @pytest.mark.parametrize("alias", ALIASES)

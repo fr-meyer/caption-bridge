@@ -7,7 +7,7 @@ requests 20 seconds, GLM-family requests 20 seconds, and Stop/drain 30 seconds.
 The existing environment settings are `TRANSLATION_TIMEOUT_MS`,
 `TRANSLATION_LARGE_TIMEOUT_MS`, `TRANSLATION_GLM_TIMEOUT_MS`, and
 `TRANSLATION_DRAIN_TIMEOUT_MS`. Request settings remain bounded to 100–120,000ms;
-drain remains bounded to 1,000–120,000ms. No family, model, default, retry count,
+drain remains bounded to 1,000–300,000ms. No family, model, default, retry count,
 output limit, concurrency limit or SDK transport setting is changed here.
 
 A longer attended-run override is not sufficient evidence for a universal

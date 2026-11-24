@@ -102,7 +102,8 @@ class TranslationDispatcher:
             validate_translation_model(model, self._config)
         except ValueError:
             self._record_failure(segment.seq, session_id, "admission",
-                                 "model_catalogue_unavailable", error_type="policy_error")
+                                 "model_catalogue_unavailable", error_type="policy_error",
+                                 request_timeout_ms=self._timeout_for_model(model))
             self._session_manager.mark_translation_failed(
                 segment.seq, session_id, reason="model_catalogue_unavailable"
             )
@@ -111,7 +112,8 @@ class TranslationDispatcher:
             validate_reasoning_effort(getattr(segment, "translation_reasoning_effort", None) or "default", model)
         except ValueError:
             self._record_failure(segment.seq, session_id, "admission",
-                                 "model_effort_unavailable", error_type="policy_error")
+                                 "model_effort_unavailable", error_type="policy_error",
+                                 request_timeout_ms=self._timeout_for_model(model))
             self._session_manager.mark_translation_failed(
                 segment.seq, session_id, reason="model_effort_unavailable")
             return
@@ -231,7 +233,8 @@ class TranslationDispatcher:
     def _timeout_for_model(self, model: str) -> int:
         if model in {"mistral-large-4", "mistral-large-4-0", "mistral-large-latest"}:
             return self._config.translation_large_timeout_ms
-        if model in {"zai-glm-5-3", "zai-glm-5-3-flash", "deepseek-v4-1-flash-1017"}:
+        if model in {"zai-glm-5-3", "zai-glm-5", "zai-glm-latest",
+                     "zai-glm-5-3-flash", "deepseek-v4-1-flash-1017"}:
             return self._config.translation_glm_timeout_ms
         return self._config.translation_timeout_ms
 

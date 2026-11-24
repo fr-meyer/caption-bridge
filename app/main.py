@@ -50,6 +50,7 @@ reconnect_manager = ReconnectionManager(session_manager=manager, config=settings
 ws.catalogue_loader = dispatcher._provider.list_models
 ws.manager = manager
 ws.poller = poller
+ws.native_capture_selected = lambda: _native_capture_factory is not None
 
 # ---------------------------------------------------------------------------
 # Pipeline state (one session at a time)

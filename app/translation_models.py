@@ -76,8 +76,8 @@ EXECUTION_POLICIES = {
     "mistral-large-4": {"efforts": ["default"], "max_tokens": 4096},
     "mistral-large-4-0": {"efforts": ["default"], "max_tokens": 4096},
     "zai-glm-5-3": {"efforts": ["default", "high"], "max_tokens": 4096},
-    # GLM aliases have public identity evidence, but no execution policies until
-    # the coordinator-owned dispatcher patch gives them GLM deadline parity.
+    "zai-glm-5": {"efforts": ["default", "high"], "max_tokens": 4096},
+    "zai-glm-latest": {"efforts": ["default", "high"], "max_tokens": 4096},
     "zai-glm-5-3-flash": {"efforts": ["default"], "max_tokens": 4096},
     "deepseek-v4-1-flash-1017": {"efforts": ["default"], "max_tokens": 4096},
 }

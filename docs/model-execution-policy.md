@@ -44,15 +44,13 @@ An alias-to-alias chain is not a resolved version. Unknown/deprecated targets,
 conflicting targets, missing capabilities and changed contracts remain disabled.
 An echoed requested alias is not response-resolution evidence.
 
-The registry now records both documented GLM aliases, but deliberately omits
-their execution policies: the existing shared dispatcher recognizes the dated
-GLM selector for its GLM deadline, not these aliases. Matching only output-token
-and effort dictionaries would conceal a 10s versus 20s deadline difference.
-They therefore remain disabled pending the coordinator-applied, independently
-reviewed dispatcher parity patch and identical alias policies together. This
-is ordinary source integration work, not an owner/account gate. Even after
-that patch, missing actual account resolution keeps them unavailable. No
-account call, alias resolution, provider quality or live acceptance is claimed.
+The registry records both documented GLM aliases with the dated standard GLM
+execution contract (default/high effort, 4096 output-token ceiling). The shared
+dispatcher routes these exact selectors through the same configured GLM deadline,
+not the shorter ordinary-chat deadline. The requested selector is preserved;
+there is no silent target substitution. Missing actual account resolution still
+keeps aliases unavailable. No account call, real alias resolution, provider
+quality or live acceptance is claimed by this offline source implementation.
 
 Use the existing [provider evidence](provider-evidence-20261124.md) for captured
 public declarations and the unresolved account/contract leaves. Previously saved

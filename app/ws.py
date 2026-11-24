@@ -246,6 +246,7 @@ def _enqueue_outbound(
 # Module-level references set by main.py at startup
 manager: SessionManager | None = None
 start_pipeline: Callable[[], Any] | None = None
+native_capture_selected: Callable[[], bool] | None = None
 stop_pipeline: Callable[[], Any] | None = None
 finish_input: Callable[[], Any] | None = None
 poller: ReadinessPoller | None = None
@@ -543,8 +544,23 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _native_output_closed() -> bool:
+    if native_capture_selected is None:
+        return False
+    try:
+        return native_capture_selected() is not False
+    except Exception:
+        return True
+
+
+def _reject_native_output(queue, obs) -> None:
+    _enqueue_outbound(queue, {"type": "error", "message": "Native capture requires muted output."}, obs)
+
+
 async def _handle_tts_audio_enabled() -> None:
     assert manager is not None
+    if _native_output_closed():
+        return
     if manager._tts_dispatcher is None:
         return
     manager._tts_dispatcher.set_audio_unlocked(True)
@@ -557,6 +573,9 @@ async def _handle_tts_mute(
     obs: _OutboundObsState,
 ) -> None:
     assert manager is not None
+    if msg.get("muted") is False and _native_output_closed():
+        _reject_native_output(outbound_queue, obs)
+        return
     muted = msg.get("muted")
     if not isinstance(muted, bool):
         _enqueue_outbound(
@@ -572,6 +591,8 @@ async def _handle_tts_mute(
 
 def _handle_tts_catch_up(msg: dict) -> None:
     assert manager is not None
+    if _native_output_closed():
+        return
     dispatcher = manager._tts_dispatcher
     epoch = msg.get("tts_epoch")
     if dispatcher is None or manager.session.status not in {
@@ -593,6 +614,9 @@ async def _handle_tts_replay(
     obs: _OutboundObsState,
 ) -> None:
     assert manager is not None
+    if _native_output_closed():
+        _reject_native_output(outbound_queue, obs)
+        return
     seq = msg.get("seq")
     if not isinstance(seq, int):
         _enqueue_outbound(
@@ -740,6 +764,9 @@ async def _handle_start(
         return
 
     tts_muted = msg.get("tts_muted", False)
+    if tts_muted is False and _native_output_closed():
+        _reject_native_output(outbound_queue, obs)
+        return
     if not isinstance(tts_muted, bool):
         _enqueue_outbound(
             outbound_queue,
@@ -871,6 +898,9 @@ async def _handle_new_session(
 ) -> None:
     assert manager is not None
     tts_muted = msg.get("tts_muted", False)
+    if tts_muted is False and _native_output_closed():
+        _reject_native_output(outbound_queue, obs)
+        return
     if not isinstance(tts_muted, bool):
         _enqueue_outbound(
             outbound_queue,

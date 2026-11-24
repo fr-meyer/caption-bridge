@@ -70,3 +70,36 @@ def test_real_dispatcher_output_limit_does_not_become_success(tmp_path):
         assert dispatcher.diagnostics_snapshot()["first_failure"]["reason"] == "provider_output_limit"
         assert dispatcher.diagnostics_snapshot()["in_flight"] == 0
     asyncio.run(scenario())
+
+
+def test_admission_diagnostics_use_segment_model_budget(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.translate as translate
+
+    class NeverProvider:
+        name = "offline"
+
+        async def translate(self, **request):
+            raise AssertionError("admission failure must not call provider")
+
+    for failure in ("model", "effort"):
+        config = config_at(tmp_path, TRANSLATION_TIMEOUT_MS=10000,
+                           TRANSLATION_LARGE_TIMEOUT_MS=20000)
+        manager = SessionManager(config)
+        dispatcher = TranslationDispatcher(manager, config, NeverProvider())
+        segment = SimpleNamespace(seq=1, translation_model="mistral-large-latest",
+                                  translation_reasoning_effort="default")
+        def reject(*args):
+            raise ValueError("unavailable")
+        with monkeypatch.context() as patch:
+            patch.setattr(translate, "validate_translation_model",
+                          reject if failure == "model" else lambda *args: None)
+            patch.setattr(translate, "validate_reasoning_effort", reject)
+            dispatcher.dispatch(segment, [], manager.session.id, "en")
+        row = dispatcher.diagnostics_snapshot()["first_failure"]
+        assert row["stage"] == "admission"
+        assert row["request_timeout_ms"] == 20000
+        assert row["reason"] == ("model_catalogue_unavailable" if failure == "model"
+                                 else "model_effort_unavailable")
+        assert not dispatcher._in_flight
