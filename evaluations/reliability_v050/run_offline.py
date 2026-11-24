@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess
 import sys
 import time
@@ -29,6 +30,67 @@ def forbidden(label):
         raise AssertionError("offline_external_io_denied")
 
     return deny
+
+
+def source_file_value(root, name):
+    """Read source only beneath a frozen root; never resolve an ancestor alias.
+
+    A direct leaf symlink binds link TEXT only (the existing digest contract),
+    not resolved executable bytes. Other reparse points, including junctions,
+    fail closed. Windows component checks are not native/race qualification.
+    """
+    root, relative = Path(root).absolute(), Path(name)
+    if relative.is_absolute() or relative.drive or not relative.parts or ".." in relative.parts:
+        raise ValueError("source_path_outside_root")
+    path = root
+    components = [root]
+    for part in relative.parts:
+        path = path / part
+        components.append(path)
+    leaf_link = False
+    for index, component in enumerate(components):
+        try:
+            metadata = component.lstat()  # Inspect each component before reading any bytes.
+        except FileNotFoundError:
+            return b"missing"
+        last = index == len(components) - 1
+        if stat.S_ISLNK(metadata.st_mode):
+            if not last:
+                raise ValueError("source_ancestor_alias")
+            leaf_link = True
+        elif getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("source_reparse_alias")
+        elif not last and not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("source_ancestor_not_directory")
+        elif last and not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("source_not_regular_file")
+    # POSIX descriptor-relative reads also close the check/read replacement gap.
+    # Windows has no equivalent stdlib dir_fd route: all components above are
+    # checked fail-closed, without claiming native Windows atomic/race proof.
+    if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(root, flags)
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            if leaf_link:
+                return b"symlink\0" + os.fsencode(os.readlink(relative.name, dir_fd=directory))
+            descriptor = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                 dir_fd=directory)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError("source_not_regular_file")
+                with os.fdopen(descriptor, "rb", closefd=False) as source:
+                    return b"file\0" + source.read()
+            finally:
+                os.close(descriptor)
+        finally:
+            os.close(directory)
+    if leaf_link:
+        return b"symlink\0" + os.fsencode(os.readlink(path))
+    return b"file\0" + path.read_bytes()
 
 
 def install_guards():

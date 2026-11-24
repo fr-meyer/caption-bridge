@@ -43,7 +43,13 @@ def fake_browser_media(page: Page) -> None:
 
 
 @pytest.fixture
-def term_server(tmp_path):
+def term_controls():
+    """Record every inbound frame before the fixture dispatch/ignore filter."""
+    return []
+
+
+@pytest.fixture
+def term_server(tmp_path, term_controls):
     config = AppConfig(_env_file=None, MISTRAL_TTS_ENABLED=False,
                        journal_dir=str(tmp_path / "journal"), reliability_dir=str(tmp_path / "reliability"))
     manager = SessionManager(config)
@@ -78,6 +84,7 @@ def term_server(tmp_path):
         try:
             while True:
                 message = orjson.loads(await connection.receive_text())
+                term_controls.append(message)
                 if message.get("type") not in {"update_terminology", "undo_terminology"}:
                     continue
                 try:
@@ -276,18 +283,59 @@ def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term
     assert manager.session.status == "listening"
 
 
-def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_server):
+def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_server, term_controls):
     url, manager = term_server
+    # Capture synchronous sends as well: a server/event-loop race cannot hide an
+    # accidental Stop behind the fixture's intentionally inert backend.
+    page.add_init_script("""(() => {
+        window.termShortcutFrames = [];
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function(payload) {
+            window.termShortcutFrames.push(JSON.parse(payload));
+            return send.call(this, payload);
+        };
+    })();""")
     page.goto(url, wait_until="domcontentloaded")
     opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
     opener.focus()
     page.keyboard.press("Enter")
-    page.keyboard.insert_text("protocol term")
+    # type()/press() dispatch real keydown/keyup. Explicit Space exercises the
+    # global Stop binding; letter/font bindings are checked on modal controls.
+    page.keyboard.type("protocol")
+    page.keyboard.press("Space")
+    page.keyboard.type("term")
     expect(page.locator("#term-source")).to_have_value("protocol term")
     page.keyboard.press("Tab")
-    page.keyboard.insert_text("clear rendering")
+    page.keyboard.type("clear")
+    page.keyboard.press("Space")
+    page.keyboard.type("rendering")
+    expect(page.locator("#term-preferred")).to_have_value("clear rendering")
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Shift+Tab")
+    expect(page.locator("#term-kind")).to_be_focused()
+    for key in ["f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    page.locator("#term-close").focus()
+    for key in ["f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    # Anchor focus on modal help content, as assistive navigation can. This is
+    # deliberately not an input/button: removing the modal-level guard must
+    # expose Space -> Stop even when the ordinary text-field guard remains.
+    page.locator("#term-help").evaluate("element => { element.tabIndex = -1; element.focus(); }")
+    expect(page.locator("#term-help")).to_be_focused()
+    for key in ["Space", "f", "s", "+", "-"]:
+        page.keyboard.press(key)
+    assert page.evaluate("document.fullscreenElement === null")
     page.keyboard.press("Escape")
     expect(opener).to_be_focused()
+    expect(page.locator("#status-label")).to_contain_text("Listening")
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    # The positive acknowledgement proves capture is live. No session/control
+    # sends are permitted, even if the backend ignores them without changing state.
+    sent = page.evaluate("window.termShortcutFrames")
+    assert any(message["type"] == "render_ack" for message in sent)
+    assert [message for message in sent if message["type"] != "render_ack"] == []
+    assert [message for message in term_controls if message["type"] != "render_ack"] == []
     assert manager.session.status == "listening"
     assert manager.session.terminology_version == 0
     assert manager.session.glossary is None
