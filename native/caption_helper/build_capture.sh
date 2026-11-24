@@ -30,7 +30,7 @@ for SPEC in A:1 B:2; do
  /usr/bin/codesign --sign - --identifier "local.captionbridge.$NAME" --options runtime --timestamp=none "$BIN/$NAME"
 done
 python3 "$ROOT/native/caption_helper/generate_capture_pins.py" "$BIN" "$OUT/capture_pins.h"
-/usr/bin/clang -Wall -Wextra -Werror -Os -I"$OUT"  "$ROOT/native/caption_helper/capture_controller.c" -framework Security -framework CoreFoundation  -o "$BIN/CaptureController"
+/usr/bin/clang -Wall -Wextra -Werror -Os -I"$OUT"  "$ROOT/native/caption_helper/capture_controller.c" -framework Security -framework CoreFoundation -lproc -o "$BIN/CaptureController"
 /usr/bin/codesign --sign - --identifier local.captionbridge.capture.controller --options runtime  --timestamp=none "$BIN/CaptureController"
 /usr/bin/codesign --force --sign - --options runtime --timestamp=none  --entitlements "$ROOT/native/caption_helper/entitlements.plist" "$OUT/CaptionHelper.app"
 /usr/bin/codesign --verify --deep --strict "$OUT/CaptionHelper.app"

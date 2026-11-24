@@ -16,6 +16,8 @@
 #ifdef CB_CAPTURE_CONTROLLER
 #include "capture_pins.h"
 #include "capture_protocol.h"
+#include "owned_group_closure.h"
+static cb_owned_group_member capture_members[CB_OWNED_GROUP_MEMBERS];
 static cb_capture_options capture_options;
 static int capture_stop_fd=-1,capture_pcm_fd=-1,capture_finish_fd=-1;
 static int capture_close[2][2]={{-1,-1},{-1,-1}};
@@ -171,6 +173,10 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
 #endif
  failure_stage="IDENTITY_VERIFY";failure_code=-10002;
  if(!verify(pid,path,role))goto done;
+#ifdef CB_CAPTURE_CONTROLLER
+ /* Pin the birth/parent/group only after the existing exact image check. */
+ if(!cb_owned_group_pin(&capture_members[role-1],pid,capture_group)){CAPTURE_FAILURE(GROUP_CUSTODY,role);goto done;}
+#endif
  failure_stage="CAPABILITY";failure_code=0;errno=0;
 #ifdef CB_CAPTURE_CONTROLLER
  struct capability capability={.deadline=deadline,.parent=getpid(),.role=(uint32_t)role};
@@ -246,7 +252,15 @@ static int kill_capture_group(void){
  /* An owned unreaped leader pins PGID. Never signal after ECHILD/reap. */
  if(capture_group<=1 || retained[0]!=capture_group){CAPTURE_FAILURE(GROUP_CUSTODY,1);return 0;}
  int status=-1;if(observe_owned(capture_group,&status)<0){CAPTURE_SYSTEM_FAILURE(GROUP_OBSERVE,1);return 0;}
- if(kill(-capture_group,SIGKILL)==0 || errno==ESRCH){CAPTURE_EVENT(GROUP_SIGNAL);return 1;}
+ if(kill(-capture_group,SIGKILL)==0){CAPTURE_EVENT(GROUP_SIGNAL);return 1;}
+ int signal_errno=errno;
+ /* Darwin excludes zombies from killpg recipients. EPERM is benign ONLY after
+  * an independent complete membership/identity/custody proof, never statuses
+  * alone. Partial spawn and any unknown/live/denied census remain HOLD. */
+ if(signal_errno==EPERM && cb_owned_group_all_zombies(capture_group,capture_members)){
+  CAPTURE_EVENT(GROUP_SIGNAL);return 1;
+ }
+ errno=signal_errno; /* Preserve the actual first signal cause, not census errno. */
  CAPTURE_SYSTEM_FAILURE(GROUP_SIGNAL,1);return 0;
 }
 #endif
@@ -491,7 +505,16 @@ cleanup:
  cb_stop(&state,mach_continuous_time(),false,false,false);
  if(closure_error)result=70;
 #ifdef CB_CAPTURE_CONTROLLER
- for(int i=0;i<3;i++)if(identities[i]>0){errno=0;int present=kill(identities[i],0);if(present==0 || errno!=ESRCH){if(present==0){CAPTURE_FAILURE(IDENTITY_VISIBLE,i+1);}else{CAPTURE_SYSTEM_FAILURE(IDENTITY_QUERY,i+1);}CAPTURE_CLEANUP(IDENTITY);result=70;}}
+ /* Successful waitpid readback already consumed each pinned identity. Never
+  * query/signal a possibly recycled numeric PID after that reap. ECHILD here
+  * checks loss of OUR custody, not absence of an unrelated process with that PID. */
+ for(int i=0;i<3;i++)if(identities[i]>0){
+  siginfo_t gone;memset(&gone,0,sizeof(gone));errno=0;
+  int observed=waitid(P_PID,(id_t)identities[i],&gone,WEXITED|WNOHANG|WNOWAIT);
+  if(retained[i]>0 || saved_status[i]<0 || observed==0 || errno!=ECHILD){
+   CAPTURE_SYSTEM_FAILURE(IDENTITY_QUERY,i+1);CAPTURE_CLEANUP(IDENTITY);result=70;
+  }
+ }
  CAPTURE_EVENT(IDENTITIES_CHECKED);
 #else
  for(int i=0;i<3;i++)if(identities[i]>0){errno=0;if(kill(identities[i],0)==0 || errno!=ESRCH)result=70;}

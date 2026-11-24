@@ -41,6 +41,7 @@ SOURCE_FILES = (
     'native/caption_helper/assembly.c', 'native/caption_helper/identity.c',
     'native/caption_helper/state_matrix.c', 'native/caption_helper/budget.h',
     'native/caption_helper/input_state.h', 'native/caption_helper/pcm_transport.h',
+    'native/caption_helper/owned_group_closure.h',
     'native/caption_helper/entitlements.plist', 'native/caption_helper/generate_pins.py',
     'native/caption_helper/capture_controller.c', 'native/caption_helper/capture_guardian.c',
     'native/caption_helper/capture_role.c', 'native/caption_helper/capture_input.c',
