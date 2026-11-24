@@ -167,6 +167,29 @@ def test_fixed_c_stage_registry_matches_parser_and_critical_branches_are_recorde
     assert "end+=" not in source and "deadline+=" not in source
 
 
+def test_state_setup_rejection_precedes_cleanup_without_changing_noaudio_projection():
+    source = (ROOT / "native/caption_helper/assembly.c").read_text()
+    condition = "if(!cb_reserve(&state,end) || !cb_synthetic_input(&state) || !cb_route_change(&state))"
+    branch = (
+        "#ifdef CB_CAPTURE_CONTROLLER\n " + condition + "CAPTURE_REJECT(STATE_SETUP,0);\n"
+        "#else\n " + condition + "goto cleanup;\n#endif"
+    )
+    assert branch in source
+    assert source.index(branch) < source.index("CAPTURE_EVENT(PIPES);")
+    value = packet("STATE_SETUP")
+    value["pids"] = [-1] * 3
+    value["wait_status"] = [-1] * 3
+    value["failure"].update(
+        wait_status=[-1] * 3, events=[1, 8, 10, 14], cleanup_errors=1,
+        elapsed_ns=50, deadline_reached=False,
+    )
+    observed = receipt(value)
+    assert observed["native_terminal"]["failure"]["stage"] == "STATE_SETUP"
+    assert observed["native_terminal"]["failure"]["cleanup_errors"] == 1
+    with pytest.raises(RuntimeError):
+        _terminal(STARTUP, value, 70, no_input=True)
+
+
 @pytest.mark.parametrize("where", ["challenge", "startup"])
 def test_early_packet_in_private_driver_never_passes_challenge_or_startup(tmp_path, where):
     path = tmp_path / "ledger"

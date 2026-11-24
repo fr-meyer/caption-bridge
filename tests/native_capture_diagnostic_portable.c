@@ -20,6 +20,15 @@ int main(void){
  assert(!cb_capture_failure_timing(&d,&elapsed,&window) && !elapsed && !window);
  d.numer=1;d.denom=0;
  assert(!cb_capture_failure_timing(&d,&elapsed,&window));
+ cb_capture_diagnostic setup={.wait_status={-1,-1,-1}};
+ int unspawned[3]={-1,-1,-1};
+ cb_capture_failure_note(&setup,CB_CAPTURE_FAIL_STATE_SETUP,0,150,unspawned);
+ unspawned[0]=18432; /* The first snapshot must not alias later observations. */
+ setup.cleanup_errors|=CB_CAPTURE_CLEANUP_FD;
+ cb_capture_failure_note(&setup,CB_CAPTURE_FAIL_FD_CLOSE,3,200,unspawned);
+ assert(setup.stage==CB_CAPTURE_FAIL_STATE_SETUP && setup.role==0 && setup.when==150);
+ assert(setup.wait_status[0]==-1 && setup.wait_status[1]==-1 && setup.wait_status[2]==-1);
+ assert(setup.cleanup_errors==CB_CAPTURE_CLEANUP_FD);
  puts("{\"portable_helper_unit\":true,\"native_capture_executed\":false}");
  return 0;
 }

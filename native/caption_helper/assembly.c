@@ -351,7 +351,11 @@ int main(int argc,char **argv) {
  if(mach_continuous_time()>=end)CAPTURE_REJECT(STARTUP_DEADLINE,0);
  if(poll(&before_spawn,1,0)!=0)CAPTURE_REJECT(PRELAUNCH_STOP,0);
 #endif
+#ifdef CB_CAPTURE_CONTROLLER
+ if(!cb_reserve(&state,end) || !cb_synthetic_input(&state) || !cb_route_change(&state))CAPTURE_REJECT(STATE_SETUP,0);
+#else
  if(!cb_reserve(&state,end) || !cb_synthetic_input(&state) || !cb_route_change(&state))goto cleanup;
+#endif
 #ifdef CB_CAPTURE_CONTROLLER
  for(int i=0;i<2;i++){
   if(pipe(capture_close[i]))CAPTURE_REJECT(PIPE_SETUP,0);
