@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import threading
 import time
@@ -49,7 +50,41 @@ def term_controls():
 
 
 @pytest.fixture
-def term_server(tmp_path, term_controls):
+def term_reply_gate():
+    gate = threading.Event()
+    gate.set()
+    return gate
+
+
+@pytest.fixture
+def term_rendered():
+    return threading.Event()
+
+
+def _initial_messages(manager):
+    """Restore the room, then send a genuine numeric-seq production caption.
+
+    Snapshot history deliberately has no render acknowledgement. The real
+    delivery gate emits the live event; only the UI may originate render_ack.
+    """
+    assert not manager.config.tts_enabled and manager._tts_dispatcher is None
+    snapshot = {"type": "session_snapshot", **manager.get_snapshot(), "segments": [],
+                "connection_lifecycle": {"connection_id": "conn-000001", "state": "admitted",
+                                         "reason": "owner_admitted"}}
+    events = []
+    listener = events.append
+    manager.subscribe(listener)
+    try:
+        manager.session.highest_pushed_seq = 0
+        manager._try_deliver()
+    finally:
+        manager.unsubscribe(listener)
+    assert len(events) == 1 and events[0]["type"] == "caption" and events[0]["seq"] == 1
+    return [snapshot, *events]
+
+
+@pytest.fixture
+def term_server(tmp_path, term_controls, term_reply_gate, term_rendered):
     config = AppConfig(_env_file=None, MISTRAL_TTS_ENABLED=False,
                        journal_dir=str(tmp_path / "journal"), reliability_dir=str(tmp_path / "reliability"))
     manager = SessionManager(config)
@@ -75,18 +110,18 @@ def term_server(tmp_path, term_controls):
     @app.websocket("/ws")
     async def websocket(connection: WebSocket):
         await connection.accept()
-        await connection.send_bytes(orjson.dumps({
-            "type": "session_snapshot", **manager.get_snapshot(),
-            "connection_lifecycle": {
-                "connection_id": "conn-000001", "state": "admitted", "reason": "owner_admitted",
-            },
-        }))
+        for message in _initial_messages(manager):
+            await connection.send_bytes(orjson.dumps(message))
         try:
             while True:
                 message = orjson.loads(await connection.receive_text())
                 term_controls.append(message)
+                if message.get("type") == "render_ack" and message.get("seq") == 1:
+                    term_rendered.set()
                 if message.get("type") not in {"update_terminology", "undo_terminology"}:
                     continue
+                if not await asyncio.to_thread(term_reply_gate.wait, 10):
+                    raise TimeoutError("synthetic terminology reply gate timed out")
                 try:
                     terminology.change(manager, message, undo=message["type"] == "undo_terminology")
                     event = {"type": "terminology_updated", **terminology.state(manager.session)}
@@ -113,13 +148,16 @@ def term_server(tmp_path, term_controls):
             time.sleep(.02)
     else:
         raise RuntimeError("Synthetic terminology server did not start")
-    yield url, manager
-    server.should_exit = True
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-    with socket.socket() as probe:
-        probe.settimeout(.2)
-        assert probe.connect_ex(("127.0.0.1", port)) != 0, "Synthetic listener must close"
+    try:
+        yield url, manager
+    finally:
+        term_reply_gate.set()
+        server.should_exit = True
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        with socket.socket() as probe:
+            probe.settimeout(.2)
+            assert probe.connect_ex(("127.0.0.1", port)) != 0, "Synthetic listener must close"
 
 
 def open_caption(page: Page, url: str):
@@ -245,7 +283,16 @@ def test_term_focus_updates_read_only_inspection_and_hidden_opener(page: Page, t
 
 
 
-def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term_server):
+def _assert_focus_cycle(page):
+    for key in ["Tab"] * 10 + ["Shift+Tab"] * 10:
+        page.keyboard.press(key)
+        assert page.evaluate("document.querySelector('#term-dialog').contains(document.activeElement)")
+        assert page.evaluate("!document.activeElement.disabled")
+
+
+def test_keyboard_dialog_labels_traversal_pending_save_and_undo(
+    page: Page, term_server, term_reply_gate,
+):
     """Keyboard/focus software contract only, not human assistive-tech acceptance."""
     url, manager = term_server
     page.goto(url, wait_until="domcontentloaded")
@@ -255,6 +302,7 @@ def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term
     dialog = page.get_by_role("dialog", name="Correct a term", exact=True)
     expect(dialog).to_be_visible()
     expect(page.get_by_label("Source term", exact=True)).to_be_focused()
+    _assert_focus_cycle(page)
     page.keyboard.press("Shift+Tab")
     expect(page.get_by_label("Correction type", exact=True)).to_be_focused()
     page.keyboard.press("Tab")
@@ -264,15 +312,28 @@ def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term
     page.keyboard.insert_text("corrected")
     page.keyboard.press("Tab")
     expect(page.get_by_role("button", name="Save for future captions", exact=True)).to_be_focused()
+    term_reply_gate.clear()
     page.keyboard.press("Enter")
+    expect(page.locator("#term-save")).to_be_disabled()
+    expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
+    assert manager.session.terminology_version == 0
+    term_reply_gate.set()
     expect(page.locator("#term-version")).to_contain_text("v1")
     expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
     page.keyboard.press("Shift+Tab")
     expect(page.get_by_role("button", name="Undo last change", exact=True)).to_be_focused()
+    term_reply_gate.clear()
     page.keyboard.press("Enter")
+    expect(page.locator("#term-undo")).to_be_disabled()
+    expect(page.locator("#term-close")).to_be_focused()
+    _assert_focus_cycle(page)
+    assert manager.session.terminology_version == 1
+    term_reply_gate.set()
     expect(page.locator("#term-version")).to_contain_text("v2")
     expect(page.locator("#term-close")).to_be_focused()
-    # Tab may visit the dialog container in some engines, but never background controls.
+    # Retain the original full forward/backward containment assertion after undo.
     for key in ["Tab"] * 10 + ["Shift+Tab"] * 10:
         page.keyboard.press(key)
         assert page.evaluate("document.querySelector('#term-dialog').contains(document.activeElement)")
@@ -283,7 +344,9 @@ def test_keyboard_dialog_labels_traversal_pending_save_and_undo(page: Page, term
     assert manager.session.status == "listening"
 
 
-def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_server, term_controls):
+def test_keyboard_editor_does_not_trigger_session_shortcuts(
+    page: Page, term_server, term_controls, term_rendered,
+):
     url, manager = term_server
     # Capture synchronous sends as well: a server/event-loop race cannot hide an
     # accidental Stop behind the fixture's intentionally inert backend.
@@ -297,6 +360,9 @@ def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_ser
     })();""")
     page.goto(url, wait_until="domcontentloaded")
     opener = page.get_by_role("button", name="Correct term in caption 1", exact=True)
+    expect(page.locator(".caption-translated")).to_have_text("Original translation.")
+    page.wait_for_function("window.termShortcutFrames.some(message => message.type === 'render_ack' && message.seq === 1)")
+    assert term_rendered.wait(timeout=5), "real render_ack must reach the WebSocket fixture"
     opener.focus()
     page.keyboard.press("Enter")
     # type()/press() dispatch real keydown/keyup. Explicit Space exercises the
@@ -333,7 +399,8 @@ def test_keyboard_editor_does_not_trigger_session_shortcuts(page: Page, term_ser
     # The positive acknowledgement proves capture is live. No session/control
     # sends are permitted, even if the backend ignores them without changing state.
     sent = page.evaluate("window.termShortcutFrames")
-    assert any(message["type"] == "render_ack" for message in sent)
+    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in sent)
+    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in term_controls)
     assert [message for message in sent if message["type"] != "render_ack"] == []
     assert [message for message in term_controls if message["type"] != "render_ack"] == []
     assert manager.session.status == "listening"

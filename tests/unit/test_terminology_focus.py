@@ -17,7 +17,9 @@ def test_terminology_focus_with_synthetic_dom() -> None:
         text=True, capture_output=True, timeout=5, check=False,
     )
     assert result.returncode == 0, result.stderr
+    source = (root / "app/static/app.js").read_text(encoding="utf-8")
+    assert 'els.termDialog.addEventListener("keydown", trapTermFocus)' in source
     assert json.loads(result.stdout) == {
-        "tests": 18, "passed": True, "real_browser": False, "network": False,
+        "tests": 28, "passed": True, "real_browser": False, "network": False,
         "audio": False, "permissions": False, "storage": False,
     }
