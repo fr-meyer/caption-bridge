@@ -18,7 +18,8 @@
  X(IDENTITY_VISIBLE) X(IDENTITY_QUERY) X(DIAGNOSTIC_INVALID) \
  X(GROUP_PGID) X(PIN_ARGUMENT) X(PIN_WAIT) X(PIN_TERMINAL) X(PIN_METADATA_QUERY) \
  X(PIN_METADATA_SIZE) X(PIN_METADATA_PID) X(PIN_ZOMBIE) X(PIN_PARENT) X(PIN_GROUP) \
- X(PIN_RUID) X(PIN_EUID) X(PIN_BIRTH_SEC) X(PIN_BIRTH_USEC)
+ X(PIN_RUID) X(PIN_EUID) X(PIN_BIRTH_SEC) X(PIN_BIRTH_USEC) \
+ X(PIN_WAIT_EVENT) X(PIN_WAIT_STATE)
 enum cb_capture_failure_stage {
  CB_CAPTURE_FAIL_NONE=0,
 #define CB_STAGE_ENUM(name) CB_CAPTURE_FAIL_##name,
@@ -46,7 +47,7 @@ enum cb_capture_cleanup_error {
  CB_CAPTURE_CLEANUP_REAP=8,CB_CAPTURE_CLEANUP_IDENTITY=16
 };
 static inline unsigned cb_capture_errno_class(int value){
- switch(value){case EINTR:return 1;case EBADF:return 2;case ECHILD:return 3;
+ switch(value){case 0:return 0;case EINTR:return 1;case EBADF:return 2;case ECHILD:return 3;
  case EPERM:return 4;case ESRCH:return 5;case EINVAL:return 6;default:return 7;}
 }
 static inline const char *cb_capture_errno_name(unsigned value){
@@ -56,6 +57,7 @@ static inline const char *cb_capture_errno_name(unsigned value){
 typedef struct {
  enum cb_capture_failure_stage stage;int role;int wait_status[3];
  unsigned cleanup_errors,reader_events,errno_class,event_count,events[16];
+ int wait_event_known,wait_event_signo,wait_event_code,wait_event_status,wait_event_pid_relation;
  uint64_t start,deadline,when;uint32_t numer,denom;
 } cb_capture_diagnostic;
 static inline void cb_capture_failure_note(cb_capture_diagnostic *d,

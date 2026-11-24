@@ -14,7 +14,7 @@ FD_CLOSE SPAWN_ACTION_DESTROY SPAWN_ATTR_DESTROY STARTUP_OUTPUT OBSERVE_OWNED CH
 ACTIVE_DEADLINE STOP_POLL STOP_READER WALL_EXPIRED LOOP_SLEEP OBSERVATION_INCOMPLETE
 GROUP_OBSERVE GROUP_SIGNAL REAP_WAIT REAP_SIGNAL REAP_TIMEOUT IDENTITY_VISIBLE
 IDENTITY_QUERY DIAGNOSTIC_INVALID
-GROUP_PGID PIN_ARGUMENT PIN_WAIT PIN_TERMINAL PIN_METADATA_QUERY PIN_METADATA_SIZE PIN_METADATA_PID PIN_ZOMBIE PIN_PARENT PIN_GROUP PIN_RUID PIN_EUID PIN_BIRTH_SEC PIN_BIRTH_USEC'''.split())
+GROUP_PGID PIN_ARGUMENT PIN_WAIT PIN_TERMINAL PIN_METADATA_QUERY PIN_METADATA_SIZE PIN_METADATA_PID PIN_ZOMBIE PIN_PARENT PIN_GROUP PIN_RUID PIN_EUID PIN_BIRTH_SEC PIN_BIRTH_USEC PIN_WAIT_EVENT PIN_WAIT_STATE'''.split())
 _STAGES = {'preflight', 'spawn', 'challenge', 'debit', 'budget_delivery', 'startup',
            'terminal_read', 'controller_wait', 'eof', 'terminal_validate', 'complete'}
 _ERRORS = {'RuntimeError', 'ValueError', 'OSError', 'TimeoutError', 'JSONDecodeError',
@@ -29,7 +29,19 @@ _CLEANUP = ('emergency_closed', 'wait_completed', 'kill_sent', 'streams_closed',
 
 def failure_shape_valid(value):
     """Fixed-enum causal observation only; never a closure or timing proof."""
-    if type(value) is not dict or set(value) != _FAILURE_KEYS:
+    if type(value) is not dict or set(value) not in (_FAILURE_KEYS, _FAILURE_KEYS | {'wait_event'}):
+        return False
+    event = value.get('wait_event')
+    if event is not None:
+        if type(event) is not dict or set(event) != {'signo', 'code', 'status', 'pid_relation'}:
+            return False
+        if any(type(event[key]) is not int or not -(2 ** 31) <= event[key] < 2 ** 31
+               for key in ('signo', 'code', 'status')):
+            return False
+        if type(event['pid_relation']) is not int or event['pid_relation'] not in (0, 1, 2):
+            return False
+    if (type(value['stage']) is str
+            and value['stage'] in {'PIN_WAIT_EVENT', 'PIN_WAIT_STATE'} and event is None):
         return False
     if type(value['stage']) is not str or value['stage'] not in _FAILURE_STAGES:
         return False
@@ -109,7 +121,8 @@ def validated_terminal(value):
                     terminal='HOLD', pids=list(value['pids']), wait_status=list(value['wait_status']),
                     cleanup_killed=list(value['cleanup_killed']))
     if value['schema'] == 2:
-        terminal['failure'] = {key: list(item) if type(item) is list else item
+        terminal['failure'] = {key: (list(item) if type(item) is list else
+                                           dict(item) if type(item) is dict else item)
                                for key, item in value['failure'].items()}
     return terminal
 

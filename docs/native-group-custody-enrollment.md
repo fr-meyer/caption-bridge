@@ -1,4 +1,9 @@
-# Suspended-spawn custody enrollment: diagnostic follow-through
+# Suspended-spawn custody enrollment: historical diagnostic follow-through
+
+This records the 20d source delta later consumed by 6c45804. For the actual 6c
+hosted failure, kernel UNIX03 macro collision, semantic wait-event/cleanup repair
+and narrow paired negative-diagnostic proposal, see
+[Wait events and custody](native-waitid-event-custody.md).
 
 ## Actual evidence and unknown cause
 

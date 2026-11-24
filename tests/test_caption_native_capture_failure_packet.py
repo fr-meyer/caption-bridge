@@ -161,7 +161,7 @@ def test_fixed_c_stage_registry_matches_parser_and_critical_branches_are_recorde
             "GROUP_PGID", "PIN_WAIT", "PIN_METADATA_QUERY", "PIN_METADATA_SIZE",
             "PIN_METADATA_PID", "PIN_PARENT", "PIN_GROUP", "PIN_RUID", "PIN_EUID",
             "PIN_BIRTH_SEC", "PIN_BIRTH_USEC", "PIN_TERMINAL", "PIN_ZOMBIE",
-            "PIN_ARGUMENT"} <= reasons
+            "PIN_ARGUMENT", "PIN_WAIT_EVENT", "PIN_WAIT_STATE"} <= reasons
     active = source.split("while(mach_continuous_time()<reap_end){", 1)[1].split("#else", 1)[0]
     assert all("CAPTURE_FAILURE(" in line or "CAPTURE_SYSTEM_FAILURE(" in line
                for line in active.splitlines() if "result=70" in line)
@@ -193,14 +193,15 @@ def test_owned_pin_reasons_preserve_guards_and_suspended_probe_order():
     start = header.index("cb_owned_group_pin_detail(")
     pin = header[start:header.index("static inline int cb_owned_group_pin(", start)]
     assert "memset(&info,0,sizeof(info))" in pin
-    assert "WEXITED|WNOHANG|WNOWAIT" in pin
-    for guard in ("if(info.si_pid)", "p_stat==SZOMB", "e_ppid!=getpid()",
+    assert "WEXITED|WSTOPPED|WNOHANG|WNOWAIT" in pin
+    for guard in ("event==CB_WAIT_INVALID", "event==CB_WAIT_TERMINAL",
+                  "event==CB_WAIT_STOPPED && row.kp_proc.p_stat!=SSTOP", "p_stat==SZOMB", "e_ppid!=getpid()",
                   "e_pgid!=group", "p_ruid!=getuid()", "cr_uid!=geteuid()",
                   "tv_sec<=0", "tv_usec<0", "tv_usec>=1000000"):
         assert guard in pin
     for reason in ("ARGUMENT", "WAIT", "TERMINAL", "METADATA_QUERY", "METADATA_SIZE",
                    "METADATA_PID", "ZOMBIE", "PARENT", "GROUP", "RUID", "EUID",
-                   "BIRTH_SEC", "BIRTH_USEC"):
+                   "BIRTH_SEC", "BIRTH_USEC", "WAIT_EVENT", "WAIT_STATE"):
         assert "CB_PIN_" + reason in header
         assert ("case CB_PIN_" + reason + ":CAPTURE_PIN_FAILURE(PIN_" + reason
                 + ",role,system_errno);break;") in assembly
@@ -215,13 +216,67 @@ def test_owned_pin_reasons_preserve_guards_and_suspended_probe_order():
     assert "posix_spawn(&pid,executable,&actions,&attr,argv,env)" in probe
     assert "stopped.kp_proc.p_stat!=SSTOP" in probe
     verify = probe.index("!verify_member(pid)")
-    enrolled = probe.index("cb_owned_group_pin_detail(pin,pid,*group,&pin_errno)")
+    enrolled = probe.index("cb_owned_group_pin_detail(pin,pid,*group,&pin_errno,NULL)")
     continued = probe.index("kill(pid,SIGCONT)")
     ready = probe.index("wait_ready(ready_pipe[0],&r,end)", continued)
     assert verify < enrolled < continued < ready
     assert "fork()" not in probe
     assert "pin_result!=CB_PIN_OK" in assembly
-    assert "capture_pin_failure(pin_result,role,pin_errno);goto done" in assembly
+    assert "capture_pin_failure(pin_result,role,pin_errno,pid,&pin_readback);goto done" in assembly
+
+
+def test_shared_wait_event_classifier_never_equates_pid_with_exit():
+    header = (ROOT / "native/caption_helper/owned_group_closure.h").read_text()
+    classifier = header[header.index("cb_owned_wait_classify("):header.index("/* Fixed diagnostic reasons")]
+    for guard in ("info->si_pid==0", "!info->si_signo && !info->si_code && !info->si_status",
+                  "info->si_pid!=pid || info->si_signo!=SIGCHLD", "default:return CB_WAIT_INVALID"):
+        assert guard in classifier
+    for code in ("CLD_EXITED", "CLD_KILLED", "CLD_DUMPED", "CLD_STOPPED"):
+        assert "case " + code + ":" in classifier
+    assert "info->si_status>=0 && info->si_status<NSIG?CB_WAIT_STOPPED:CB_WAIT_INVALID" in classifier
+    assert "CLD_TRAPPED" not in classifier and "CLD_CONTINUED" not in classifier
+    assembly = (ROOT / "native/caption_helper/assembly.c").read_text()
+    probe = (ROOT / "native/caption_helper/probe_group_signal.c").read_text()
+    assert "cb_owned_wait_classify(pid,&info)" in assembly
+    assert "cb_owned_wait_classify(pid,info)" in probe
+    assert "if(event!=CB_WAIT_TERMINAL)return 0" in assembly
+    assert "return event==CB_WAIT_TERMINAL?1:0" in probe
+    assert "info.si_status<0 || info.si_status>255" in assembly
+
+
+def test_probe_cleanup_requires_fresh_waitpid_custody_before_kill():
+    probe = (ROOT / "native/caption_helper/probe_group_signal.c").read_text()
+    start = probe.index("static int cleanup_reap(")
+    cleanup = probe[start:probe.index("static int run_case(", start)]
+    assert "int status=-1;pid_t done=waitpid(pid,&status,WNOHANG)" in cleanup
+    assert "if(done==pid){*saved=status;*held=0;return 1;}" in cleanup
+    assert "if(done==0)return 0" in cleanup
+    assert "if(done<0 && errno==EINTR)return 2" in cleanup
+    assert "observe(" not in cleanup and "waitid(" not in cleanup
+    assert "until_ms(2000),grace=until_ms(1000)" in cleanup
+    assert "held[i] && !untrusted[i] && before(end)" in cleanup
+    assert "if(r<0){ok=0;untrusted[i]=1;break;}" in cleanup
+    assert "if(r==0){\n   if(kill(pids[i],SIGKILL)" in cleanup
+    assert "cleanup_reap(pids[i],&held[i],&statuses[i])" in cleanup
+    assert "for(int i=0;i<OWNED_CAP;i++)if(held[i])ok=0" in cleanup
+    assert probe.count("static const char *maybe_bool(") == 1
+
+
+def test_raw_pin_wait_readback_is_first_cause_bounded_and_legacy_compatible():
+    assembly = (ROOT / "native/caption_helper/assembly.c").read_text()
+    diagnostic = (ROOT / "native/caption_helper/capture_diagnostic.h").read_text()
+    parser = (ROOT / "native/caption_helper/capture_diagnostics.py").read_text()
+    assert "if(first && readback && (reason==CB_PIN_TERMINAL" in assembly
+    for key in ("signo", "code", "status"):
+        assert "capture_diagnostic.wait_event_" + key + "=readback->si_" + key in assembly
+    assert "!readback->si_pid?0:(readback->si_pid==pid?1:2)" in assembly
+    assert "case 0:return 0;case EINTR:" in diagnostic
+    assert "set(value) not in (_FAILURE_KEYS, _FAILURE_KEYS | {'wait_event'})" in parser
+    assert "set(event) != {'signo', 'code', 'status', 'pid_relation'}" in parser
+    assert "not -(2 ** 31) <= event[key] < 2 ** 31" in parser
+    assert "event['pid_relation'] not in (0, 1, 2)" in parser
+    assert "dict(item) if type(item) is dict else item" in parser
+    assert "if (type(value['stage']) is str" in parser
 
 def test_state_setup_rejection_precedes_cleanup_without_changing_noaudio_projection():
     source = (ROOT / "native/caption_helper/assembly.c").read_text()

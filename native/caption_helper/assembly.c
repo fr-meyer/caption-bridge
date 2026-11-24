@@ -48,8 +48,11 @@ static const int *capture_current_status=NULL;
 #define CAPTURE_PIN_FAILURE(reason,role,value) do{int first_failure=capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE;CAPTURE_FAILURE(reason,role);if(first_failure)capture_diagnostic.errno_class=cb_capture_errno_class(value);}while(0)
 #define CAPTURE_EVENT(event) cb_capture_event_note(&capture_diagnostic,(enum cb_capture_event)(CB_CAPTURE_EVENT_##event))
 #define CAPTURE_CLEANUP(error) (capture_diagnostic.cleanup_errors|=CB_CAPTURE_CLEANUP_##error)
-static void capture_pin_failure(enum cb_owned_group_pin_result reason,int role,int system_errno){
+static void capture_pin_failure(enum cb_owned_group_pin_result reason,int role,int system_errno,pid_t pid,const siginfo_t *readback){
+ int first=capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE;
  switch(reason){
+  case CB_PIN_WAIT_EVENT:CAPTURE_PIN_FAILURE(PIN_WAIT_EVENT,role,system_errno);break;
+  case CB_PIN_WAIT_STATE:CAPTURE_PIN_FAILURE(PIN_WAIT_STATE,role,system_errno);break;
   case CB_PIN_ARGUMENT:CAPTURE_PIN_FAILURE(PIN_ARGUMENT,role,system_errno);break;
   case CB_PIN_WAIT:CAPTURE_PIN_FAILURE(PIN_WAIT,role,system_errno);break;
   case CB_PIN_TERMINAL:CAPTURE_PIN_FAILURE(PIN_TERMINAL,role,system_errno);break;
@@ -65,6 +68,12 @@ static void capture_pin_failure(enum cb_owned_group_pin_result reason,int role,i
   case CB_PIN_BIRTH_USEC:CAPTURE_PIN_FAILURE(PIN_BIRTH_USEC,role,system_errno);break;
   default:CAPTURE_FAILURE(GROUP_CUSTODY,role);break;
  }
+ if(first && readback && (reason==CB_PIN_TERMINAL || reason==CB_PIN_WAIT_EVENT || reason==CB_PIN_WAIT_STATE)){
+  capture_diagnostic.wait_event_known=1;
+  capture_diagnostic.wait_event_signo=readback->si_signo;capture_diagnostic.wait_event_code=readback->si_code;
+  capture_diagnostic.wait_event_status=readback->si_status;
+  capture_diagnostic.wait_event_pid_relation=!readback->si_pid?0:(readback->si_pid==pid?1:2);
+ }
 }
 static int capture_failure_packet(int physical,const pid_t *pids,const int *statuses){
  if(capture_diagnostic.stage==CB_CAPTURE_FAIL_NONE)CAPTURE_FAILURE(DIAGNOSTIC_INVALID,0);
@@ -76,9 +85,15 @@ static int capture_failure_packet(int physical,const pid_t *pids,const int *stat
   pids[0],pids[1],pids[2],statuses[0],statuses[1],statuses[2],cleanup_killed[0],cleanup_killed[1],cleanup_killed[2],
   cb_capture_failure_name(capture_diagnostic.stage),capture_diagnostic.role,cb_capture_errno_name(capture_diagnostic.errno_class),capture_diagnostic.reader_events,capture_diagnostic.cleanup_errors)<0)return 70;
  for(unsigned i=0;i<capture_diagnostic.event_count;i++)if(printf("%s%u",i?",":"",capture_diagnostic.events[i])<0)return 70;
- if(printf("],\"wait_status\":[%d,%d,%d],\"timing_valid\":%s,\"elapsed_ns\":%llu,\"window_ns\":%llu,\"deadline_reached\":%s}}\n",
+ if(printf("],\"wait_status\":[%d,%d,%d],\"timing_valid\":%s,\"elapsed_ns\":%llu,\"window_ns\":%llu,\"deadline_reached\":%s",
   capture_diagnostic.wait_status[0],capture_diagnostic.wait_status[1],capture_diagnostic.wait_status[2],known?"true":"false",
-  (unsigned long long)elapsed,(unsigned long long)window,reached)<0 || fflush(stdout))return 70;
+  (unsigned long long)elapsed,(unsigned long long)window,reached)<0)return 70;
+ if(capture_diagnostic.wait_event_known){
+  if(printf(",\"wait_event\":{\"signo\":%d,\"code\":%d,\"status\":%d,\"pid_relation\":%d}",
+   capture_diagnostic.wait_event_signo,capture_diagnostic.wait_event_code,
+   capture_diagnostic.wait_event_status,capture_diagnostic.wait_event_pid_relation)<0)return 70;
+ }else if(printf(",\"wait_event\":null")<0)return 70;
+ if(printf("}}\n")<0 || fflush(stdout))return 70;
  return 70;
 }
 static int capture_early_failure(enum cb_capture_failure_stage stage,int physical){
@@ -195,8 +210,9 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  if(!verify(pid,path,role))goto done;
 #ifdef CB_CAPTURE_CONTROLLER
  /* Pin the birth/parent/group only after the existing exact image check. */
- int pin_errno=0;enum cb_owned_group_pin_result pin_result=cb_owned_group_pin_detail(&capture_members[role-1],pid,capture_group,&pin_errno);
- if(pin_result!=CB_PIN_OK){capture_pin_failure(pin_result,role,pin_errno);goto done;}
+ int pin_errno=0;siginfo_t pin_readback;
+ enum cb_owned_group_pin_result pin_result=cb_owned_group_pin_detail(&capture_members[role-1],pid,capture_group,&pin_errno,&pin_readback);
+ if(pin_result!=CB_PIN_OK){capture_pin_failure(pin_result,role,pin_errno,pid,&pin_readback);goto done;}
 #endif
  failure_stage="CAPABILITY";failure_code=0;errno=0;
 #ifdef CB_CAPTURE_CONTROLLER
@@ -262,9 +278,15 @@ done:
 #ifdef CB_CAPTURE_CONTROLLER
 static int observe_owned(pid_t pid,int *status){
  siginfo_t info;memset(&info,0,sizeof(info));
- if(waitid(P_PID,(id_t)pid,&info,WEXITED|WNOHANG|WNOWAIT))return errno==EINTR?0:-1;
- if(!info.si_pid)return 0;
- if(info.si_code==CLD_EXITED)*status=info.si_status<<8;
+ if(waitid(P_PID,(id_t)pid,&info,WEXITED|WSTOPPED|WNOHANG|WNOWAIT))return errno==EINTR?0:-1;
+ enum cb_owned_wait_kind event=cb_owned_wait_classify(pid,&info);
+ if(event==CB_WAIT_INVALID){errno=0;return -1;}
+ if(event!=CB_WAIT_TERMINAL)return 0;
+ if(info.si_code==CLD_EXITED){
+  /* Helpers require ordinary exact exit codes; never alias high bits to 72. */
+  if(info.si_status<0 || info.si_status>255){errno=0;return -1;}
+  *status=info.si_status<<8;
+ }
  else if(info.si_code==CLD_KILLED || info.si_code==CLD_DUMPED)*status=info.si_status|(info.si_code==CLD_DUMPED?128:0);
  else return -1;
  return 1;

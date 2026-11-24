@@ -25,8 +25,10 @@ static int before(uint64_t end){return mach_continuous_time()<end;}
 static void close_fd(int *fd){if(*fd>=0){(void)close(*fd);*fd=-1;}}
 static int observe(pid_t pid,siginfo_t *info){
  memset(info,0,sizeof(*info));
- if(waitid(P_PID,(id_t)pid,info,WEXITED|WNOHANG|WNOWAIT))return errno==EINTR?0:-1;
- return info->si_pid==pid?1:0;
+ if(waitid(P_PID,(id_t)pid,info,WEXITED|WSTOPPED|WNOHANG|WNOWAIT))return errno==EINTR?0:-1;
+ enum cb_owned_wait_kind event=cb_owned_wait_classify(pid,info);
+ if(event==CB_WAIT_INVALID)return -1;
+ return event==CB_WAIT_TERMINAL?1:0;
 }
 struct ready {pid_t pid,parent,group,session;uid_t uid,euid;};
 static int member(pid_t parent){
@@ -110,7 +112,7 @@ static int spawn_member(int index,pid_t *group,pid_t *pids,int *held,int *gates,
  if(getpgid(pid)!=*group || !verify_member(pid))goto done;
  struct kinfo_proc stopped;
  if(!cb_owned_group_metadata(pid,&stopped) || stopped.kp_proc.p_stat!=SSTOP)goto done;
- int pin_errno=0;enum cb_owned_group_pin_result reason=cb_owned_group_pin_detail(pin,pid,*group,&pin_errno);
+ int pin_errno=0;enum cb_owned_group_pin_result reason=cb_owned_group_pin_detail(pin,pid,*group,&pin_errno,NULL);
  if(reason!=CB_PIN_OK){fprintf(stderr,"owned_pin_reason=%u errno=%d\n",(unsigned)reason,pin_errno);goto done;}
  if(!before(end) || kill(pid,SIGCONT) || !wait_ready(ready_pipe[0],&r,end))goto done;
  ok=r.pid==pid && r.parent==getpid() && r.group==*group && r.session==getpid() &&
@@ -141,27 +143,47 @@ static int census(pid_t group,const pid_t *pids,const int *held,int *states){
  }
  return seen==7;
 }
+/* Cleanup deliberately does NOT trust any siginfo event classification. Once no
+ * group action remains, waitpid may reap. Return 0 alone is fresh direct-child
+ * custody for a per-PID SIGKILL: no competing reaper exists in this probe.
+ * Interrupted calls are retryable only inside the original common deadline;
+ * ECHILD/other failures never authorize a signal to a recycled numeric PID.
+ */
+static int cleanup_reap(pid_t pid,int *held,int *saved){
+ int status=-1;pid_t done=waitpid(pid,&status,WNOHANG);
+ if(done==pid){*saved=status;*held=0;return 1;}
+ if(done==0)return 0;
+ if(done<0 && errno==EINTR)return 2;
+ return -1;
+}
 static int cleanup(const pid_t *pids,int *held,int *statuses,int *forced){
- int ok=1;uint64_t end=until_ms(2000),grace=until_ms(1000);
+ int ok=1,untrusted[OWNED_CAP]={0};uint64_t end=until_ms(2000),grace=until_ms(1000);
  while(before(grace)){
   int pending=0;
-  for(int i=0;i<OWNED_CAP;i++)if(held[i]){
-   siginfo_t info;int r=observe(pids[i],&info);
-   if(r<0)ok=0;else if(!r)pending++;
+  for(int i=0;i<OWNED_CAP;i++)if(held[i] && !untrusted[i]){
+   int r=cleanup_reap(pids[i],&held[i],&statuses[i]);
+   if(r<0){ok=0;untrusted[i]=1;}else if(r==0 || r==2)pending++;
   }
   if(!pending)break;
   if(usleep(1000) && errno!=EINTR){ok=0;break;}
  }
- /* One common cleanup budget, including the real adverse fourth child. */
- for(int i=0;i<OWNED_CAP;i++)if(held[i]){
-  siginfo_t info;int r=observe(pids[i],&info);
-  if(r<0){ok=0;continue;}
-  if(!r){if(kill(pids[i],SIGKILL) && errno!=ESRCH)ok=0;else forced[i]=1;}
+ /* One common two-second budget, including the real adverse fourth child.
+  * Do NOT skip a stopped/unknown-status owned child based on si_pid.
+  */
+ for(int i=0;i<OWNED_CAP;i++)while(held[i] && !untrusted[i] && before(end)){
+  int r=cleanup_reap(pids[i],&held[i],&statuses[i]);
+  if(r<0){ok=0;untrusted[i]=1;break;}
+  if(r==1)break;
+  if(r==0){
+   if(kill(pids[i],SIGKILL) && errno!=ESRCH)ok=0;else forced[i]=1;
+   break;
+  }
+  if(usleep(1000) && errno!=EINTR){ok=0;break;}
  }
- for(int i=0;i<OWNED_CAP;i++)while(held[i] && before(end)){
-  pid_t done=waitpid(pids[i],&statuses[i],WNOHANG);
-  if(done==pids[i]){held[i]=0;break;}
-  if(done<0 && errno!=EINTR){ok=0;break;}
+ for(int i=0;i<OWNED_CAP;i++)while(held[i] && !untrusted[i] && before(end)){
+  int r=cleanup_reap(pids[i],&held[i],&statuses[i]);
+  if(r<0){ok=0;untrusted[i]=1;break;}
+  if(r==1)break;
   if(usleep(1000) && errno!=EINTR){ok=0;break;}
  }
  for(int i=0;i<OWNED_CAP;i++)if(held[i])ok=0;

@@ -7,7 +7,14 @@ Native budgets, status validators, noaudio protocol and success schema 1 remain
 unchanged. No devices, capture API, provider or network calls occur in the probe.
 Do not run it on the owner's Mac.
 
-Current follow-through: [Suspended-spawn custody enrollment](../../docs/native-group-custody-enrollment.md).
+Current 6c follow-through: [Wait events and custody](../../docs/native-waitid-event-custody.md).
+The actual 6c signed-self probe produced only ONE partial row with an unreaped
+held child, not five evaluations or normal cleanup. Source now uses strict CLD
+event classification and fresh waitpid custody for bounded cleanup; new execution
+is pending parent-reviewed hosted qualification. Its actual old branch/event is
+unknown, and production PIN_TERMINAL is not transferred into probe observations.
+
+Historical enrollment follow-through: [Suspended-spawn custody enrollment](../../docs/native-group-custody-enrollment.md).
 The actual 20d run passed the five fork/live predicate evaluations but production
 failed an ambiguous first-child enrollment guard. The revised probe replaces
 fork-only members with its exact signed self-image via production-style suspended

@@ -8,6 +8,7 @@
 #include <sys/sysctl.h>
 #include <sys/proc.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <libproc.h>
 #include <stdint.h>
 #include <errno.h>
@@ -20,11 +21,34 @@ typedef struct {
  pid_t pid,parent,group;uid_t ruid,euid;
  struct timeval birth;int enrolled;
 } cb_owned_group_member;
-/* Diagnostic-only distinctions. No failed predicate is relaxed or retried. */
+/* si_pid alone is NOT terminal evidence. Request stopped events explicitly;
+ * unknown/foreign/malformed readback never becomes NONE or a live-child proof.
+ * These are POSIX CLD_* classes, not inferred outcomes of historical packets.
+ */
+enum cb_owned_wait_kind { CB_WAIT_INVALID=-1,CB_WAIT_NONE=0,CB_WAIT_TERMINAL,CB_WAIT_STOPPED };
+static inline enum cb_owned_wait_kind cb_owned_wait_classify(pid_t pid,const siginfo_t *info){
+ if(pid<=1 || !info)return CB_WAIT_INVALID;
+ if(info->si_pid==0){
+  return !info->si_signo && !info->si_code && !info->si_status?CB_WAIT_NONE:CB_WAIT_INVALID;
+ }
+ if(info->si_pid!=pid || info->si_signo!=SIGCHLD)return CB_WAIT_INVALID;
+ switch(info->si_code){
+  case CLD_EXITED:return CB_WAIT_TERMINAL; /* Darwin also carries exit high bits. */
+  case CLD_KILLED:case CLD_DUMPED:
+   return info->si_status>0 && info->si_status<NSIG?CB_WAIT_TERMINAL:CB_WAIT_INVALID;
+  /* START_SUSPENDED sets SSTOP without delivering a signal: fresh p_xstat=0.
+   * A stop event is usable for enrollment only after independent SSTOP metadata.
+   */
+  case CLD_STOPPED:return info->si_status>=0 && info->si_status<NSIG?CB_WAIT_STOPPED:CB_WAIT_INVALID;
+  default:return CB_WAIT_INVALID;
+ }
+}
+/* Fixed diagnostic reasons; identity/custody failures remain fail-closed. */
 enum cb_owned_group_pin_result {
  CB_PIN_OK=0,CB_PIN_ARGUMENT,CB_PIN_WAIT,CB_PIN_TERMINAL,
  CB_PIN_METADATA_QUERY,CB_PIN_METADATA_SIZE,CB_PIN_METADATA_PID,CB_PIN_ZOMBIE,
- CB_PIN_PARENT,CB_PIN_GROUP,CB_PIN_RUID,CB_PIN_EUID,CB_PIN_BIRTH_SEC,CB_PIN_BIRTH_USEC
+ CB_PIN_PARENT,CB_PIN_GROUP,CB_PIN_RUID,CB_PIN_EUID,CB_PIN_BIRTH_SEC,CB_PIN_BIRTH_USEC,
+ CB_PIN_WAIT_EVENT,CB_PIN_WAIT_STATE
 };
 static inline enum cb_owned_group_pin_result cb_owned_group_metadata_detail(
  pid_t pid,struct kinfo_proc *row,int *system_errno){
@@ -43,21 +67,26 @@ static inline int cb_owned_group_metadata(pid_t pid,struct kinfo_proc *row){
  return cb_owned_group_metadata_detail(pid,row,NULL)==CB_PIN_OK;
 }
 static inline enum cb_owned_group_pin_result cb_owned_group_pin_detail(
- cb_owned_group_member *pin,pid_t pid,pid_t group,int *system_errno){
+ cb_owned_group_member *pin,pid_t pid,pid_t group,int *system_errno,siginfo_t *readback){
  if(system_errno)*system_errno=0;
+ if(readback)memset(readback,0,sizeof(*readback));
  if(!pin)return CB_PIN_ARGUMENT;
  memset(pin,0,sizeof(*pin));
  if(pid<=1 || group<=1)return CB_PIN_ARGUMENT;
  siginfo_t info;memset(&info,0,sizeof(info));
- if(waitid(P_PID,(id_t)pid,&info,WEXITED|WNOHANG|WNOWAIT)){
+ if(waitid(P_PID,(id_t)pid,&info,WEXITED|WSTOPPED|WNOHANG|WNOWAIT)){
   if(system_errno)*system_errno=errno;
   return CB_PIN_WAIT;
  }
- if(info.si_pid)return CB_PIN_TERMINAL;
+ if(readback)*readback=info; /* Raw successful-call bytes, never reconstructed. */
+ enum cb_owned_wait_kind event=cb_owned_wait_classify(pid,&info);
+ if(event==CB_WAIT_INVALID)return CB_PIN_WAIT_EVENT;
+ if(event==CB_WAIT_TERMINAL)return CB_PIN_TERMINAL;
  struct kinfo_proc row;
  enum cb_owned_group_pin_result result=cb_owned_group_metadata_detail(pid,&row,system_errno);
  if(result!=CB_PIN_OK)return result;
  if(row.kp_proc.p_stat==SZOMB)return CB_PIN_ZOMBIE;
+ if(event==CB_WAIT_STOPPED && row.kp_proc.p_stat!=SSTOP)return CB_PIN_WAIT_STATE;
  if(row.kp_eproc.e_ppid!=getpid())return CB_PIN_PARENT;
  if(row.kp_eproc.e_pgid!=group)return CB_PIN_GROUP;
  if(row.kp_eproc.e_pcred.p_ruid!=getuid())return CB_PIN_RUID;
@@ -68,7 +97,7 @@ static inline enum cb_owned_group_pin_result cb_owned_group_pin_detail(
  pin->birth=row.kp_proc.p_starttime;pin->enrolled=1;return CB_PIN_OK;
 }
 static inline int cb_owned_group_pin(cb_owned_group_member *pin,pid_t pid,pid_t group){
- return cb_owned_group_pin_detail(pin,pid,group,NULL)==CB_PIN_OK;
+ return cb_owned_group_pin_detail(pin,pid,group,NULL,NULL)==CB_PIN_OK;
 }
 static inline int cb_owned_group_all_zombies_readback(pid_t group,const cb_owned_group_member *pins,int *snapshot_bytes){
  if(snapshot_bytes)*snapshot_bytes=-1;
