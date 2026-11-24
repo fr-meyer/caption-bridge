@@ -60,9 +60,12 @@ run this as a separate bounded diagnostic step (CI wiring belongs to the parent)
 
 
 ```sh
+umask 077
 oh_out="$RUNNER_TEMP/native-group-signal-observation"
 sh native/caption_helper/probe_group_signal.sh "$oh_out" \
-  "$CAPTURE_BUILD/CaptionHelper.app/Contents/MacOS"
+  "$CAPTURE_BUILD/CaptionHelper.app/Contents/MacOS" \
+  > "$RUNNER_TEMP/native-group-signal-probe-private.stdout" \
+  2> "$RUNNER_TEMP/native-group-signal-probe-private.stderr"
 
 
 ```
@@ -72,8 +75,13 @@ is optional only when candidate signing evidence is being retained separately.
 Use a fresh output directory. A hosted step timeout of one minute is ample;
 normal observation is immediate and each of three cases has a 3-second active
 budget plus a common 2-second cleanup budget. No production deadline is changed.
-Upload that entire directory with the CI lane's existing failure-safe artifact
-step, including build/sign stderr and runtime.txt even when this invocation fails.
+Keep the entire raw output directory, stdout and stderr private, including
+build/sign logs and runtime.txt. Never upload or print those raw files, even on
+failure: they contain identity, kernel, signature and absolute-path metadata.
+Publish only the bounded, validated content-free receipt produced and read back
+by scripts/ci_group_signal_observer.py through the explicit single-file CI
+artifact allowlist. Missing or invalid observations remain unknown, not success.
+See docs/group-signal-safe-retention.md for the public receipt contract.
 Do not make successful observation into a native qualification/merge acceptance.
 
 The wrapper compiles with -std=c11 -Wall -Wextra -Werror -Os, signs the probe
