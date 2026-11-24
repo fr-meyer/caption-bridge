@@ -111,6 +111,9 @@ class AsrPcmConverter:
             return pcm
         if self.audioop is None:
             try:
+                # CPython stdlib on 3.11/3.12; the exactly locked PSF-licensed
+                # audioop-lts port supplies the same API on 3.13+. Preserve
+                # tomono/ratecv rounding and persistent chunk state, not new DSP.
                 import audioop
             except ImportError:
                 raise PcmProtocolError("native_pcm_conversion_unavailable") from None
