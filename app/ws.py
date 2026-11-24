@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -541,7 +542,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         for task in tasks:
             if not task.done():
                 task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # ASGI host-scope cancellation can race with this join after reader
+        # EOF. Do not let it re-cancel the owned tasks and replace the host
+        # cancellation with a child's untagged CancelledError. Genuine handler
+        # cancellation is still re-raised above after this cleanup completes.
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _native_output_closed() -> bool:
