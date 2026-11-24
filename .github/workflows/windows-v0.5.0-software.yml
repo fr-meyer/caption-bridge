@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: Exact reviewed v0.5 candidate commit (40 lowercase hex characters)
+        description: Exact reviewed current candidate commit (40 lowercase hex characters)
         required: true
         type: string
 
@@ -62,6 +62,13 @@ jobs:
           uv sync --frozen --python 3.11
           if ($LASTEXITCODE -ne 0) { throw 'Locked dependency setup failed.' }
 
+      - name: Run existing isolated headless and receipt regressions
+        working-directory: source
+        run: |
+          $python = Join-Path (Get-Location).Path '.venv\Scripts\python.exe'
+          & $python -B -m pytest -p no:cacheprovider -q -ra tests/unit/test_headless_audio_import.py tests/unit/test_offline_receipt_metadata.py
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated software regressions failed.' }
+
       - name: Record software identity and select an existing browser
         working-directory: source
         run: |
@@ -85,7 +92,17 @@ jobs:
             -RepoRoot (Get-Location).Path `
             -ExpectedSha $env:CAPTION_EXPECTED_SHA `
             -PythonPath (Join-Path (Get-Location).Path '.venv\Scripts\python.exe') `
-            -ChromiumPath $env:CAPTION_EXISTING_BROWSER
+            -ChromiumPath $env:CAPTION_EXISTING_BROWSER `
+            -ReceiptPath (Join-Path $env:RUNNER_TEMP 'windows-software-receipt.json')
+
+      - name: Retain content-free Windows software receipt only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-software-receipt
+          path: ${{ runner.temp }}/windows-software-receipt.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Label the completed software result
         run: |

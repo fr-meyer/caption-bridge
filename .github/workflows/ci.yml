@@ -472,6 +472,21 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Proposed opt-in candidate addition. Preserve the qualified noaudio suite.
+      # No physical-mode argument, device, grant or attended programme ledger.
+      - name: Build opt-in capture candidate (never execute input)
+        if: runner.os == 'macOS'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          sh native/caption_helper/build_capture.sh "$RUNNER_TEMP/caption-capture-noinput" > "$RUNNER_TEMP/caption-capture-build-private.log" 2>&1
+      - name: Qualify opt-in capture candidate with no input
+        if: runner.os == 'macOS'
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          uv run --no-sync --python 3.13 python -m native.caption_helper.qualify_capture_noinput "$RUNNER_TEMP/caption-capture-noinput/CaptionHelper.app/Contents/MacOS"
+
   dependency-audit:
     name: Locked dependency audit (9 marker resolutions)
     runs-on: ubuntu-latest
