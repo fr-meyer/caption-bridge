@@ -18,7 +18,13 @@
 #include <mach/mach_time.h>
 #define CB_BUDGET_FD 0
 #define CB_BUDGET_NS 2000000000ULL
+#ifdef CB_CAPTURE_CONTROLLER
+#include "capture_protocol.h"
+#define CB_BUDGET_BYTES 72
+static uint64_t cb_capture_expires_unix_ns;
+#else
 #define CB_BUDGET_BYTES 56
+#endif
 static uint64_t cb_be64(const unsigned char *p) {
  uint64_t n=0;for(int i=0;i<8;i++)n=(n<<8)|p[i];return n;
 }
@@ -34,7 +40,11 @@ static int cb_budget_deadline_for(uint64_t *deadline,mach_timebase_info_data_t t
  uint64_t timeout=anchor+ceiling_ticks;
  arc4random_buf(challenge,sizeof(challenge));
  char hex[65];for(int i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",challenge[i]);
+#ifdef CB_CAPTURE_CONTROLLER
+ if(printf("{\"event\":\"%s\",\"challenge\":\"%s\",\"ceiling_ms\":2000,\"anchor_continuous_ticks\":%llu,\"timebase_numer\":%u,\"timebase_denom\":%u}\n",event,hex,(unsigned long long)anchor,tb.numer,tb.denom)<0 || fflush(stdout))goto done;
+#else
  if(printf("{\"event\":\"%s\",\"challenge\":\"%s\",\"ceiling_ms\":2000}\n",event,hex)<0 || fflush(stdout))goto done;
+#endif
  /* Require exact fixed message followed by EOF. No blocking read, no reconnect. */
  while(mach_continuous_time()<timeout){
   struct pollfd p={.fd=fd,.events=POLLIN|POLLHUP|POLLERR};
@@ -58,6 +68,15 @@ static int cb_budget_deadline_for(uint64_t *deadline,mach_timebase_info_data_t t
  uint64_t ticks=(ns*tb.denom)/tb.numer;
  if(!ticks || anchor>UINT64_MAX-ticks)goto done;
  *deadline=anchor+ticks;
+#ifdef CB_CAPTURE_CONTROLLER
+ if(ns<CB_CAPTURE_MIN_NS)goto done;
+ uint64_t validity=cb_be64(wire+56);cb_capture_expires_unix_ns=cb_be64(wire+64);
+ if(validity<=anchor || !validity)goto done;
+ if(!memcmp(magic,"CBNC0002",8)){
+  if(cb_capture_expires_unix_ns)goto done;
+ }else if(!cb_capture_expires_unix_ns || !cb_capture_wall_valid(cb_capture_expires_unix_ns))goto done;
+ if(validity<*deadline)*deadline=validity;
+#endif
  if(mach_continuous_time()>=*deadline)goto done;
  ok=1;
 done:

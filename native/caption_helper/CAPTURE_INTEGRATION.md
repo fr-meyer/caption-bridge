@@ -1,15 +1,15 @@
 # Physical capture source and PCM integration (disabled by default)
 
 This is source availability, **not native/physical admission or acceptance**.
-NoAudioController/Helper/LeaseWatch/Watchdog and their qualification entrypoint
+NoAudioController/NoAudioHelper/GuardianA/GuardianB and their qualification entrypoint
 remain unchanged. The opt-in CaptureController/CaptureHelper are separately signed
 images with microphone-only helper entitlement; no network or audio-output route.
 
 ## Discard and PCM modes
 
 The older explicit `--capture-budget` path retains discard-only input. Its
-budget reply is CBCA0001; --capture-noinput-budget is CBNC0001 and calls no opener
-or closer. The separate --capture-pcm-budget uses **CBPC0001**, private inherited
+budget reply is CBCA0002; --capture-noinput-budget is CBNC0002 and calls no opener
+or closer. The separate --capture-pcm-budget uses **CBPC0002**, private inherited
 PCM/soft-stop pipes, and a nonzero 128-bit epoch. Cross-domain replies cannot debit
 or arm another mode. No PCM goes through JSON stdout/stderr, files, sockets, the
 ledger, metrics, or qualification artifacts. Role process/image identity and
@@ -121,3 +121,56 @@ work or treated as Phase-A/real full-cycle acceptance.
 Rollback: do not install the optional factory; existing default/noaudio routes stay
 unchanged. Remove an installed factory only while idle; live instances must Stop
 and join owned cleanup first. Do not clear a debit/HOLD to retry.
+
+
+## Safety follow-up: expiry, independent termination and supported startup
+
+Capture budget v2 is exactly 72 bytes: the prior magic/challenge/duration/sequence
+prefix plus an absolute continuous validity tick and authenticated Unix-ns expiry.
+The native challenge publishes its fixed continuous anchor and timebase. Parent
+admission first pins expiry to a sleep-inclusive local clock (mach_continuous_time
+on macOS; CLOCK_BOOTTIME in Linux software tests). PCM permits also narrow that
+bound. Mapping samples wall and continuous time AFTER the native anchor, rounds
+down, and fixes the
+validity tick BEFORE durable reservation. Native takes the minimum of the original
+anchor-plus-debit deadline and this validity tick, and enforces Unix expiry too.
+Immediate post-fsync revalidation rejects expired authority before delivery while
+preserving debit/HOLD. Neither scheduling pauses, clock rollback, Stop nor drain
+refreshes a full duration. Forward wall expiry is checked independently by both
+native guardians and before helper open/render/start. Old capture v1 replies fail
+closed; noaudio CBNA0001 remains the existing 56-byte protocol.
+
+Only 1000..2000 ms capture/noinput qualification budgets are supported. Smaller
+budgets are rejected before permit consumption or debit; native startup rejects
+already-insufficient remaining time before any child can open HAL. Slow startup
+still fails closed and retains any debit; source does not promise successful
+startup under an arbitrarily delayed scheduler.
+
+CaptureGuardianA and CaptureGuardianB are NEW separate signed images, not replacements
+for the noaudio GuardianA/B. Both live guardians enforce continuous/wall deadlines,
+emergency pipe and controller death by SIGKILL of their OWN isolated capture group.
+This includes a SIGSTOP'ed helper even when CaptureController is dead or SIGSTOP'ed.
+A is group leader; B and CaptureHelper join that exact group while suspended,
+before pin verification/continuation. Controller remains OUTSIDE the group.
+
+Controller retains its direct group-leader child unreaped (WNOWAIT observations),
+including failed spawn/ready setup; group termination ALWAYS precedes leader reap.
+ECHILD never permits a numeric group signal. Individual fallback signals are only
+to retained unreaped direct children. Guardians do not kill borrowed reported PIDs:
+the executing guardian's own group membership pins the identity it terminates.
+SIGCHLD handling is reset for capture custody so auto-reap cannot invalidate it.
+
+Separate private helper-to-guardian close pipes carry a fixed local-close token
+only after checked close/disposal and PCM END/descriptor cleanup. Token+EOF allows
+normal guardian exits and soft-finish/drain; missing/malformed/late token forces
+termination. The token is NOT an independent physical proof or HOLD release.
+No-input still calls neither HAL opener nor HAL closer and uses no real programme.
+
+Regression evidence includes frozen-source fsync-expiry delivery and 500-ms policy
+reproductions, and an isolated Linux POSIX process-group/subreaper mechanism model:
+cooperative-only guardians reproduce the suspended-helper gap; forced-group models
+close it with controller dead/stopped, emergency/deadline, either guardian stopped,
+or both guardians stopped with live retained-parent enforcement. Every synthetic
+process is owned and reaped. These are offline source/mechanism tests, NOT a macOS
+build, native ABI result, HAL fault injection, or physical/kernel acceptance.
+Exact new signed-image review and independent combined-fault proofs remain required.

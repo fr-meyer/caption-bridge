@@ -142,7 +142,7 @@ class AdmissionTests(unittest.TestCase):
             self.authority.consume(permit, self.c)
         image = self.root / 'CaptureHelper'
         image.unlink()
-        image.symlink_to(self.root / 'GuardianA')
+        image.symlink_to(self.root / 'CaptureGuardianA')
         with self.assertRaises(OSError):
             self.authorize()
 
@@ -185,8 +185,8 @@ class AdmissionTests(unittest.TestCase):
             def write(self, wire):
                 if j.active is None:
                     raise AssertionError('input wire before fsynced debit')
-                expected = b'CBNC0001' if no_input else b'CBCA0001'
-                if len(wire) != 56 or not wire.startswith(expected):
+                expected = b'CBNC0002' if no_input else b'CBCA0002'
+                if len(wire) != 72 or not wire.startswith(expected):
                     raise AssertionError('wrong protocol')
                 return super().write(wire)
         class FakeChild:
@@ -197,7 +197,7 @@ class AdmissionTests(unittest.TestCase):
                 if arguments[1] != mode:
                     raise AssertionError('wrong mode')
                 event = 'capture_noinput_budget_ready' if no_input else 'capture_budget_ready'
-                lines = [dict(event=event, challenge='d' * 64, ceiling_ms=2000),
+                lines = [dict(event=event, challenge='d' * 64, ceiling_ms=2000, anchor_continuous_ticks=1000000000, timebase_numer=1, timebase_denom=1),
                          dict(event='started', pids=[10, 11, 12]),
                          dict(schema=1, capture_exit=0, capture=not no_input, terminal='HOLD',
                               pids=[10, 11, 12], wait_status=[72 << 8] * 3, cleanup_killed=[0]*3)]
@@ -304,7 +304,7 @@ class CaptureSourceTests(unittest.TestCase):
             self.assertIn(invariant, source)
         self.assertNotIn('format.mSampleRate=16000', source)
         role = (ROOT / 'native/caption_helper/capture_role.c').read_text()
-        self.assertIn('if(!reader_pipe(9))return 66', role)
+        self.assertIn('if(!reader_pipe(9) || signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 66', role)
         controller = (ROOT / 'native/caption_helper/assembly.c').read_text()
         self.assertIn('posix_spawn_file_actions_adddup2(&f,stop_copy,9)', controller)
         self.assertIn('poll(&before_spawn,1,0)!=0', controller)

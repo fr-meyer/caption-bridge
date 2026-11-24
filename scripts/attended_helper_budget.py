@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import socket
@@ -157,7 +158,7 @@ class Custody:
         return self._prepare_budget(capability, channel, receipt, challenge_event,
                                     'noaudio_budget_ready', b'CBNA0001')
 
-    def prepare_capture_budget(self, capability, channel, receipt, challenge_event, *, no_input):
+    def prepare_capture_budget(self, capability, channel, receipt, challenge_event, *, no_input, valid_until_ticks=None, expires_unix_ns=0):
         """Distinct wire protocol, NOT capture admission.
 
         Physical callers use the exact-reviewed admitted launcher. No-input callers
@@ -168,21 +169,40 @@ class Custody:
         return self._prepare_budget(
             capability, channel, receipt, challenge_event,
             'capture_noinput_budget_ready' if no_input else 'capture_budget_ready',
-            b'CBNC0001' if no_input else b'CBCA0001')
+            b'CBNC0002' if no_input else b'CBCA0002', valid_until_ticks=valid_until_ticks, expires_unix_ns=expires_unix_ns)
 
-    def prepare_pcm_budget(self, capability, channel, receipt, challenge_event):
+    def prepare_pcm_budget(self, capability, channel, receipt, challenge_event, *, valid_until_ticks=None, expires_unix_ns=0):
         """PCM is a distinct one-use budget domain; never accepts discard replies."""
         return self._prepare_budget(capability, channel, receipt, challenge_event,
-                                    'capture_pcm_budget_ready', b'CBPC0001')
+                                    'capture_pcm_budget_ready', b'CBPC0002', valid_until_ticks=valid_until_ticks, expires_unix_ns=expires_unix_ns)
 
-    def _prepare_budget(self, capability, channel, receipt, challenge_event, event, magic):
+    def _prepare_budget(self, capability, channel, receipt, challenge_event, event, magic, *, valid_until_ticks=None, expires_unix_ns=0):
+        capture = magic != b'CBNA0001'
+        keys = {'event', 'challenge', 'ceiling_ms'}
+        if capture:
+            keys |= {'anchor_continuous_ticks', 'timebase_numer', 'timebase_denom'}
         if (type(challenge_event) is not dict
-                or set(challenge_event) != {'event', 'challenge', 'ceiling_ms'}
+                or set(challenge_event) != keys
                 or challenge_event['event'] != event
                 or type(challenge_event['ceiling_ms']) is not int
                 or challenge_event['ceiling_ms'] != 2000
                 or not hex_id(challenge_event['challenge'], 64)):
             raise ValueError('noaudio_budget_challenge')
+        if capture and (type(expires_unix_ns) is not int or not 0 <= expires_unix_ns < 2**64
+                        or (magic != b'CBNC0002' and not expires_unix_ns)
+                        or (magic == b'CBNC0002' and expires_unix_ns != 0)
+                        or type(valid_until_ticks) is not int or not 0 < valid_until_ticks < 2**64
+                        or any(type(challenge_event[k]) is not int or not 0 < challenge_event[k] < 2**32
+                               for k in ('timebase_numer', 'timebase_denom'))
+                        or type(challenge_event['anchor_continuous_ticks']) is not int
+                        or not 0 < challenge_event['anchor_continuous_ticks'] < valid_until_ticks):
+            raise ValueError('capture_native_validity')
+        if capture:
+            # Rejection cannot confer authority; signature/binding verification
+            # still happens in prepare_launch. Invalid/small input never debits.
+            ms = json.loads(receipt.payload)['ms']
+            if type(ms) is not int or not 1000 <= ms <= 2000:
+                raise ValueError('capture_startup_window')
         reservation = self.prepare_launch(capability, channel, receipt)
         if reservation.reserved_ms > 2000 or reservation.sequence >= 2**64:
             # An unsupported envelope was already debited, never refund it.
@@ -192,6 +212,8 @@ class Custody:
         wire = (magic + bytes.fromhex(challenge_event['challenge'])
                 + (reservation.reserved_ms * 1_000_000).to_bytes(8, 'big')
                 + reservation.sequence.to_bytes(8, 'big'))
+        if capture:
+            wire += valid_until_ticks.to_bytes(8, 'big') + expires_unix_ns.to_bytes(8, 'big')
         return reservation, wire
 
     def launch_remaining_ns(self, capability, channel, reservation):

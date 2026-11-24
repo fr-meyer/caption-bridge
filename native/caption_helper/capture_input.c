@@ -4,6 +4,7 @@
  */
 #include "capture_input.h"
 #include "pcm_transport.h"
+#include "capture_protocol.h"
 #include <CoreAudio/CoreAudio.h>
 #include <mach/mach_time.h>
 #include <stdbool.h>
@@ -14,9 +15,9 @@
 #include <math.h>
 #define CB_MAX_FRAMES 4096U
 #define CB_CAPTURE_ERROR (-10100)
-static int live(uint64_t stop_at) {
+static int live(cb_capture_input *s) {
  struct pollfd p[4]={{.fd=5,.events=POLLIN|POLLHUP|POLLERR},{.fd=6,.events=POLLIN|POLLHUP|POLLERR},{.fd=7,.events=POLLIN|POLLHUP|POLLERR},{.fd=9,.events=POLLIN|POLLHUP|POLLERR}};
- return mach_continuous_time()<stop_at && poll(p,4,0)==0;
+ return mach_continuous_time()<s->stop_at && cb_capture_wall_valid(s->expires_unix_ns) && poll(p,4,0)==0;
 }
 static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
  const AudioTimeStamp *when, UInt32 bus, UInt32 frames, AudioBufferList *unused) {
@@ -28,7 +29,7 @@ static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
  }
  OSStatus result=noErr;
  if(atomic_load_explicit(&s->accepting,memory_order_acquire)) {
-  if(frames==0 || frames>CB_MAX_FRAMES || mach_continuous_time()>=s->stop_at ||
+  if(frames==0 || frames>CB_MAX_FRAMES || !live(s) ||
      (s->pcm_fd>=0 && (s->pcm_frames>s->pcm_frame_limit || frames>s->pcm_frame_limit-s->pcm_frames)))result=CB_CAPTURE_ERROR;
   else {
    s->buffers->mNumberBuffers=s->buffer_count;
@@ -42,7 +43,7 @@ static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
     UInt32 offset=0,maximum=CB_PCM_PAYLOAD/(s->pcm_channels*2U);
     while(offset<frames){
      UInt32 count=frames-offset;if(count>maximum)count=maximum;
-     if(!live(s->stop_at) || cb_pcm_packet(s->pcm_fd,s->epoch,s->pcm_sequence,
+     if(!live(s) || cb_pcm_packet(s->pcm_fd,s->epoch,s->pcm_sequence,
         s->pcm_rate,s->pcm_channels,0,count,(char *)s->scratch+offset*s->bytes_per_frame)){
       result=CB_CAPTURE_ERROR;break;
      }
@@ -60,9 +61,10 @@ static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
  atomic_fetch_sub_explicit(&s->callbacks,1,memory_order_acq_rel);
  return result;
 }
-int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at,int pcm_fd,const unsigned char epoch[16]) {
- if(s->attempted || !device || !stop_at || !live(stop_at))return CB_CAPTURE_ERROR;
- s->attempted=1;s->stop_at=stop_at;s->pcm_fd=pcm_fd;
+int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at,uint64_t expires_unix_ns,int pcm_fd,const unsigned char epoch[16]) {
+ if(s->attempted || !device || !stop_at)return CB_CAPTURE_ERROR;
+ s->attempted=1;s->stop_at=stop_at;s->expires_unix_ns=expires_unix_ns;s->pcm_fd=pcm_fd;
+ if(!live(s))return CB_CAPTURE_ERROR;
  if(pcm_fd>=0){if(!epoch || !cb_pcm_pipe(pcm_fd))return CB_CAPTURE_ERROR;memcpy(s->epoch,epoch,16);}
  atomic_init(&s->accepting,false);atomic_init(&s->callbacks,0);atomic_init(&s->fault,0);
  AudioObjectPropertyAddress alive={kAudioDevicePropertyDeviceIsAlive,kAudioObjectPropertyScopeGlobal,kAudioObjectPropertyElementMain};
@@ -70,8 +72,10 @@ int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at,int pcm
  if(e || size!=sizeof(present) || !present)return e?e:CB_CAPTURE_ERROR;
  AudioComponentDescription d={kAudioUnitType_Output,kAudioUnitSubType_HALOutput,kAudioUnitManufacturer_Apple,0,0};
  AudioComponent component=AudioComponentFindNext(NULL,&d);if(!component)return CB_CAPTURE_ERROR;
+ if(!live(s))return CB_CAPTURE_ERROR;
  if((e=AudioComponentInstanceNew(component,&s->unit)))return e;
  UInt32 yes=1,no=0,maximum=CB_MAX_FRAMES;
+ if(!live(s))return CB_CAPTURE_ERROR;
  /* Disable output and choose EXACT explicit HAL id BEFORE initialization/open. */
  if((e=AudioUnitSetProperty(s->unit,kAudioOutputUnitProperty_EnableIO,kAudioUnitScope_Output,0,&no,sizeof(no))) ||
     (e=AudioUnitSetProperty(s->unit,kAudioOutputUnitProperty_EnableIO,kAudioUnitScope_Input,1,&yes,sizeof(yes))) ||
@@ -125,9 +129,9 @@ int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at,int pcm
  }
  AURenderCallbackStruct callback={receive,s};
  if((e=AudioUnitSetProperty(s->unit,kAudioOutputUnitProperty_SetInputCallback,kAudioUnitScope_Global,0,&callback,sizeof(callback))))return e;
- if(!live(stop_at))return CB_CAPTURE_ERROR;
+ if(!live(s))return CB_CAPTURE_ERROR;
  if((e=AudioUnitInitialize(s->unit)))return e;s->initialized=1;
- if(!live(stop_at))return CB_CAPTURE_ERROR;
+ if(!live(s))return CB_CAPTURE_ERROR;
  atomic_store_explicit(&s->accepting,true,memory_order_release);
  s->started=1; /* Even a failed start gets an explicit checked Stop attempt. */
  if((e=AudioOutputUnitStart(s->unit)))return e;

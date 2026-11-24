@@ -10,6 +10,7 @@ import threading
 import time
 
 from scripts.attended_acceptance import hex_id
+from scripts.attended_native_clock import continuous_ns
 from scripts.attended_native_admission import CaptureAdmission, document
 
 PCM_CHECKS = ("framing_epoch", "bounded_backpressure_close", "stop_drain",
@@ -50,6 +51,8 @@ class PcmAdmission:
         self._permits = {}
 
     def issue(self, grant_raw, trusted_grant_sha256, custody, base_permit):
+        clock_anchor = continuous_ns()
+        wall_now = time.time_ns()
         grant = document(grant_raw, trusted_grant_sha256,
                          ("schema", "candidate", "review_sha256", "base_grant_sha256", "programme", "ledger_tail",
                           "session_id", "generation", "epoch", "asr_sample_rate", "consumer",
@@ -68,7 +71,7 @@ class PcmAdmission:
                 or grant["consumer"] != self.consumer
                 or grant["provider_authority_sha256"] != self.provider_authority_sha256
                 or type(grant["expires_unix_ns"]) is not int
-                or not time.time_ns() < grant["expires_unix_ns"] <= time.time_ns() + 60_000_000_000
+                or not wall_now < grant["expires_unix_ns"] <= wall_now + 60_000_000_000
                 or (self.consumer == "app-asr" and not hex_id(grant["provider_authority_sha256"], 64))
                 or (self.consumer == "offline" and grant["provider_authority_sha256"] is not None)):
             raise RuntimeError("native_pcm_grant_binding")
@@ -80,7 +83,7 @@ class PcmAdmission:
             if self._permits or trusted_grant_sha256 in self._seen or grant["epoch"] in self._seen:
                 raise RuntimeError("native_pcm_grant_replayed")
             self._seen.update((trusted_grant_sha256, grant["epoch"]))
-            self._permits[permit] = (grant, custody, base_permit)
+            self._permits[permit] = (grant, custody, base_permit, clock_anchor + grant["expires_unix_ns"] - wall_now)
         return permit
 
     def consume(self, permit, custody, *, session_id, generation, sample_rate, consumer):
@@ -88,10 +91,11 @@ class PcmAdmission:
             entry = self._permits.pop(permit, None)
             if entry is None or entry[1] is not custody or os.getpid() != self._pid:
                 raise RuntimeError("native_pcm_not_admitted")
-            grant, _, base_permit = entry
+            grant, _, base_permit, valid_until_continuous_ns = entry
             if (grant["session_id"] != session_id or grant["generation"] != generation
                     or type(generation) is not int or sample_rate != grant["asr_sample_rate"]
                     or type(sample_rate) is not int or consumer != grant["consumer"]
+                    or continuous_ns() >= valid_until_continuous_ns
                     or time.time_ns() >= grant["expires_unix_ns"]):
                 raise RuntimeError("native_pcm_session_binding")
             launch = self.base.consume(base_permit, custody)
@@ -100,4 +104,5 @@ class PcmAdmission:
                     or grant["expires_unix_ns"] > launch["expires_unix_ns"]):
                 raise RuntimeError("native_pcm_runtime_binding")
             return dict(launch, epoch=grant["epoch"], session_id=session_id, generation=generation,
-                        pcm_expires_unix_ns=grant["expires_unix_ns"])
+                        pcm_expires_unix_ns=grant["expires_unix_ns"],
+                        valid_until_continuous_ns=min(launch["valid_until_continuous_ns"], valid_until_continuous_ns))

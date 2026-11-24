@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
-names = ("GuardianA", "GuardianB", "CaptureHelper")
+names = ("CaptureGuardianA", "CaptureGuardianB", "CaptureHelper")
 hashes = []
 for name in names:
     result = subprocess.run(

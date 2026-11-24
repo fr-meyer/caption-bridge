@@ -113,8 +113,8 @@ def test_fake_worker_finish_drains_after_clean_end_without_blocking_loop():
         ingress = []
         def fake_worker(_launch, _admission, _custody, _emergency, pcm_fd, finish_fd):
             try:
-                os.write(pcm_fd, packet())
                 started.set()
+                os.write(pcm_fd, packet())
                 assert os.read(finish_fd, 1) == b""  # Real private-pipe finish.
                 os.write(pcm_fd, packet(1))
                 os.write(pcm_fd, packet(2, pcm=b"", flags=END))
@@ -249,8 +249,8 @@ def test_native_source_protocol_paths_stay_separate_and_atomic():
     assembly = (root / "native/caption_helper/assembly.c").read_text()
     role = (root / "native/caption_helper/capture_role.c").read_text()
     transport = (root / "native/caption_helper/pcm_transport.h").read_text()
-    assert '"capture_pcm_budget_ready"' in assembly and '"CBPC0001"' in assembly
-    assert '"CBCA0001"' in assembly and '"CBNC0001"' in assembly
+    assert '"capture_pcm_budget_ready"' in assembly and '"CBPC0002"' in assembly
+    assert '"CBCA0002"' in assembly and '"CBNC0002"' in assembly
     assert "close_owned(&capture_pcm_fd)" in assembly
     assert "cb_capture_close" in role[:role.index("cb_pcm_packet(10")]
     assert "write(fd,packet,CB_PCM_HEADER+size)" in transport

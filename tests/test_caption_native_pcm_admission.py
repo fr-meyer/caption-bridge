@@ -126,9 +126,9 @@ def test_discard_capture_challenge_cannot_debit_pcm_domain(base):
     try:
         receipt = base.c.offer(cap, channel, 2000)
         challenge = dict(event="capture_budget_ready", challenge="d" * 64,
-                         ceiling_ms=2000)
+                         ceiling_ms=2000, anchor_continuous_ticks=1000000000, timebase_numer=1, timebase_denom=1)
         with pytest.raises(ValueError):
-            base.c.prepare_pcm_budget(cap, channel, receipt, challenge)
+            base.c.prepare_pcm_budget(cap, channel, receipt, challenge, valid_until_ticks=3000000000, expires_unix_ns=2**63)
         assert base.j.charged == 0
     finally:
         peer.close()
@@ -140,10 +140,10 @@ def test_pcm_budget_reserves_in_journal_before_wire_and_revoke_retains_hold(base
     try:
         receipt = base.c.offer(cap, channel, 2000)
         challenge = dict(event="capture_pcm_budget_ready", challenge="d" * 64,
-                         ceiling_ms=2000)
-        reservation, wire = base.c.prepare_pcm_budget(cap, channel, receipt, challenge)
-        assert wire[:8] == b"CBPC0001"
-        assert len(wire) == 56 and base.j.active is not None and base.j.charged == reservation.reserved_ms
+                         ceiling_ms=2000, anchor_continuous_ticks=1000000000, timebase_numer=1, timebase_denom=1)
+        reservation, wire = base.c.prepare_pcm_budget(cap, channel, receipt, challenge, valid_until_ticks=3000000000, expires_unix_ns=2**63)
+        assert wire[:8] == b"CBPC0002"
+        assert len(wire) == 72 and base.j.active is not None and base.j.charged == reservation.reserved_ms
     finally:
         peer.close()
         base.c.revoke(cap)

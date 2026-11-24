@@ -1,0 +1,22 @@
+{
+  "attended_helper_budget.py.snapshot": {
+    "source": "scripts/attended_helper_budget.py",
+    "commit": "a1f60ea1abe81b4b7968c22d51a87969d213d77c",
+    "sha256": "bb2d874f208f92768349e7d2ffd2e049e3f843bff7667fd526a88d6327fc4e79"
+  },
+  "attended_native_launch.py.snapshot": {
+    "source": "scripts/attended_native_launch.py",
+    "commit": "a1f60ea1abe81b4b7968c22d51a87969d213d77c",
+    "sha256": "54e5a5ba295069392436a7c99bdcc17006b223259417c8897ac89e9b7bb1f581"
+  },
+  "attended_native_admission.py.snapshot": {
+    "source": "scripts/attended_native_admission.py",
+    "commit": "a1f60ea1abe81b4b7968c22d51a87969d213d77c",
+    "sha256": "767e065d2b438c24a738f7fa6d6cc8444e000276b43a69bb5797af77685cb167"
+  },
+  "role.c.snapshot": {
+    "source": "native/caption_helper/role.c",
+    "commit": "a1f60ea1abe81b4b7968c22d51a87969d213d77c",
+    "sha256": "e23729398816494c0ee1289fd2662edbab66a112674b2b6b1adb41972457c417"
+  }
+}

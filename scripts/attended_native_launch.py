@@ -17,7 +17,8 @@ from pathlib import Path
 
 from native.caption_helper.qualify_assembly import validate_startup
 from native.caption_helper.qualify_budget import BoundedLines
-from scripts.attended_native_admission import CaptureAdmission
+from scripts.attended_native_admission import CaptureAdmission, MIN_CAPTURE_MS
+from scripts.attended_native_clock import continuous_ns
 
 
 class EmergencyStop:
@@ -74,11 +75,43 @@ def _terminal(started, terminal, code, *, no_input):
     return terminal
 
 
+def capture_valid_until(challenge, expires_unix_ns, milliseconds, valid_until_continuous_ns=None):
+    """Conservative anchor-before-wall mapping, fixed BEFORE durable debit.
+
+    Native anchor precedes challenge publication and this wall measurement. Adding
+    only the wall-remaining validity to that earlier native anchor cannot refresh
+    validity after scheduling/fsync. Native takes min(anchor+debit, this absolute
+    deadline); subsequent wall rollback/sleep cannot extend the pinned deadline.
+    """
+    required = {'event', 'challenge', 'ceiling_ms', 'anchor_continuous_ticks',
+                'timebase_numer', 'timebase_denom'}
+    if (type(challenge) is not dict or set(challenge) != required
+            or type(challenge['anchor_continuous_ticks']) is not int
+            or not 0 < challenge['anchor_continuous_ticks'] < 2**64
+            or any(type(challenge[k]) is not int or not 0 < challenge[k] < 2**32
+                   for k in ('timebase_numer', 'timebase_denom'))):
+        raise RuntimeError('capture_native_clock_challenge')
+    ns = milliseconds * 1_000_000
+    if expires_unix_ns is not None:
+        if type(expires_unix_ns) is not int:
+            raise RuntimeError('runtime_expiry_required')
+        if type(valid_until_continuous_ns) is not int:
+            raise RuntimeError('runtime_continuous_validity_required')
+        remaining = min(expires_unix_ns - time.time_ns(), valid_until_continuous_ns - continuous_ns() - 1)
+        if remaining < ns:
+            raise RuntimeError('runtime_validity_too_short')
+        ns = remaining
+    deadline = challenge['anchor_continuous_ticks'] + ns * challenge['timebase_denom'] // challenge['timebase_numer']
+    if not 0 < deadline < 2**64:
+        raise RuntimeError('capture_native_deadline_overflow')
+    return deadline
+
+
 def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_id=0,
-         check_grant=None, pcm=None):
+         check_grant=None, pcm=None, expires_unix_ns=None, expected_tail=None, valid_until_continuous_ns=None):
     if sys.platform != 'darwin':
         raise RuntimeError('macos_native_only')
-    if type(milliseconds) is not int or not 1 <= milliseconds <= 2000:
+    if type(milliseconds) is not int or not MIN_CAPTURE_MS <= milliseconds <= 2000:
         raise ValueError('native_capture_duration')
     if type(no_input) is not bool or (no_input and device_id != 0):
         raise ValueError('native_capture_mode')
@@ -114,10 +147,20 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
         emergency.ready()
         if check_grant is not None:
             check_grant()
+        if expected_tail is not None and custody._journal.tail != expected_tail:
+            raise RuntimeError('runtime_ledger_changed')
+        valid_until = capture_valid_until(challenge, expires_unix_ns, milliseconds, valid_until_continuous_ns)
         receipt = custody.offer(capability, channel, milliseconds)
-        reservation, wire = (custody.prepare_pcm_budget(capability, channel, receipt, challenge)
+        reservation, wire = (custody.prepare_pcm_budget(capability, channel, receipt, challenge, valid_until_ticks=valid_until, expires_unix_ns=expires_unix_ns or 0)
                              if pcm is not None else custody.prepare_capture_budget(
-                                 capability, channel, receipt, challenge, no_input=no_input))
+                                 capability, channel, receipt, challenge, no_input=no_input, valid_until_ticks=valid_until, expires_unix_ns=expires_unix_ns or 0))
+        # fsync/debit can cross expiry. Revalidate immediately before delivery;
+        # failure retains the durable debit/HOLD and sends NO native budget.
+        custody.launch_remaining_ns(capability, channel, reservation)
+        if check_grant is not None:
+            check_grant()
+        if expires_unix_ns is not None and (time.time_ns() >= expires_unix_ns or continuous_ns() >= valid_until_continuous_ns):
+            raise RuntimeError('runtime_grant_expired_after_debit_hold')
         if child.stdin.write(wire) != len(wire):
             raise RuntimeError('capture_budget_short_write_hold')
         child.stdin.close()  # Exact message + EOF; fsync/debit precedes any native opener.
@@ -180,12 +223,12 @@ def launch_capture(admission, permit, custody, emergency):
 
     def check_grant():
         admission._verify_images()
-        if (time.time_ns() >= launch['expires_unix_ns']
-                or custody._journal.tail != launch['ledger_tail']):
+        if time.time_ns() >= launch['expires_unix_ns'] or continuous_ns() >= launch['valid_until_continuous_ns']:
             raise RuntimeError('runtime_grant_expired_or_ledger_changed')
 
     return _run(launch['root'], custody, launch['candidate'], launch['milliseconds'], emergency,
-                no_input=False, device_id=launch['device_id'], check_grant=check_grant)
+                no_input=False, device_id=launch['device_id'], check_grant=check_grant,
+                expires_unix_ns=launch['expires_unix_ns'], expected_tail=launch['ledger_tail'], valid_until_continuous_ns=launch['valid_until_continuous_ns'])
 
 
 def qualify_noinput(root, custody, candidate, *, milliseconds=2000):
@@ -214,20 +257,22 @@ def launch_pcm(launch, admission, custody, emergency, pcm_fd, finish_fd):
             raise RuntimeError('native_pcm_not_admitted')
         def check_grant():
             admission.base._verify_images()
-            if (time.time_ns() + launch['milliseconds'] * 1_000_000 >= min(launch['expires_unix_ns'], launch['pcm_expires_unix_ns'])
-                    or custody._journal.tail != launch['ledger_tail']):
+            if (time.time_ns() >= min(launch['expires_unix_ns'], launch['pcm_expires_unix_ns'])
+                    or continuous_ns() >= launch['valid_until_continuous_ns']):
                 raise RuntimeError('runtime_grant_expired_or_ledger_changed')
         check_grant()
         if sys.platform != 'darwin' or type(emergency) is not EmergencyStop:
             raise RuntimeError('macos_native_only_or_emergency_missing')
         emergency.ready()
-        if type(launch['milliseconds']) is not int or not 1 <= launch['milliseconds'] <= 2000:
+        if type(launch['milliseconds']) is not int or not MIN_CAPTURE_MS <= launch['milliseconds'] <= 2000:
             raise ValueError('native_capture_duration')
         Path(launch['root']).resolve(strict=True)
         handed_off = True
         return _run(launch['root'], custody, launch['candidate'], launch['milliseconds'], emergency,
                     no_input=False, device_id=launch['device_id'], check_grant=check_grant,
-                    pcm=(pcm_fd, finish_fd, launch['epoch']))
+                    pcm=(pcm_fd, finish_fd, launch['epoch']),
+                    expires_unix_ns=min(launch['expires_unix_ns'], launch['pcm_expires_unix_ns']),
+                    expected_tail=launch['ledger_tail'], valid_until_continuous_ns=launch['valid_until_continuous_ns'])
     finally:
         if not handed_off:
             os.close(pcm_fd)

@@ -23,6 +23,12 @@ PLIST
 /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Bounded, explicitly admitted local input safety check." "$OUT/CaptionHelper.app/Contents/Info.plist"
 /usr/bin/clang -std=c11 -Wall -Wextra -Werror -Os  "$ROOT/native/caption_helper/capture_role.c" "$ROOT/native/caption_helper/capture_input.c"  -Wl,-sectcreate,__TEXT,__info_plist,"$OUT/CaptureHelper-Info.plist"  -framework AudioUnit -framework AudioToolbox -framework CoreAudio -framework CoreFoundation  -o "$BIN/CaptureHelper"
 /usr/bin/codesign --sign - --identifier local.captionbridge.CaptureHelper --options runtime  --timestamp=none --entitlements "$ROOT/native/caption_helper/capture_entitlements.plist" "$BIN/CaptureHelper"
+# Separate capture guardians; never replace the noaudio GuardianA/B images.
+for SPEC in A:1 B:2; do
+ NAME=CaptureGuardian${SPEC%:*}; ROLE=${SPEC#*:}
+ /usr/bin/clang -std=c11 -Wall -Wextra -Werror -Os -DCAPTION_ROLE="$ROLE" "$ROOT/native/caption_helper/capture_guardian.c" -o "$BIN/$NAME"
+ /usr/bin/codesign --sign - --identifier "local.captionbridge.$NAME" --options runtime --timestamp=none "$BIN/$NAME"
+done
 python3 "$ROOT/native/caption_helper/generate_capture_pins.py" "$BIN" "$OUT/capture_pins.h"
 /usr/bin/clang -Wall -Wextra -Werror -Os -I"$OUT"  "$ROOT/native/caption_helper/capture_controller.c" -framework Security -framework CoreFoundation  -o "$BIN/CaptureController"
 /usr/bin/codesign --sign - --identifier local.captionbridge.capture.controller --options runtime  --timestamp=none "$BIN/CaptureController"

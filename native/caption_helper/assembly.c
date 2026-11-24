@@ -18,13 +18,22 @@
 #include "capture_protocol.h"
 static cb_capture_options capture_options;
 static int capture_stop_fd=-1,capture_pcm_fd=-1,capture_finish_fd=-1;
+static int capture_close[2][2]={{-1,-1},{-1,-1}};
+static pid_t capture_group=-1;
 #else
 #include "role_pins.h"
 #endif
 #include "budget.h"
 #include <errno.h>
 #include <poll.h>
-struct capability { uint64_t deadline; int32_t parent; uint32_t role; };
+struct capability { uint64_t deadline; int32_t parent; uint32_t role;
+#ifdef CB_CAPTURE_CONTROLLER
+ int32_t group;uint32_t reserved;uint64_t expires_unix_ns;
+#endif
+};
+#ifdef CB_CAPTURE_CONTROLLER
+_Static_assert(sizeof(struct capability)==sizeof(cb_capture_capability),"controller capability ABI");
+#endif
 static const char *failure_stage="NONE";
 static int failure_role=0,failure_code=0;
 static int saved_status[3]={-1,-1,-1},cleanup_killed[3]={0,0,0};
@@ -71,7 +80,7 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  failure_stage="SPAWN_SETUP";failure_role=role;failure_code=0;errno=0;
  int ready_pipe[2]={-1,-1};int ready_writer=-1;
 #ifdef CB_CAPTURE_CONTROLLER
- int stop_copy=-1,pcm_copy=-1,finish_copy=-1;
+ int stop_copy=-1,pcm_copy=-1,finish_copy=-1,ack_copy[2]={-1,-1};
 #endif
  int cap[2]={-1,-1},mapped[5]={-1,-1,-1,-1,-1};pid_t pid=-1;
  posix_spawn_file_actions_t f;posix_spawnattr_t attr;int fi=0,ai=0,ok=0;
@@ -86,9 +95,13 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
  for(int i=0;i<5;i++)if(mapped[i]>=0 && posix_spawn_file_actions_adddup2(&f,mapped[i],3+i))goto done;
  if(posix_spawn_file_actions_adddup2(&f,ready_writer,8))goto done;
 #ifdef CB_CAPTURE_CONTROLLER
+ stop_copy=fcntl(capture_stop_fd,F_DUPFD_CLOEXEC,40);if(stop_copy<0)goto done;
+ if(posix_spawn_file_actions_adddup2(&f,stop_copy,9))goto done;
  if(role==3){
-  stop_copy=fcntl(capture_stop_fd,F_DUPFD_CLOEXEC,40);if(stop_copy<0)goto done;
-  if(posix_spawn_file_actions_adddup2(&f,stop_copy,9))goto done;
+  for(int i=0;i<2;i++){
+   ack_copy[i]=fcntl(capture_close[i][1],F_DUPFD_CLOEXEC,40);
+   if(ack_copy[i]<0 || posix_spawn_file_actions_adddup2(&f,ack_copy[i],12+i))goto done;
+  }
   if(capture_options.flags==CB_CAPTURE_PCM){
    pcm_copy=fcntl(capture_pcm_fd,F_DUPFD_CLOEXEC,40);if(pcm_copy<0)goto done;
    finish_copy=fcntl(capture_finish_fd,F_DUPFD_CLOEXEC,40);if(finish_copy<0)goto done;
@@ -96,14 +109,28 @@ static pid_t spawn_role(const char *path,int input,int output,int ga,int gb,int 
   }
  }
 #endif
+#ifdef CB_CAPTURE_CONTROLLER
+ if((role!=1 && capture_group<=1) || posix_spawnattr_setpgroup(&attr,role==1?0:capture_group) ||
+    posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT|POSIX_SPAWN_SETPGROUP))goto done;
+#else
  if(posix_spawnattr_setflags(&attr,POSIX_SPAWN_START_SUSPENDED|POSIX_SPAWN_CLOEXEC_DEFAULT))goto done;
+#endif
  char *args[]={(char *)path,NULL};char *environment[]={NULL};
  if((failure_code=posix_spawn(&pid,path,&f,&attr,args,environment))) {pid=-1;goto done;}
  owned_identity[role-1]=pid;retained[role-1]=pid;
+#ifdef CB_CAPTURE_CONTROLLER
+ if(role==1)capture_group=pid;
+ if(getpgid(pid)!=capture_group)goto done;
+#endif
  failure_stage="IDENTITY_VERIFY";failure_code=-10002;
  if(!verify(pid,path,role))goto done;
  failure_stage="CAPABILITY";failure_code=0;errno=0;
+#ifdef CB_CAPTURE_CONTROLLER
+ struct capability capability={.deadline=deadline,.parent=getpid(),.role=(uint32_t)role};
+ capability.group=capture_group;capability.expires_unix_ns=cb_capture_expires_unix_ns;
+#else
  struct capability capability={deadline,getpid(),(uint32_t)role};
+#endif
  size_t offset=0;
  while(offset<sizeof(capability)){
   ssize_t n=write(cap[1],(const char *)&capability+offset,sizeof(capability)-offset);
@@ -132,11 +159,32 @@ done:
  for(int i=0;i<2;i++){close_owned(&cap[i]);close_owned(&ready_pipe[i]);}
  for(int i=0;i<5;i++)close_owned(&mapped[i]);close_owned(&ready_writer);
 #ifdef CB_CAPTURE_CONTROLLER
- close_owned(&stop_copy);close_owned(&pcm_copy);close_owned(&finish_copy);
+ close_owned(&stop_copy);close_owned(&pcm_copy);close_owned(&finish_copy);close_owned(&ack_copy[0]);close_owned(&ack_copy[1]);
+#endif
+#ifdef CB_CAPTURE_CONTROLLER
+ /* Group-leader PID custody must survive failed identity/ready setup too. */
+ if(!ok && role==1 && pid>0)return -1;
 #endif
  if(!ok && pid>0){if(!reap_owned(pid,role))closure_error=1;else retained[role-1]=-1;pid=-1;}
  return pid;
 }
+#ifdef CB_CAPTURE_CONTROLLER
+static int observe_owned(pid_t pid,int *status){
+ siginfo_t info;memset(&info,0,sizeof(info));
+ if(waitid(P_PID,(id_t)pid,&info,WEXITED|WNOHANG|WNOWAIT))return errno==EINTR?0:-1;
+ if(!info.si_pid)return 0;
+ if(info.si_code==CLD_EXITED)*status=info.si_status<<8;
+ else if(info.si_code==CLD_KILLED || info.si_code==CLD_DUMPED)*status=info.si_status|(info.si_code==CLD_DUMPED?128:0);
+ else return -1;
+ return 1;
+}
+static int kill_capture_group(void){
+ /* An owned unreaped leader pins PGID. Never signal after ECHILD/reap. */
+ if(capture_group<=1 || retained[0]!=capture_group)return 0;
+ int status=-1;if(observe_owned(capture_group,&status)<0)return 0;
+ return kill(-capture_group,SIGKILL)==0 || errno==ESRCH;
+}
+#endif
 int main(int argc,char **argv) {
 #ifdef CB_CAPTURE_CONTROLLER
  int pcm=argc==8 && !strcmp(argv[1],"--capture-pcm-budget");
@@ -190,16 +238,24 @@ int main(int argc,char **argv) {
 #endif
  char root[PATH_MAX];if(!realpath(argv[2],root))return 64;
  if(signal(SIGPIPE,SIG_IGN)==SIG_ERR)return 70;
+#ifdef CB_CAPTURE_CONTROLLER
+ struct sigaction child_action;memset(&child_action,0,sizeof(child_action));child_action.sa_handler=SIG_DFL;
+ if(sigemptyset(&child_action.sa_mask) || sigaction(SIGCHLD,&child_action,NULL))return 70;
+#endif
  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer)return 70;
  uint64_t end;
  if(budget_mode){
 #ifdef CB_CAPTURE_CONTROLLER
-  if(!cb_budget_deadline_for(&end,tb,pcm?"capture_pcm_budget_ready":(physical?"capture_budget_ready":"capture_noinput_budget_ready"),pcm?"CBPC0001":(physical?"CBCA0001":"CBNC0001")))return 70;
+  if(!cb_budget_deadline_for(&end,tb,pcm?"capture_pcm_budget_ready":(physical?"capture_budget_ready":"capture_noinput_budget_ready"),pcm?"CBPC0002":(physical?"CBCA0002":"CBNC0002")))return 70;
 #else
   if(!cb_budget_deadline(&end,tb))return 70;
 #endif
  }
  else end=mach_continuous_time()+2000000000ULL*tb.denom/tb.numer;
+#ifdef CB_CAPTURE_CONTROLLER
+ /* Already-impossible startup is rejected before ANY helper can open HAL. */
+ if(mach_continuous_time()+500000000ULL*tb.denom/tb.numer>=end)return 70;
+#endif
  int lifelines[3][2]={{-1,-1},{-1,-1},{-1,-1}};pid_t children[3]={-1,-1,-1};int result=70;cb_input state={0};int statuses[3]={-1,-1,-1};pid_t identities[3]={-1,-1,-1};
  for(int i=0;i<3;i++){
   if(pipe(lifelines[i]))goto cleanup;
@@ -210,9 +266,22 @@ int main(int argc,char **argv) {
  if(getppid()!=launch_parent || mach_continuous_time()>=end || poll(&before_spawn,1,0)!=0)goto cleanup;
 #endif
  if(!cb_reserve(&state,end) || !cb_synthetic_input(&state) || !cb_route_change(&state))goto cleanup;
+#ifdef CB_CAPTURE_CONTROLLER
  for(int i=0;i<2;i++){
-  char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/Guardian%c",root,'A'+i)>=(int)sizeof(path))goto cleanup;
+  if(pipe(capture_close[i]))goto cleanup;
+  int f=fcntl(capture_close[i][1],F_GETFL);if(f<0 || fcntl(capture_close[i][1],F_SETFL,f|O_NONBLOCK)<0)goto cleanup;
+  for(int j=0;j<2;j++)if(fcntl(capture_close[i][j],F_SETFD,FD_CLOEXEC)<0)goto cleanup;
+ }
+#endif
+ for(int i=0;i<2;i++){
+  char path[PATH_MAX];
+#ifdef CB_CAPTURE_CONTROLLER
+  if(snprintf(path,sizeof(path),"%s/CaptureGuardian%c",root,'A'+i)>=(int)sizeof(path))goto cleanup;
+  children[i]=spawn_role(path,lifelines[0][0],lifelines[i+1][1],capture_close[i][0],-1,i+1,end);
+#else
+  if(snprintf(path,sizeof(path),"%s/Guardian%c",root,'A'+i)>=(int)sizeof(path))goto cleanup;
   children[i]=spawn_role(path,-1,lifelines[i+1][1],-1,-1,i+1,end);
+#endif
   close_owned(&lifelines[i+1][1]);
   if(children[i]<0)goto cleanup;
  }
@@ -225,6 +294,7 @@ int main(int argc,char **argv) {
  children[2]=spawn_role(path,lifelines[0][0],lifelines[0][0],lifelines[1][0],lifelines[2][0],3,end);
 #ifdef CB_CAPTURE_CONTROLLER
  close_owned(&capture_pcm_fd);close_owned(&capture_finish_fd);
+ for(int i=0;i<2;i++)for(int j=0;j<2;j++)close_owned(&capture_close[i][j]);
 #endif
  if(children[2]<0)goto cleanup;
  for(int i=0;i<3;i++)identities[i]=children[i];
@@ -236,6 +306,24 @@ int main(int argc,char **argv) {
  if(!strcmp(mode,"helper") && kill(children[2],SIGKILL)<0)result=70;
  if(!strcmp(mode,"suspend")){if(kill(children[2],SIGSTOP)<0)result=70;if(usleep(2100000)<0 && errno!=EINTR)result=70;if(kill(children[2],SIGCONT)<0)result=70;}
  uint64_t reap_end=end+2000000000ULL*tb.denom/tb.numer;
+#ifdef CB_CAPTURE_CONTROLLER
+ while(mach_continuous_time()<reap_end){
+  int remaining=0;
+  for(int i=0;i<3;i++)if(statuses[i]<0){
+   int r=observe_owned(children[i],&statuses[i]);if(r<0){result=70;goto cleanup;}
+   if(!r)remaining++;
+  }
+  for(int i=0;i<3;i++)if(statuses[i]>=0 &&
+     (!WIFEXITED(statuses[i]) || (i<2?WEXITSTATUS(statuses[i])!=72:(WEXITSTATUS(statuses[i])!=71 && WEXITSTATUS(statuses[i])!=72)))){
+   result=70;goto cleanup;
+  }
+  if(!remaining)break;
+  struct pollfd stop={.fd=capture_stop_fd,.events=POLLIN|POLLHUP|POLLERR};
+  if(poll(&stop,1,0)!=0 || getppid()!=launch_parent || !cb_capture_wall_valid(cb_capture_expires_unix_ns)){result=70;goto cleanup;}
+  if(usleep(1000)<0 && errno!=EINTR){result=70;goto cleanup;}
+ }
+ for(int i=0;i<3;i++)if(statuses[i]<0)result=70;
+#else
  while(mach_continuous_time()<reap_end) {
 #ifdef CB_CAPTURE_CONTROLLER
   /* Independent of capture/UI callbacks. Only direct, unreaped children are
@@ -268,9 +356,12 @@ int main(int argc,char **argv) {
     if(!WIFEXITED(statuses[i]) || (WEXITSTATUS(statuses[i])!=expected && !(i==2 && expected==72 && WEXITSTATUS(statuses[i])==71)))result=70;}
   }
  }
+#endif
 cleanup:
 #ifdef CB_CAPTURE_CONTROLLER
  close_owned(&capture_pcm_fd);close_owned(&capture_finish_fd);
+ for(int i=0;i<2;i++)for(int j=0;j<2;j++)close_owned(&capture_close[i][j]);
+ if(capture_group>1 && !kill_capture_group())result=70;
 #endif
  for(int i=0;i<3;i++)identities[i]=owned_identity[i];
  for(int i=0;i<3;i++)for(int j=0;j<2;j++)close_owned(&lifelines[i][j]);
