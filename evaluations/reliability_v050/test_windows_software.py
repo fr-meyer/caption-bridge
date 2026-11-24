@@ -41,11 +41,36 @@ def test_current_windows_harness_matches_version_and_preserves_legacy_gate():
     assert "evaluations/reliability_v050/run_offline.py" in source
     assert "'.venv\\Scripts\\python.exe'" in source
     assert "scripts/windows_v050_fixture_app.py" in source and "'app.main:app'" not in source
-    assert 'physical_windows_pass":false' in source and "software-fixture-proof" in source
+    assert "physical_windows_pass = $false" in source and "software-fixture-proof" in source
+    assert "ordinary_windows_controller_pass = $false" in source
     assert (
         "Stop-OwnedProcessTree -Process $browser" in source
         and "Stop-OwnedProcessTree -Process $server" in source
     )
+
+
+def test_windows_receipt_is_content_free_and_success_follows_owned_cleanup():
+    source = NEW.read_text()
+    assert "[string]$ReceiptPath" in source
+    assert "[IO.FileMode]::CreateNew" in source
+    assert "Receipt must be a new file outside the source checkout." in source
+    assert "source_unchanged -ne $true" in source
+    assert source.count('Uri "http://127.0.0.1:$AppPort/software/fixture-proof"') == 2
+    assert source.index("$currentStage = 'software-fixture-final-proof'") > source.index(
+        "$currentStage = 'public-dom-gate'"
+    )
+    assert source.index("$summary = [ordered]@{") > source.index(
+        "$browserStopped = Stop-OwnedProcessTree"
+    )
+    summary = source[source.index("$summary = [ordered]@{"):]
+    assert "status = if ($gateFailed -or $cleanupFailed)" in summary
+    assert "offline = $offlineReceipt" in summary
+    assert "source_head = $actualSha" in summary
+    assert "fixture = $fixtureProof" in summary
+    assert "$currentStage = 'final-software-identity'" in source
+    assert "$finalIdentity.git_dirty -ne $false" in source
+    assert "serverOut" not in summary and "serverErr" not in summary
+    assert "ConvertTo-Json -Depth 8 -Compress" in summary
 
 
 def test_v050_embedded_dom_gate_uses_the_reviewed_loopback_and_redaction_contract():

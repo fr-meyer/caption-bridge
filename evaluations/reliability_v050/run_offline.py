@@ -68,6 +68,37 @@ def install_guards():
     return network_guard
 
 
+def software_source_identity(root=ROOT):
+    """Bind software evidence to actual bytes, including an uncommitted candidate."""
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(root), *args], capture_output=True, check=True
+        ).stdout
+
+    names = git(
+        "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
+        "app", "scripts", "tests", "evaluations/reliability_v050", "pyproject.toml", "uv.lock",
+    ).split(b"\0")
+    digest = hashlib.sha256()
+    paths = sorted(set(name for name in names if name))
+    for name in paths:
+        path = root / os.fsdecode(name)
+        # Never follow a source symlink into private or external files.
+        if path.is_symlink():
+            value = b"symlink\0" + os.fsencode(os.readlink(path))
+        elif path.exists():
+            value = b"file\0" + path.read_bytes()
+        else:
+            value = b"missing"
+        digest.update(name + b"\0" + hashlib.sha256(value).hexdigest().encode("ascii") + b"\n")
+    return {
+        "source_head": git("rev-parse", "HEAD").decode("ascii").strip(),
+        "source_dirty": bool(git("status", "--porcelain=v1", "-z")),
+        "software_source_sha256": digest.hexdigest(),
+        "software_source_files": len(paths),
+    }
+
+
 class Outcome:
     def __init__(self):
         self.passed = 0
@@ -96,13 +127,22 @@ def main():
     network_guard = install_guards()
     import pytest
 
+    source_before = software_source_identity()
     selected = [
+        "evaluations/reliability_v050/test_source_identity.py",
         "tests/unit/test_software_network_guard.py",
         "evaluations/reliability_v050/test_endurance.py",
         "evaluations/reliability_v050/test_windows_software.py",
         "tests/unit/test_reconnect.py",
         "tests/unit/test_reliability.py",
         "tests/unit/test_windows_v020_acceptance_harness.py",
+        "tests/test_lifecycle.py::test_start_status_stop_status_twice",
+        "tests/test_lifecycle.py::test_repeated_start_is_idempotent",
+        "tests/test_lifecycle.py::test_repeated_stop_is_idempotent",
+        "tests/test_lifecycle.py::test_stale_pid_never_signals_process",
+        "tests/test_lifecycle.py::test_matching_start_token_but_wrong_command_is_not_owned",
+        "tests/test_lifecycle.py::test_corrupt_state_never_signals_process",
+        "tests/test_lifecycle.py::test_identity_failure_never_signals_or_terminates",
         "tests/test_lifecycle.py::test_windows_command_lock_initializes_empty_file",
         "tests/test_lifecycle.py::test_windows_command_lock_retries_contention_until_acquired",
         "tests/test_lifecycle.py::test_windows_command_lock_propagates_non_contention_errors",
@@ -114,13 +154,17 @@ def main():
         ]
     outcome = Outcome()
     started = time.perf_counter()
-    status = pytest.main(["-q", "-p", "no:cacheprovider", *selected], plugins=[outcome])
+    status = pytest.main(["-q", "-ra", "-p", "no:cacheprovider", *selected], plugins=[outcome])
     from app import pipeline_diagnostics
     from app.identity import PACKAGE_VERSION
 
     assert Path(pipeline_diagnostics.__file__).resolve().is_relative_to(ROOT)
+    source_after = software_source_identity()
+    source_unchanged = source_before == source_after
     result = {
-        "status": "passed" if status == 0 and not DENIED else "failed",
+        **source_before,
+        "source_unchanged": source_unchanged,
+        "status": "passed" if status == 0 and not DENIED and source_unchanged else "failed",
         "pytest_exit_code": int(status),
         "passed": outcome.passed,
         "failed": outcome.failed,
@@ -135,12 +179,6 @@ def main():
         "host_platform": {"win32": "Windows", "darwin": "Darwin", "linux": "Linux"}.get(
             sys.platform, sys.platform
         ),
-        "source_head": subprocess.run(
-            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip(),
         "pipeline_module_sha256": hashlib.sha256(
             Path(pipeline_diagnostics.__file__).read_bytes()
         ).hexdigest(),

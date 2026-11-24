@@ -14,7 +14,8 @@ param(
     [int]$CdpPort = 9229,
 
     [string]$PythonPath,
-    [string]$ChromiumPath
+    [string]$ChromiumPath,
+    [string]$ReceiptPath
 )
 
 Set-StrictMode -Version Latest
@@ -80,6 +81,20 @@ if ($AppPort -eq $CdpPort) {
     throw 'Application and CDP ports must differ.'
 }
 
+# Retain only a content-free receipt outside source, never raw runtime logs.
+$receiptDestination = $null
+if (-not [string]::IsNullOrWhiteSpace($ReceiptPath)) {
+    $receiptParent = (Resolve-Path -LiteralPath (Split-Path -Parent $ReceiptPath)).Path
+    $receiptDestination = Join-Path $receiptParent (Split-Path -Leaf $ReceiptPath)
+    if (
+        $receiptDestination.Equals($repo, [StringComparison]::OrdinalIgnoreCase) -or
+        $receiptDestination.StartsWith($repo + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        (Test-Path -LiteralPath $receiptDestination)
+    ) {
+        throw 'Receipt must be a new file outside the source checkout.'
+    }
+}
+
 $runtimeRoot = Join-Path $runnerTemp ('caption-bridge-v050-software-' + [Guid]::NewGuid().ToString('N'))
 $profileRoot = Join-Path $runtimeRoot 'chromium-profile'
 $serverOut = Join-Path $runtimeRoot 'server.stdout'
@@ -93,6 +108,14 @@ $gateFailed = $false
 $cleanupFailed = $false
 $currentStage = 'preflight'
 $failureStage = 'unknown'
+$offlineReceipt = $null
+$actualSha = $null
+$fixtureProof = $null
+$publicDomPassed = $false
+$browserStopped = $false
+$serverStopped = $false
+$listenersRemaining = $null
+$temporaryStateRemaining = $true
 
 try {
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
@@ -132,6 +155,19 @@ try {
 
         $currentStage = 'bounded-offline-validation'
         Invoke-NativeGate $python -B 'evaluations/reliability_v050/run_offline.py' --receipt-dir (Join-Path $runtimeRoot 'offline-checks')
+
+        $currentStage = 'offline-receipt'
+        $offlineReceipt = Get-Content -Raw -LiteralPath (Join-Path $runtimeRoot 'offline-checks/focused-receipt.json') | ConvertFrom-Json
+        if (
+            $offlineReceipt.status -ne 'passed' -or
+            $offlineReceipt.source_head -ne $ExpectedSha.ToLowerInvariant() -or
+            $offlineReceipt.source_dirty -ne $false -or
+            $offlineReceipt.source_unchanged -ne $true -or
+            $offlineReceipt.real_provider_calls -ne 0 -or
+            $offlineReceipt.native_device_calls -ne 0
+        ) {
+            throw 'Offline proof does not match the unchanged, provider-free candidate.'
+        }
 
         $env:HOST = '127.0.0.1'
         $env:PORT = $AppPort.ToString()
@@ -413,13 +449,30 @@ print(json.dumps({
         }
         try {
             Invoke-NativeGate $python $gateScript "http://127.0.0.1:$AppPort/" $cdpWebSocketUrl
+            $publicDomPassed = $true
         }
         finally {
             foreach ($proxyName in $proxyVariables) {
                 [Environment]::SetEnvironmentVariable($proxyName, $proxyValues[$proxyName], 'Process')
             }
         }
-        Write-Output '{"exact_candidate":true,"windows_software_fixture":true,"physical_windows_pass":false,"loopback_only":true,"provider_calls":false,"public_dom_gate":true}'
+        $currentStage = 'software-fixture-final-proof'
+        $fixture = Invoke-RestMethod -Uri "http://127.0.0.1:$AppPort/software/fixture-proof" -TimeoutSec 2
+        if (-not $fixture.software_fixture -or $fixture.native_input_enabled -or $fixture.capture_active -or $fixture.native_calls -ne 0 -or $fixture.provider_calls -ne 0) {
+            throw 'The completed idle browser fixture attempted native input or a provider request.'
+        }
+        $fixtureProof = [ordered]@{
+            software_fixture = $true
+            native_input_enabled = [bool]$fixture.native_input_enabled
+            capture_active = [bool]$fixture.capture_active
+            native_calls = [int]$fixture.native_calls
+            provider_calls = [int]$fixture.provider_calls
+        }
+        $currentStage = 'final-software-identity'
+        $finalIdentity = Invoke-NativeGate $python -B -m app.identity --json | Select-Object -Last 1 | ConvertFrom-Json
+        if ($finalIdentity.git_sha -ne $ExpectedSha.ToLowerInvariant() -or $finalIdentity.git_dirty -ne $false) {
+            throw 'Software source changed after the offline suite.'
+        }
     }
     finally {
         Pop-Location
@@ -430,15 +483,18 @@ catch {
     $failureStage = $currentStage
 }
 finally {
-    if (-not (Stop-OwnedProcessTree -Process $browser)) {
+    $browserStopped = Stop-OwnedProcessTree -Process $browser
+    if (-not $browserStopped) {
         $cleanupFailed = $true
     }
-    if (-not (Stop-OwnedProcessTree -Process $server)) {
+    $serverStopped = Stop-OwnedProcessTree -Process $server
+    if (-not $serverStopped) {
         $cleanupFailed = $true
     }
     Start-Sleep -Milliseconds 750
 
-    if (@(Get-BoundListeners -Ports @($AppPort, $CdpPort)).Count -ne 0) {
+    $listenersRemaining = @(Get-BoundListeners -Ports @($AppPort, $CdpPort)).Count
+    if ($listenersRemaining -ne 0) {
         $cleanupFailed = $true
     }
 
@@ -446,7 +502,8 @@ finally {
         if (Test-Path -LiteralPath $runtimeRoot) {
             Remove-Item -LiteralPath $runtimeRoot -Recurse -Force
         }
-        if (Test-Path -LiteralPath $runtimeRoot) {
+        $temporaryStateRemaining = Test-Path -LiteralPath $runtimeRoot
+        if ($temporaryStateRemaining) {
             $cleanupFailed = $true
         }
     }
@@ -454,6 +511,42 @@ finally {
         $cleanupFailed = $true
     }
 }
+
+$summary = [ordered]@{
+    schema_version = 1
+    status = if ($gateFailed -or $cleanupFailed) { 'failed' } else { 'passed' }
+    expected_source_head = $ExpectedSha.ToLowerInvariant()
+    source_head = $actualSha
+    public_dom_gate = $publicDomPassed
+    fixture = $fixtureProof
+    windows_software_fixture = -not $gateFailed
+    physical_windows_pass = $false
+    ordinary_windows_controller_pass = $false
+    failure_stage = if ($gateFailed) { $failureStage } else { $null }
+    cleanup = [ordered]@{
+        passed = -not $cleanupFailed
+        browser_stopped = $browserStopped
+        server_stopped = $serverStopped
+        listeners_remaining = $listenersRemaining
+        temporary_state_remaining = $temporaryStateRemaining
+    }
+    offline = $offlineReceipt
+}
+$receiptJson = $summary | ConvertTo-Json -Depth 8 -Compress
+if ($null -ne $receiptDestination) {
+    try {
+        # CreateNew refuses an intervening file or symlink instead of overwriting it.
+        $receiptFile = [IO.File]::Open($receiptDestination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $receiptBytes = [Text.UTF8Encoding]::new($false).GetBytes($receiptJson + [Environment]::NewLine)
+            $receiptFile.Write($receiptBytes, 0, $receiptBytes.Length)
+            $receiptFile.Flush($true)
+        }
+        finally { $receiptFile.Dispose() }
+    }
+    catch { throw 'Content-free Windows software receipt could not be retained.' }
+}
+Write-Output $receiptJson
 
 if ($cleanupFailed) {
     throw 'Hosted Windows acceptance cleanup failed.'
