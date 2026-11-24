@@ -161,7 +161,7 @@ class CaptureAdmission:
             if self._permits or trusted_grant_sha256 in self._seen_grants:
                 raise RuntimeError('runtime_grant_pending_or_replayed')
             self._seen_grants.add(trusted_grant_sha256)
-            self._permits[permit] = (grant, custody, journal.tail, now)
+            self._permits[permit] = (grant, custody, journal.tail, now, trusted_grant_sha256)
         return permit
 
     def consume(self, permit, custody):
@@ -169,7 +169,7 @@ class CaptureAdmission:
             entry = self._permits.pop(permit, None)
             if entry is None or entry[1] is not custody:
                 raise RuntimeError('runtime_grant_unregistered')
-            grant, _, tail, issued = entry
+            grant, _, tail, issued, grant_sha256 = entry
             journal = custody._journal
             now = time.time_ns()
             if (not issued <= now < grant['expires_unix_ns'] or journal.tail != tail
@@ -178,4 +178,4 @@ class CaptureAdmission:
             self._verify_images()
             return dict(candidate=self.candidate, root=self.root,
                         milliseconds=grant['milliseconds'], device_id=grant['device_id'],
-                        expires_unix_ns=grant['expires_unix_ns'], ledger_tail=tail)
+                        expires_unix_ns=grant['expires_unix_ns'], ledger_tail=tail, grant_sha256=grant_sha256)

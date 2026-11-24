@@ -1,95 +1,123 @@
-# Opt-in native capture candidate (not physically qualified)
+# Physical capture source and PCM integration (disabled by default)
 
-The existing helper/noaudio build, launch protocol and hosted suite remain intact.
-The separate build_capture.sh builds a real input implementation; it never runs
-it. This milestone is source + software-policy tests only. There is no application
-Start hook, provider path, output playback, route mutation, auto-admission or
-runtime grant installed. Existing UI and model/ASR defaults are unchanged.
+This is source availability, **not native/physical admission or acceptance**.
+NoAudioController/Helper/LeaseWatch/Watchdog and their qualification entrypoint
+remain unchanged. The opt-in CaptureController/CaptureHelper are separately signed
+images with microphone-only helper entitlement; no network or audio-output route.
 
-## Architecture
+## Discard and PCM modes
 
-- CaptureController retains the existing suspended-spawn disk/live CDHash checks,
-  fixed role identities, retained direct-child ownership and readiness protocol.
-  Its generated capture pins bind GuardianA, GuardianB and CaptureHelper, not the
-  original SyntheticHelper. The original NoAudioController still hard-pins CBNA0001.
-- Before any role launch, a native continuous-time challenge is published. Parent
-  Custody fsyncs the shared programme debit before supplying one exact inherited
-  pipe reply. Capture (CBCA0001), no-input (CBNC0001) and original noaudio (CBNA0001)
-  messages are distinct. The native anchor predates IPC/debit; latency consumes the
-  <=2-second native ceiling. Existing programme cap/no-refund/HOLD rules remain.
-- Only CaptureHelper links the HAL opener. It disables output, selects the exact
-  explicit CoreAudio AudioDeviceID before initialization, opens at most once,
-  checks controller/guardian/emergency pipe liveness, and discards/zeros native PCM.
-  It queries the selected HAL input format rather than assuming ASR mono format,
-  bounds rate/channels/frames/scratch storage and never changes hardware rates.
-  A PortAudio index is NOT a HAL device ID. No default-device lookup or mutation,
-  data retention, network/provider access or automatic alternative-device retry.
-- CaptureHelper begins closure 100 ms before the shared continuous deadline. It
-  checks callback quiescence, stop, uninitialization and disposal results. Controller
-  independently monitors the parent, close-only emergency pipe, guardians and
-  hard deadline; it can kill/reap only its retained direct capture child. Any
-  unexpected/native-forced termination remains unknown/HOLD, not closure proof.
-- There is deliberately no output path to unmute: output remains absent. Binding
-  actual output-route changes to B-lane mute-before-invalidate is separate work.
+The older explicit `--capture-budget` path retains discard-only input. Its
+budget reply is CBCA0001; --capture-noinput-budget is CBNC0001 and calls no opener
+or closer. The separate --capture-pcm-budget uses **CBPC0001**, private inherited
+PCM/soft-stop pipes, and a nonzero 128-bit epoch. Cross-domain replies cannot debit
+or arm another mode. No PCM goes through JSON stdout/stderr, files, sockets, the
+ledger, metrics, or qualification artifacts. Role process/image identity and
+parent lifelines remain the existing suspended-image native boundary.
 
-## Fail-closed admission and trust boundary
+CaptureHelper explicitly selects the granted HAL AudioDeviceID, never a PortAudio
+index or the default device. It reads the native input format, rejects unsupported
+formats/rates/channel counts, and sets only its AudioUnit client output format to
+interleaved little-endian signed PCM16 at the existing native rate (mono/stereo).
+It does not change hardware/default routes or nominal rates. Scratch and callback
+frame limits remain fixed. Client format negotiation failures close without any
+sounddevice/default-device or guessed-format fallback.
 
-attended_helper_budget.admit_helper() still refuses missing prerequisites and
-old UI-style identity/kernel/readiness booleans. The opt-in adapter only consumes
-an opaque one-use permit registered in CaptureAdmission by the independent parent.
+## PCM wire and bounded backpressure
 
-The parent must authenticate and pin a review manifest and current explicit owner
-runtime grant via an independent reviewed channel. Passing a hash read from the
-same untrusted document is NOT authentication. No trust pin, qualifying proof or
-runtime grant is supplied in source. Unit-test fixture bytes are not acceptance.
-The fixed review names every binary SHA256 and exact proof bytes for signature /
-entitlements, full kernel network denial, single stream, deadline/controller /
-guardian / suspend closure, emergency stop, mute-before-route, and native cleanup.
-Proof documents bind the exact candidate and image set; noinput/fixture receipts
-cannot substitute. A current short-lived grant additionally binds programme,
-ledger tail, exact HAL input, <=2-second allowance, ready/private/meeting-ended
-conditions, and a parent/session-bound runtime kernel-egress-denial observation.
-The grant and permit cannot be replayed within their authority instance.
+One producer, one inherited nonblocking FIFO, one process-owned reader. Every write
+is one atomic packet <=496 bytes, below the POSIX minimum PIPE_BUF of 512; descriptor
+mode/type/atomic capacity are checked in both controller and capture role. A packet
+is a 48-byte network-order header followed by at most 448 PCM bytes:
 
-Python hash checks detect drift but do not create an OS inode/exec lock. Native
-roles additionally verify strict code identity on suspended disk/live images.
-The parent/controller themselves and the browser/backend must be in the reviewed
-kernel-denied runtime boundary; env={} and absence of socket code are NOT kernel
-network-denial evidence. This source does not change machine firewall/TCC/defaults.
-All results keep native_admission=false/physical_acceptance=false and ledger HOLD;
-independent authenticated closure observation remains required to finish a debit.
+- 8 bytes: CBPCM001; 16 bytes: exact granted epoch;
+- u64 sequence (starting at zero, no gaps/replays);
+- u32 native sample rate (8000..192000), u16 channels (1 or 2), u16 flags;
+- u32 frame count and u32 payload byte count (frames * channels * 2).
 
-## Later hosted no-input build/qualification (never physical)
+Flags zero means nonempty PCM. Flag 1 is an empty END packet, emitted only after
+checked local stop/uninitialize/dispose and callback quiescence; it does NOT release
+HOLD or independently prove physical closure. Pipe EOF without END, bytes after
+END, changed format/epoch/sequence, oversized data or duration excess fail closed.
+The decoder enforces frames <= native_rate * granted_ms / 1000.
 
-From repository root, on an approved macOS CI host:
+The callback never waits/retries/drops audio on pipe pressure: EAGAIN, EINTR, short
+writes and broken pipe fault capture and cause checked close. Python reads at most
+four packets per loop callback, not unlimited call_soon_threadsafe handles. Its
+ASR coalescer has <3200 pending bytes plus one converted packet (<896 bytes), and
+its application queue is <=50 * 3200 bytes. Queue pressure is terminal emergency
+stop, never silent loss/continued capture. Stop drops queued/pending references.
+No secure-erasure claim is made for immutable Python/provider buffers.
 
-    sh native/caption_helper/build_capture.sh NEW_PRIVATE_OUTPUT
-    python3 -m native.caption_helper.qualify_capture_noinput NEW_PRIVATE_OUTPUT/CaptionHelper.app/Contents/MacOS
+## ASR and lifecycle integration
 
-This harness has no device, grant or attended-ledger argument. It creates its own
-private disposable software ledger, uses only --capture-noinput-budget and emits
-a content-free result. The role exercises custody/guardian/liveness/deadline and
-terminal ownership paths but calls neither opener nor closer. Linked frameworks
-are not proof of physical access. Independent hosted inspection must establish
-that no device/TCC/audio side effect occurred. This phase has not run these steps.
+app/native_pcm.py validates framing and maintains per-epoch stereo downmix and
+stateful conversion to exactly **16000 Hz, mono PCM16LE**, matching the existing ASR
+request contract. Native-rate conversion does not mutate a device setting. Python
+3.11/3.12 audioop is used only where conversion is necessary; unavailable conversion
+(including 3.13 without audioop) fails closed. No install, guessed-rate passthrough,
+or stateless per-packet resampling fallback exists. 100 ms ASR blocks preserve the
+existing application chunk contract; a final partial block is drained once.
 
-## Integration/remaining gates
+app/native_capture.py owns the reader, fixed queue and single stream consumer. A
+one-use NativeCaptureFactory is bound to session ID, pipeline generation, epoch,
+sample rate, programme, ledger tail, exact base runtime-grant digest (including HAL
+device/duration/runtime proof), candidate, image pins, exact consumer, reviewed
+provider-authorization reference (for app-asr), and narrowed grant expiry. It never
+requests permission, opens output, starts a provider directly or renews a grant.
+The independent coordinator keeps Custody/Journal and EmergencyStop ownership.
 
-1. Independent source review and macOS compile/signature/no-input qualification of
-   the exact integration candidate. Builder opt-in only; do not replace existing
-   CI acceptance or infer a pass from Python/source-pattern tests.
-2. Separately authorized physical qualification under reviewed complete kernel
-   egress denial, exact signed images, explicit HAL device and fresh runtime grant.
-   Confirm actual deadline/stop/closure, controller/guardian deaths, suspend/hang
-   combinations, no other input, and no audio/output/provider leak. In particular,
-   controller plus helper scheduling/OS-device cleanup must be demonstrated, not
-   assumed from cooperative polling or owned SIGKILL/reap. No claim this source
-   alone establishes every independent-custodian closure guarantee.
-3. Parent retains one locked Journal across devices/retries, authenticates evidence
-   and owner grant pins, owns an EmergencyStop outside UI/backend workers, and
-   invokes launch_capture only after source/runtime qualification. Never auto-call
-   from app startup/Start. Closure acceptance is external, never child JSON.
-4. This deliberately discard-only input is not a transcription pipeline adapter.
-   A production PCM transport and app/main capture-factory hook require a separately
-   reviewed bounded framing/backpressure/generation/closure handoff; do not route
-   sounddevice around the native gate or claim native runtime acceptance meanwhile.
+The optional app.main.configure_native_capture(factory) hook is idle-only. No
+startup, config, UI flag, environment setting or persisted state calls it. Missing
+proof/permit remains visibly fail-closed, with no legacy fallback. Native selection
+installs an opaque granted-HAL catalog so browser Start preflight cannot query or
+misinterpret a PortAudio integer. Existing Start readiness/language/profile checks
+still run. The unchanged default remains the legacy route, not an implicit native
+activation. Native Start requires muted TTS; unmute invalidates subsequent native
+callbacks. Provider connection waits for this epoch's valid PCM in the owned
+transcription task, not the websocket Start handler, so Stop is not blocked by a
+native launch handshake. Existing ingress/ASR diagnostics callbacks are preserved.
+
+Soft finish closes a distinct parent writer; the native input role cooperatively
+stops/disposes, writes END, exits, and is reaped by its controller. Python drains
+only bounded queued/pipe tail and requires clean EOF plus clean owned controller
+terminal. Emergency Stop/generation replacement/overflow abort and discard instead.
+Python owns/awaits its launcher worker; native code owns/reaps exact role children.
+Every reservation is journal-fsynced before native budget delivery; all outcomes,
+including successful transport END/terminal, retain debit and **HOLD**. No stop,
+reconnect, reset, queue clear, process exit or adapter result releases the journal.
+A consumed factory cannot reopen on reconnect or a second Start.
+
+## Independent authority and remaining exact gates
+
+scripts/attended_pcm_admission.py ADDS an authenticated PCM review and runtime grant
+to the existing CaptureAdmission; discard-only authority cannot authorize audio
+egress. Trusted digest pins must come from the independent owner/reviewer, never
+from source, browser assertions, generated fixtures or the candidate itself. New
+physical proof categories are framing/epoch, backpressure-close, stop/drain,
+no-retention and consumer-boundary. PCM review pins the base exact-image review;
+app-asr also pins a separately authorized provider reference. It does not mint a
+provider budget or waive spending/privacy/output admission.
+
+**Unavailable here:** an actual macOS build/signature/entitlement receipt for these
+exact changed images; independent native/framing/backpressure/fault/physical
+closure evidence; authenticated PCM review/proofs and exact programme/session
+runtime grant; and an independently established consumer egress/privacy boundary.
+The base runtime's kernel-egress-denied condition cannot simply be claimed to
+permit an application ASR upload: its scope must be independently reconciled with
+any separately authorized provider consumer, preserving helper network denial.
+Offline synthetic tests prove software contracts only, not these facts.
+
+An additional cross-file output guard must be reviewed/integrated before an
+app-asr consumer-boundary proof can pass: current websocket new-session/Start
+unmute/replay routes are not globally intercepted by this lane. Muted-before-Start
+and per-packet invalidation are defense-in-depth, NOT a proof that a concurrent
+unmute can never initiate output. That shared websocket patch belongs to parent
+integration; this source lane does not silently modify shared ws/state/workflows.
+All ordinary PCM transport/factory/lifecycle source is implemented above; remaining
+facts and this narrowly identified shared patch are not renamed 'human transport'
+work or treated as Phase-A/real full-cycle acceptance.
+
+Rollback: do not install the optional factory; existing default/noaudio routes stay
+unchanged. Remove an installed factory only while idle; live instances must Stop
+and join owned cleanup first. Do not clear a debit/HOLD to retry.

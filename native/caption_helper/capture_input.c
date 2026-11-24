@@ -3,6 +3,7 @@
  * This source is NOT physical qualification. Do not invoke without admitted custody.
  */
 #include "capture_input.h"
+#include "pcm_transport.h"
 #include <CoreAudio/CoreAudio.h>
 #include <mach/mach_time.h>
 #include <stdbool.h>
@@ -27,7 +28,8 @@ static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
  }
  OSStatus result=noErr;
  if(atomic_load_explicit(&s->accepting,memory_order_acquire)) {
-  if(frames>CB_MAX_FRAMES || mach_continuous_time()>=s->stop_at)result=CB_CAPTURE_ERROR;
+  if(frames==0 || frames>CB_MAX_FRAMES || mach_continuous_time()>=s->stop_at ||
+     (s->pcm_fd>=0 && (s->pcm_frames>s->pcm_frame_limit || frames>s->pcm_frame_limit-s->pcm_frames)))result=CB_CAPTURE_ERROR;
   else {
    s->buffers->mNumberBuffers=s->buffer_count;
    for(UInt32 i=0;i<s->buffer_count;i++){
@@ -36,17 +38,32 @@ static OSStatus receive(void *context, AudioUnitRenderActionFlags *flags,
     s->buffers->mBuffers[i].mDataByteSize=frames*s->bytes_per_frame;
    }
    result=AudioUnitRender(s->unit,flags,when,1,frames,s->buffers);
-   /* Discard every sample immediately, no raw-audio egress or queue. */
+   if(result==noErr && s->pcm_fd>=0){
+    UInt32 offset=0,maximum=CB_PCM_PAYLOAD/(s->pcm_channels*2U);
+    while(offset<frames){
+     UInt32 count=frames-offset;if(count>maximum)count=maximum;
+     if(!live(s->stop_at) || cb_pcm_packet(s->pcm_fd,s->epoch,s->pcm_sequence,
+        s->pcm_rate,s->pcm_channels,0,count,(char *)s->scratch+offset*s->bytes_per_frame)){
+      result=CB_CAPTURE_ERROR;break;
+     }
+     s->pcm_sequence++;s->pcm_frames+=count;offset+=count;
+    }
+   }
+   /* Bounded callback scratch is cleared after the one private-pipe handoff. */
    memset(s->scratch,0,(size_t)s->buffer_count*s->buffer_bytes);
   }
-  if(result!=noErr)atomic_store_explicit(&s->fault,(int)result,memory_order_release);
+  if(result!=noErr){
+   atomic_store_explicit(&s->fault,(int)result,memory_order_release);
+   atomic_store_explicit(&s->accepting,false,memory_order_release);
+  }
  }
  atomic_fetch_sub_explicit(&s->callbacks,1,memory_order_acq_rel);
  return result;
 }
-int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at) {
+int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at,int pcm_fd,const unsigned char epoch[16]) {
  if(s->attempted || !device || !stop_at || !live(stop_at))return CB_CAPTURE_ERROR;
- s->attempted=1;s->stop_at=stop_at;
+ s->attempted=1;s->stop_at=stop_at;s->pcm_fd=pcm_fd;
+ if(pcm_fd>=0){if(!epoch || !cb_pcm_pipe(pcm_fd))return CB_CAPTURE_ERROR;memcpy(s->epoch,epoch,16);}
  atomic_init(&s->accepting,false);atomic_init(&s->callbacks,0);atomic_init(&s->fault,0);
  AudioObjectPropertyAddress alive={kAudioDevicePropertyDeviceIsAlive,kAudioObjectPropertyScopeGlobal,kAudioObjectPropertyElementMain};
  UInt32 present=0,size=sizeof(present);OSStatus e=AudioObjectGetPropertyData(device,&alive,0,NULL,&size,&present);
@@ -70,6 +87,29 @@ int cb_capture_open(cb_capture_input *s,uint32_t device,uint64_t stop_at) {
     !format.mChannelsPerFrame || format.mChannelsPerFrame>32 || !format.mBytesPerFrame ||
     format.mBytesPerFrame>256 || format.mFramesPerPacket!=1 ||
     format.mBytesPerPacket!=format.mBytesPerFrame || !format.mBitsPerChannel || format.mBitsPerChannel>64)return CB_CAPTURE_ERROR;
+ if(pcm_fd>=0){
+  /* Client-side PCM conversion only. Never set device nominal/default rate.
+   * Preserve selected native rate, support mono/stereo only, fail on any refusal.
+   * Stateful ASR-rate conversion happens downstream, once per capture epoch. */
+  if(format.mChannelsPerFrame>2 || floor(format.mSampleRate)!=format.mSampleRate)return CB_CAPTURE_ERROR;
+  AudioStreamBasicDescription client={0};client.mSampleRate=format.mSampleRate;
+  client.mFormatID=kAudioFormatLinearPCM;client.mFormatFlags=kAudioFormatFlagIsSignedInteger|kAudioFormatFlagIsPacked;
+  client.mChannelsPerFrame=format.mChannelsPerFrame;client.mBitsPerChannel=16;
+  client.mFramesPerPacket=1;client.mBytesPerFrame=2*client.mChannelsPerFrame;client.mBytesPerPacket=client.mBytesPerFrame;
+  if((e=AudioUnitSetProperty(s->unit,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Output,1,&client,sizeof(client))))return e;
+  format_size=sizeof(format);
+  if((e=AudioUnitGetProperty(s->unit,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Output,1,&format,&format_size)))return e;
+  if(format_size!=sizeof(format) || format.mFormatID!=client.mFormatID ||
+     format.mFormatFlags!=client.mFormatFlags || format.mSampleRate!=client.mSampleRate ||
+     format.mChannelsPerFrame!=client.mChannelsPerFrame || format.mBitsPerChannel!=16 ||
+     format.mBytesPerFrame!=client.mBytesPerFrame || format.mFramesPerPacket!=1 ||
+     format.mBytesPerPacket!=client.mBytesPerPacket)return CB_CAPTURE_ERROR;
+  s->pcm_rate=(uint32_t)format.mSampleRate;s->pcm_channels=(uint16_t)format.mChannelsPerFrame;
+  mach_timebase_info_data_t tb;if(mach_timebase_info(&tb)!=KERN_SUCCESS || !tb.numer || !tb.denom)return CB_CAPTURE_ERROR;
+  uint64_t now=mach_continuous_time();if(now>=stop_at)return CB_CAPTURE_ERROR;
+  s->pcm_frame_limit=(uint64_t)((long double)(stop_at-now)*tb.numer*s->pcm_rate/(tb.denom*1000000000.0L));
+  if(!s->pcm_frame_limit || s->pcm_frame_limit>(uint64_t)s->pcm_rate*2)return CB_CAPTURE_ERROR;
+ }
  s->buffer_count=(format.mFormatFlags&kAudioFormatFlagIsNonInterleaved)?format.mChannelsPerFrame:1;
  s->channels_per_buffer=s->buffer_count>1?1:format.mChannelsPerFrame;
  s->bytes_per_frame=format.mBytesPerFrame;s->buffer_bytes=CB_MAX_FRAMES*s->bytes_per_frame;
@@ -105,6 +145,7 @@ int cb_capture_close(cb_capture_input *s,uint64_t deadline) {
   * retires the resource, but is NOT independent closure evidence to the journal. */
  if(s->unit){if(AudioComponentInstanceDispose(s->unit)!=noErr)good=0;else s->unit=NULL;}
  if(!s->unit && !atomic_load_explicit(&s->callbacks,memory_order_acquire)){
+  if(s->scratch)memset(s->scratch,0,(size_t)s->buffer_count*s->buffer_bytes);
   free(s->scratch);s->scratch=NULL;free(s->buffers);s->buffers=NULL;
  }
  if(mach_continuous_time()>=deadline)good=0;

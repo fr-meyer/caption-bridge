@@ -278,9 +278,9 @@ class AdmissionTests(unittest.TestCase):
 class CaptureSourceTests(unittest.TestCase):
     def test_noinput_never_calls_opener_or_closer(self):
         source = (ROOT / 'native/caption_helper/capture_role.c').read_text()
-        self.assertIn('if(options.flags==CB_CAPTURE_ARMED){', source)
-        self.assertIn('if(options.flags==CB_CAPTURE_ARMED && cb_capture_close', source)
-        self.assertIn('options.flags>CB_CAPTURE_ARMED', source)
+        self.assertIn('if(options.flags==CB_CAPTURE_ARMED || options.flags==CB_CAPTURE_PCM){', source)
+        self.assertIn('if((options.flags==CB_CAPTURE_ARMED || options.flags==CB_CAPTURE_PCM) && cb_capture_close', source)
+        self.assertIn('options.flags>CB_CAPTURE_PCM', source)
         self.assertIn('cap.parent!=getppid()', source)
         self.assertIn('cap.deadline-margin', source)
 

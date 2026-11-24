@@ -152,3 +152,48 @@ def microphone_authorization() -> int:
     media_type = c.c_void_p.in_dll(av, "AVMediaTypeAudio").value
     return objc.objc_msgSend(objc.objc_getClass(b"AVCaptureDevice"),
                              objc.sel_registerName(b"authorizationStatusForMediaType:"), media_type)
+
+
+class NativeInputSelection:
+    """Opaque HAL-grant selection, deliberately NOT a PortAudio integer."""
+    __slots__ = ()
+
+
+class GrantedNativeInputDevices:
+    """Browser-compatible catalog without any PortAudio/default-device query.
+
+    'default' here means only the single owner-granted HAL input, never the OS
+    default. Its numeric HAL ID remains private inside the one-use authority.
+    """
+    def __init__(self, factory):
+        self._factory = factory
+        self._token = secrets.token_urlsafe(18)
+        self._selected = "default"
+        self._active = False
+
+    def refresh(self):
+        return self.snapshot()
+
+    def snapshot(self):
+        return {"available": [{"id": self._token, "label": "Owner-granted native input"}],
+                "selected": self._selected,
+                "active_label": "Owner-granted native input" if self._active else None,
+                "unavailable": False}
+
+    def choose(self, token):
+        if type(token) is not str or token not in ("default", self._token):
+            raise ValueError("Native input is fixed by the attended runtime grant.")
+        self._selected = token
+        self._active = False
+
+    def capture_device(self):
+        try:
+            self._factory.preflight()
+        except RuntimeError:
+            raise ValueError("Native capture requires independent proof and a fresh runtime grant.") from None
+        self._active = True
+        return NativeInputSelection()
+
+    def reset(self):
+        self._active = False
+        self._selected = "default"

@@ -170,6 +170,11 @@ class Custody:
             'capture_noinput_budget_ready' if no_input else 'capture_budget_ready',
             b'CBNC0001' if no_input else b'CBCA0001')
 
+    def prepare_pcm_budget(self, capability, channel, receipt, challenge_event):
+        """PCM is a distinct one-use budget domain; never accepts discard replies."""
+        return self._prepare_budget(capability, channel, receipt, challenge_event,
+                                    'capture_pcm_budget_ready', b'CBPC0001')
+
     def _prepare_budget(self, capability, channel, receipt, challenge_event, event, magic):
         if (type(challenge_event) is not dict
                 or set(challenge_event) != {'event', 'challenge', 'ceiling_ms'}

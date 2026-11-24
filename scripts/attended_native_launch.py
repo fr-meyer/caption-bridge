@@ -75,7 +75,7 @@ def _terminal(started, terminal, code, *, no_input):
 
 
 def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_id=0,
-         check_grant=None):
+         check_grant=None, pcm=None):
     if sys.platform != 'darwin':
         raise RuntimeError('macos_native_only')
     if type(milliseconds) is not int or not 1 <= milliseconds <= 2000:
@@ -84,29 +84,40 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
         raise ValueError('native_capture_mode')
     if type(emergency) is not EmergencyStop:
         raise RuntimeError('owned_emergency_stop_required')
-    stop_fd = emergency.ready()
-    root = Path(root).resolve(strict=True)
-    capability, channel, peer = custody.session(candidate)
+    if pcm is not None and (no_input or len(pcm) != 3):
+        raise ValueError('native_pcm_mode')
+    pcm_owned = list(pcm[:2]) if pcm is not None else []
     child = None
+    capability = peer = None
     try:
+        stop_fd = emergency.ready()
+        root = Path(root).resolve(strict=True)
+        capability, channel, peer = custody.session(candidate)
         arguments = [str(root / 'CaptureController'),
                      '--capture-noinput-budget' if no_input else '--capture-budget', str(root)]
         if not no_input:
             arguments.append(str(device_id))
         arguments.append(str(stop_fd))
+        if pcm is not None:
+            arguments[1] = '--capture-pcm-budget'
+            arguments.extend((str(pcm[0]), str(pcm[1]), pcm[2]))
         if check_grant is not None:
             check_grant()
         child = subprocess.Popen(arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.DEVNULL, close_fds=True, pass_fds=(stop_fd,),
+                                 stderr=subprocess.DEVNULL, close_fds=True, pass_fds=(stop_fd, *pcm_owned),
                                  env={}, bufsize=0)
+        for fd in pcm_owned:
+            os.close(fd)
+        pcm_owned.clear()
         reader = BoundedLines(child.stdout, time.monotonic() + 7)
         challenge = reader.line()
         emergency.ready()
         if check_grant is not None:
             check_grant()
         receipt = custody.offer(capability, channel, milliseconds)
-        reservation, wire = custody.prepare_capture_budget(
-            capability, channel, receipt, challenge, no_input=no_input)
+        reservation, wire = (custody.prepare_pcm_budget(capability, channel, receipt, challenge)
+                             if pcm is not None else custody.prepare_capture_budget(
+                                 capability, channel, receipt, challenge, no_input=no_input))
         if child.stdin.write(wire) != len(wire):
             raise RuntimeError('capture_budget_short_write_hold')
         child.stdin.close()  # Exact message + EOF; fsync/debit precedes any native opener.
@@ -134,6 +145,8 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
     finally:
         # Never signal reported role PIDs. Native owns them; Python owns this child.
         emergency.stop()
+        for fd in pcm_owned:
+            os.close(fd)
         try:
             if child is not None:
                 if child.poll() is None:
@@ -146,8 +159,10 @@ def _run(root, custody, candidate, milliseconds, emergency, *, no_input, device_
                     if stream is not None:
                         stream.close()
         finally:
-            peer.close()
-            custody.revoke(capability)
+            if peer is not None:
+                peer.close()
+            if capability is not None:
+                custody.revoke(capability)
 
 
 def launch_capture(admission, permit, custody, emergency):
@@ -183,3 +198,37 @@ def qualify_noinput(root, custody, candidate, *, milliseconds=2000):
         return _run(root, custody, candidate, milliseconds, emergency, no_input=True)
     finally:
         emergency.close()
+
+
+def launch_pcm(launch, admission, custody, emergency, pcm_fd, finish_fd):
+    """Internal already-consumed PCM permit handoff; no stdout PCM or file path.
+
+    Caller owns the read end and emergency controller; this function takes sole
+    ownership of both passed descriptors, including every launch-failure path.
+    The retained journal debit stays HOLD even on a clean framing/terminal result.
+    """
+    from scripts.attended_pcm_admission import PcmAdmission
+    handed_off = False
+    try:
+        if type(admission) is not PcmAdmission:
+            raise RuntimeError('native_pcm_not_admitted')
+        def check_grant():
+            admission.base._verify_images()
+            if (time.time_ns() + launch['milliseconds'] * 1_000_000 >= min(launch['expires_unix_ns'], launch['pcm_expires_unix_ns'])
+                    or custody._journal.tail != launch['ledger_tail']):
+                raise RuntimeError('runtime_grant_expired_or_ledger_changed')
+        check_grant()
+        if sys.platform != 'darwin' or type(emergency) is not EmergencyStop:
+            raise RuntimeError('macos_native_only_or_emergency_missing')
+        emergency.ready()
+        if type(launch['milliseconds']) is not int or not 1 <= launch['milliseconds'] <= 2000:
+            raise ValueError('native_capture_duration')
+        Path(launch['root']).resolve(strict=True)
+        handed_off = True
+        return _run(launch['root'], custody, launch['candidate'], launch['milliseconds'], emergency,
+                    no_input=False, device_id=launch['device_id'], check_grant=check_grant,
+                    pcm=(pcm_fd, finish_fd, launch['epoch']))
+    finally:
+        if not handed_off:
+            os.close(pcm_fd)
+            os.close(finish_fd)
