@@ -1,5 +1,12 @@
 # Criterion 6 public revalidation, 2026-11-17
 
+> **2026-11-24 superseding public-source refresh:** see
+> [completed provider evidence](provider-evidence-20261124.md). Complete official
+> card Markdown now documents the v3 rolling alias and GLM rolling aliases,
+> restores legacy/Medium prices, and corrects DeepSeek to Public Preview. Preview
+> training/ZDR exclusions persist; exact account/retention/concurrency leaves
+> remain open. Older observations below are historical, not current negatives.
+
 Lane A, approved unified plan v1.1. Checked 10:44–10:45 UTC (19:44–19:45 KST), unauthenticated first-party documentation only. Supplements [the account packet](provider-account-evidence-20261117.md), not a new design or experiment. No account identity, key, credential file, authenticated API, inference, device, capture or playback accessed. Additional provider spend: $0.
 
 ## Newly resolved public facts and conflicts

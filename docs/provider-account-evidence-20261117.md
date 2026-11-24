@@ -1,5 +1,12 @@
 # Voxtral account evidence: criterion 6 disposition
 
+> **2026-11-24 superseding public-source refresh:** see
+> [completed provider evidence](provider-evidence-20261124.md). Complete official
+> card Markdown now documents the v3 rolling alias and GLM rolling aliases,
+> restores legacy/Medium prices, and corrects DeepSeek to Public Preview. Preview
+> training/ZDR exclusions persist; exact account/retention/concurrency leaves
+> remain open. Older observations below are historical, not current negatives.
+
 Initial check 2026-11-17, 06:41–06:44 UTC; public revalidation 10:44–10:45 UTC (19:44–19:45 KST). Public first-party retrieval only; no account request, login, key read, inference, upload, capture or playback. Spend $0. Supplements the seven-part [evaluation design](voxtral3-evaluation-plan.md); defaults and accepted native setup remain unchanged.
 
 ## Current authoritative findings
