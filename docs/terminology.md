@@ -149,3 +149,27 @@ completion, elapsed time, each instruction requested, every intervention and
 privacy/safety confusion. One coached rescue is not uncoached success. No external
 participant is contacted by this preparation; owner-approved participants and
 attended readiness remain prerequisites.
+
+### Shortcut observer phase boundary
+
+The browser shortcut regression keeps both full WebSocket histories. Before any
+keyboard action it requires the actual live-caption `seq=1` renderer ACK on the
+browser and receiving fixture and verifies this exact ordered initial exchange:
+`refresh_input_devices`, `tts_mute(muted=false)`, `render_ack(seq=1)`. This binds
+the baseline to authoritative snapshot/renderer processing, not a sleep or a
+message-type allowlist. It does not clear either observer. Each baseline index
+is fixed once before the modal/guarded-key phase.
+
+After the keys, a condition-based receive-count checkpoint drains all observed
+browser sends into the server recorder, including controls ignored by dispatch.
+The original startup prefix/ACK must remain intact; this single-caption fixture
+expects **no** additional frame from either observer. A late startup-typed frame
+is not exempt. Existing dynamic Tab order, Escape focus return and active
+Listening checks remain unchanged.
+
+Source-driven Node/Python model probes reproduce the former whole-history false
+failure and remove the actual modal keyboard guard in memory: the resulting
+post-baseline Stop is detected independently by both observer assertions. These
+are **model probes, not actual Chromium/native focus/VoiceOver or browser-audio
+proof**. A fresh hosted browser run at the published repair head is still needed;
+no browser installation, timeout increase, forged ACK or skip is used here.

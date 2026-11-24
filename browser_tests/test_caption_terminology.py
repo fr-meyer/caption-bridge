@@ -6,6 +6,7 @@ import asyncio
 import socket
 import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 
 import httpx
@@ -43,10 +44,53 @@ def fake_browser_media(page: Page) -> None:
     """)
 
 
+class _ControlFrames(list):
+    """Append-only receive observation with a causal, bounded drain checkpoint."""
+
+    def __init__(self):
+        super().__init__()
+        self.condition = threading.Condition()
+
+    def append(self, message):
+        with self.condition:
+            super().append(message)
+            self.condition.notify_all()
+
+    def snapshot(self):
+        with self.condition:
+            return deepcopy(list(self))
+
+    def wait_for_count(self, count, timeout=5):
+        with self.condition:
+            return self.condition.wait_for(lambda: len(self) >= count, timeout)
+
+
+def _assert_startup_baseline(frames):
+    # handleSnapshot synchronously sends refresh/mute before the later genuine
+    # live caption handler sends seq=1 ACK. Verify the entire initial exchange,
+    # not a whitelist of message types to discard throughout the test.
+    assert frames == [
+        {"type": "refresh_input_devices"},
+        {"type": "tts_mute", "muted": False},
+        {"type": "render_ack", "seq": 1},
+    ], "unexpected initialization exchange before keyboard actions"
+    assert frames[1]["muted"] is False
+    assert type(frames[2]["seq"]) is int
+    return len(frames)
+
+
+def _assert_shortcut_phase(frames, baseline):
+    assert type(baseline) is int
+    assert _assert_startup_baseline(frames[:baseline]) == baseline
+    # This fixture emits just one live caption, already ACKed before the keys.
+    # No later frame is expected: even a repeat of a startup type must fail.
+    assert frames[baseline:] == [], "unexpected frame after keyboard baseline"
+
+
 @pytest.fixture
 def term_controls():
     """Record every inbound frame before the fixture dispatch/ignore filter."""
-    return []
+    return _ControlFrames()
 
 
 @pytest.fixture
@@ -363,6 +407,13 @@ def test_keyboard_editor_does_not_trigger_session_shortcuts(
     expect(page.locator(".caption-translated")).to_have_text("Original translation.")
     page.wait_for_function("window.termShortcutFrames.some(message => message.type === 'render_ack' && message.seq === 1)")
     assert term_rendered.wait(timeout=5), "real render_ack must reach the WebSocket fixture"
+    expect(page.locator("#status-label")).to_contain_text("Listening")
+    # Both FIFO observations must contain exactly the admitted snapshot sends
+    # and the actual renderer ACK before any keyboard action. The ACK is the
+    # causal milestone, not a sleep, quiet-period guess or synthetic barrier.
+    sent_baseline = _assert_startup_baseline(page.evaluate("window.termShortcutFrames"))
+    received_baseline = _assert_startup_baseline(term_controls.snapshot())
+    assert sent_baseline == received_baseline
     opener.focus()
     page.keyboard.press("Enter")
     # type()/press() dispatch real keydown/keyup. Explicit Space exercises the
@@ -396,13 +447,18 @@ def test_keyboard_editor_does_not_trigger_session_shortcuts(
     expect(opener).to_be_focused()
     expect(page.locator("#status-label")).to_contain_text("Listening")
     expect(page.locator(".caption-translated")).to_have_text("Original translation.")
-    # The positive acknowledgement proves capture is live. No session/control
-    # sends are permitted, even if the backend ignores them without changing state.
+    # Drain every observed send into the server recorder before checking either
+    # observer; an ignored Stop cannot hide in the server/event-loop race.
     sent = page.evaluate("window.termShortcutFrames")
+    assert term_controls.wait_for_count(len(sent)), "all observed sends must reach the fixture"
+    received = term_controls.snapshot()
+    # Keep genuine seq=1 ACK liveness before AND after the keyboard phase,
+    # retain the whole histories, and freeze each original baseline index.
     assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in sent)
-    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in term_controls)
-    assert [message for message in sent if message["type"] != "render_ack"] == []
-    assert [message for message in term_controls if message["type"] != "render_ack"] == []
+    assert any(message["type"] == "render_ack" and message["seq"] == 1 for message in received)
+    _assert_shortcut_phase(sent, sent_baseline)
+    _assert_shortcut_phase(received, received_baseline)
+    assert sent == received
     assert manager.session.status == "listening"
     assert manager.session.terminology_version == 0
     assert manager.session.glossary is None

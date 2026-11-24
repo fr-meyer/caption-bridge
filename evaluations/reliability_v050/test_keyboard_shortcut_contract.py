@@ -27,8 +27,16 @@ class ShortcutContractTests(unittest.TestCase):
         assertions = [ast.get_source_segment(BROWSER_SOURCE, node)
                       for node in ast.walk(KEYBOARD_TEST) if isinstance(node, ast.Assert)]
         self.assertTrue(any("term_controls" in source for source in assertions))
-        self.assertTrue(any("message" in source and "sent" in source and "== []" in source
-                            for source in assertions))
+        phase_calls = [tuple(ast.unparse(arg) for arg in node.args) for node in calls
+                       if isinstance(node.func, ast.Name) and node.func.id == "_assert_shortcut_phase"]
+        self.assertEqual(phase_calls, [("sent", "sent_baseline"), ("received", "received_baseline")])
+        # Immutable integer indices are each bound once, before opener/key actions.
+        for name in ["sent_baseline", "received_baseline"]:
+            bindings = [node for node in ast.walk(KEYBOARD_TEST) if isinstance(node, ast.Name)
+                        and node.id == name and isinstance(node.ctx, ast.Store)]
+            self.assertEqual(len(bindings), 1)
+        self.assertNotIn("clear", methods)
+        self.assertNotIn("sleep", methods)
         self.assertIn('term_controls.append(message)', BROWSER_SOURCE)
         self.assertLess(BROWSER_SOURCE.index('term_controls.append(message)'),
                         BROWSER_SOURCE.index('if message.get("type") not in'))

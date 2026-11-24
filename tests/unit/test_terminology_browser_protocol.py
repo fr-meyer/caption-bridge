@@ -123,3 +123,94 @@ console.log(JSON.stringify({model_only:true,actual_browser:false,dom_renderer_st
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"model_only": True, "actual_browser": False,
         "dom_renderer_stub": True, "production_ack_observed": True, "seq": 1}
+
+
+def _startup_frames():
+    return [
+        {"type": "refresh_input_devices"},
+        {"type": "tts_mute", "muted": False},
+        {"type": "render_ack", "seq": 1},
+    ]
+
+
+@pytest.mark.parametrize("remove_guard", [False, True])
+def test_source_startup_and_removed_guard_observed_in_both_phases(browser_module, synthetic_manager, remove_guard):
+    """Production source model; not Chromium, native focus or actual browser proof."""
+    browser = browser_module
+    tree = ast.parse((ROOT / "browser_tests/test_caption_terminology.py").read_text())
+    keyboard = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "test_keyboard_editor_does_not_trigger_session_shortcuts")
+    observer = next(node.args[0].value for node in ast.walk(keyboard) if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute) and node.func.attr == "add_init_script")
+    messages = browser._initial_messages(synthetic_manager)
+    result = subprocess.run(
+        ["node", str(ROOT / "tests/fixtures/terminology_shortcut_node.cjs")],
+        input=json.dumps({"observer": observer, "initial_messages": messages, "remove_guard": remove_guard}),
+        check=False, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    trace = json.loads(result.stdout)
+    assert trace["model_only"] is True and trace["actual_browser"] is False
+    assert trace["rendered"] == [1]
+    for observer_name in ["client", "server"]:
+        initial = trace["startup_" + observer_name]
+        final = trace["final_" + observer_name]
+        baseline = browser._assert_startup_baseline(initial)
+        assert baseline == 3 and initial == _startup_frames()
+        # Reproduce the hosted line404 error without pretending to run Chromium:
+        # the former whole-history assertion rejects these genuine source sends.
+        with pytest.raises(AssertionError):
+            assert [message for message in initial if message["type"] != "render_ack"] == []
+        if remove_guard:
+            assert final[baseline:] == [{"type": "stop"}]
+            with pytest.raises(AssertionError, match="after keyboard baseline"):
+                browser._assert_shortcut_phase(final, baseline)
+        else:
+            browser._assert_shortcut_phase(final, baseline)
+
+
+@pytest.mark.parametrize("late_frame", [
+    {"type": "refresh_input_devices"},
+    {"type": "tts_mute", "muted": False},
+    {"type": "stop"},
+    {"type": "render_ack", "seq": 1},
+])
+def test_late_startup_or_control_frames_never_get_a_noise_exemption(browser_module, late_frame):
+    browser = browser_module
+    baseline = browser._assert_startup_baseline(_startup_frames())
+    for _observer_name in ["client", "server"]:
+        with pytest.raises(AssertionError, match="after keyboard baseline"):
+            browser._assert_shortcut_phase(_startup_frames() + [late_frame], baseline)
+
+
+@pytest.mark.parametrize("bad_frames", [
+    [], _startup_frames()[:-1], _startup_frames()[1:],
+    _startup_frames() + [{"type": "stop"}], list(reversed(_startup_frames())),
+    [_startup_frames()[0], {"type": "tts_mute", "muted": 0}, _startup_frames()[2]],
+    [_startup_frames()[0], _startup_frames()[1], {"type": "render_ack", "seq": True}],
+    [_startup_frames()[0], _startup_frames()[1], {"type": "render_ack", "seq": 2}],
+])
+def test_startup_count_order_payload_and_ack_are_verified_not_filtered(browser_module, bad_frames):
+    with pytest.raises(AssertionError):
+        browser_module._assert_startup_baseline(bad_frames)
+
+
+def test_receive_checkpoint_waits_for_the_observed_send_count(browser_module):
+    frames = browser_module._ControlFrames()
+    assert not frames.wait_for_count(1, timeout=0)
+    release = threading.Event()
+
+    def receive():
+        assert release.wait(timeout=5)
+        frames.append({"type": "stop"})
+
+    worker = threading.Thread(target=receive)
+    worker.start()
+    release.set()
+    assert frames.wait_for_count(1)
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert frames.snapshot() == [{"type": "stop"}]
+    snapshot = frames.snapshot()
+    snapshot[0]["type"] = "mutated-copy"
+    assert frames.snapshot() == [{"type": "stop"}]
